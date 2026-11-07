@@ -208,3 +208,11 @@ def grid(col, row, colspan=1, rowspan=1, col_w=Inches(0.740), row_h=Inches(0.5))
 - 表格默认样式带主题蓝：必须逐 cell 覆盖填充与字体（§5 已做）。
 - 原生图表默认含标题与网格线：显式关闭/设色（§4 已做）。
 - 连续两页相同结构会被判 `repeated_layout_pattern`：交替使用版式库。
+
+## 10. OOXML 地雷（PowerPoint 修复风险）
+
+- **堆叠图禁用 outEnd 数据标签**：OOXML 限制 `c:dLblPos` 按分组类型——stacked/percentStacked 只允许
+  ctr/inBase/inEnd，`outEnd` 仅 clustered 合法。设错后 LibreOffice 渲染正常，**只有真 PowerPoint
+  打不开并触发"修复"**。要高亮单根柱子：用逐点配色（point.format.fill），不要挪标签位置。
+- 文本与形状对齐时把文本框 `margin_left/right` 设 0（默认内边距会让文字和形状错位半格）。
+- python-pptx 的 chart.series 点级标签见 §4；表格样式覆盖见 §5——两处都是默认样式坑。

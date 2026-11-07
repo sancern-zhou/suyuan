@@ -122,3 +122,36 @@ doc.save(out)
 - 表格默认无边框：必须设 `table.style = "Table Grid"` 或逐 cell 设边框。
 - Normal 样式未设 eastasia 字体 → 整篇中文回退宋体，`expected_font_missing`。
 - 大量 `add_paragraph` 后行距失控：统一在 Normal 样式上设行距，不要逐段设。
+
+## 9. 表格跨页三件套（长表必设）
+
+跨页表格不设这三项，WPS/Word 里会从行中间断开、次页丢失表头：
+
+```python
+from docx.oxml.ns import qn
+
+def table_cross_page(table, title_paragraph=None):
+    """表头跨页重复 + 行内不断开 + 表题与表粘连。"""
+    for row_index, row in enumerate(table.rows):
+        trPr = row._tr.get_or_add_trPr()
+        if row_index == 0:
+            trPr.append(trPr.makeelement(qn("w:tblHeader"), {}))   # 跨页重复表头
+        trPr.append(trPr.makeelement(qn("w:cantSplit"), {}))        # 行内禁止断页
+    if title_paragraph is not None:
+        title_paragraph.paragraph_format.keep_with_next = True      # 表题不与表分离
+```
+
+## 10. TOC 与分节页码纪律
+
+- **TOC 域后必须紧跟一个含分页符的段落**——否则目录和正文同页（TOC 排版第一失败原因）。
+- 正文页码从 1 起：TOC 放独立节；正式文档三节编号——封面节无页码 → 前置节罗马数字
+  （`w:pgNumType w:fmt="upperRoman" w:start="1"`）→ 正文节阿拉伯数字重新起 1。
+- 页码域指令用 `PAGE \* arabic \* MERGEFORMAT`——**\* 后是 `arabic` 不是 `decimal`**
+  （decimal 是库的枚举名，不是 Word 域开关；写错会渲染成"1decimal"。WPS 还会忽略 pgNumType 的 fmt，
+  所以域指令必须显式写）。
+
+## 11. 空白页防治三规则
+
+- 节末（NEXT_PAGE 分节）前**不要再加**手动分页符——双分页 = 空白页。
+- 分页符所在段落应含可见文字（节尾空段+分页是唯一合法例外，如封面后）。
+- 连续空段落 ≤3 个；大间距用 `space_before` 造，不用空段落堆。
