@@ -160,13 +160,18 @@ async def test_non_column_failure_keeps_describe_guidance(tmp_path, monkeypatch)
 
 
 def test_deployment_contract_matches_crawler_whitelist():
-    """提交的契约文件必须覆盖采集库全部白名单表（防遗漏）。"""
+    """契约文件必须只收录白名单表，且本部署存在的白名单表不得遗漏。
+
+    白名单是多项目超集（postgres 工具同款模式：项目专属表并入共享白名单，
+    其他部署查询得到"未找到白名单表"明确提示），因此方向为
+    contracts ⊆ whitelist；契约文件按部署生成，天然只含本库真实存在的表。
+    """
     from app.tools.query.execute_crawler_sql_query.tool import CRAWLER_SQL_TABLES
 
     contracts = load_table_contracts(refresh=True)
     if contracts is None:
         pytest.skip("未配置 data_table_contracts.yaml")
-    assert set(contracts["tables"]) == set(CRAWLER_SQL_TABLES)
+    assert set(contracts["tables"]) <= set(CRAWLER_SQL_TABLES)
     for table, info in contracts["tables"].items():
         names = []
         for key in ("time_columns", "dimension_columns", "value_columns", "mark_columns", "caliber_columns"):
