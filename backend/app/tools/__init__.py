@@ -863,6 +863,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="validate_pptx", error=str(e))
 
     try:
+        from app.tools.office.validate_office_tool import ValidateOfficeTool
+        registry.register(ValidateOfficeTool(), priority=351)
+        logger.info("tool_loaded", tool="validate_office")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="validate_office", error=str(e))
+
+    try:
         from app.tools.office.ppt_master_tool import CreatePptxWithPptMasterTool
         registry.register(CreatePptxWithPptMasterTool(), priority=352)
         logger.info("tool_loaded", tool="create_pptx_with_ppt_master")
