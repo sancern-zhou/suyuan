@@ -235,6 +235,9 @@ backend/docs/skills/*
 !backend/docs/skills/SKILLS_INDEX.md
 !backend/docs/skills/analysis_report_workflow.md
 !backend/docs/skills/生态环境招投标市场分析.md
+!backend/docs/skills/pptx_authoring.md
+!backend/docs/skills/pptx_authoring/
+!backend/docs/skills/pptx_authoring/**
 scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py

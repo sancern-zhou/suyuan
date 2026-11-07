@@ -54,6 +54,8 @@ OFFICE_TOOL_NAMES = [
     "execute_python",
     "web_search",
     "web_fetch",
+    # PPTX/文档交付的渲染级验收（QA 闭环，见技能 pptx_authoring）。
+    "validate_pptx",
     # 任务调度、技能目录和重型工作空间委托。
     "list_skills",
     "view_skill",
