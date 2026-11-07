@@ -115,6 +115,8 @@ backend:
       # 正式报告收口：保存 QMD、渲染 HTML/Word、验收并触发右侧预览
       - create_report_package
       - execute_python
+      # PPTX 自由创作（技能 pptx_authoring）的渲染级 QA 验收闭环
+      - validate_pptx
       - read_file
       - write_file
       - edit_file
@@ -203,6 +205,8 @@ backend:
       - edit_file
       - create_business_chart
       - execute_python
+      # PPTX 自由创作（技能 pptx_authoring）的渲染级 QA 验收闭环
+      - validate_pptx
       - create_report_package
       - run_agent_workflow
       - list_skills
