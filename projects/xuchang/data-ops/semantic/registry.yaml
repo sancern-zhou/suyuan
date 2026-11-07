@@ -10,6 +10,25 @@ cubes:
     applicability: 河南18城市组含济源的实时发布小时数据
     source_window: 采集源滚动窗口，具体以查询返回时间为准
     limitations: []
+    measures:
+      count:
+        name: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+      avgO38h:
+        name: O3-8h均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+      maxAqi:
+        name: AQI最大值
   SsfbCityDay:
     dataset: DataCrawler.SsfbCityDay
     grain: 一行 = 城市 × 日
@@ -17,6 +36,21 @@ cubes:
     source_window: 采集源日值窗口
     limitations:
       - 2026年10月起源接口不发布PM10，PM10缺失不得当作零或用于趋势判断
+    measures:
+      count:
+        name: 日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(源10月起缺失,勿用于趋势)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
   SsfbCityHourRank:
     dataset: DataCrawler.SsfbCityHourRank
     grain: 一行 = 小时 × 城市排名对象
@@ -24,6 +58,37 @@ cubes:
     source_window: 实时重算窗口
     limitations:
       - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI小时排名(升序,1=最优,含济源)
+      rankPm25:
+        name: PM2.5小时排名(升序,1=最优)
+      rankPm10:
+        name: PM10小时排名(升序,1=最优)
+      rankSo2:
+        name: SO2小时排名(升序,1=最优)
+      rankNo2:
+        name: NO2小时排名(升序,1=最优)
+      rankO3:
+        name: O3小时排名(升序,1=最优)
+      rankCo:
+        name: CO小时排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+      avgPm25:
+        name: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+      avgO3:
+        name: O3(μg/m³)
+      avgNo2:
+        name: NO2(μg/m³)
+      avgSo2:
+        name: SO2(μg/m³)
+      avgCo:
+        name: CO(mg/m³)
+      cityCount:
+        name: 参与排名城市数(应=18)
   SsfbCityRanking:
     dataset: DataCrawler.SsfbCityRanking
     grain: 一行 = 期次类型 × 期次 × 城市组
@@ -32,18 +97,83 @@ cubes:
     limitations:
       - 仅保留daily期次；城市月/年累计统计已改走官方月报（ProvinceMonth/ProvinceMonthCum），本表monthly/yearly已停用并删除历史行
       - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      count:
+        name: 记录数
+      avgPm25:
+        name: PM2.5(官方日值)
+      avgPm10:
+        name: PM10(官方日值)
+      avgSo2:
+        name: SO2(官方日值)
+      avgNo2:
+        name: NO2(官方日值)
+      avgCo:
+        name: CO(官方日值)
+      avgO38h:
+        name: O3-8h(官方日值)
+      rankPm25:
+        name: PM2.5日排名(升序,1=最优)
+      rankPm10:
+        name: PM10日排名(升序,1=最优)
+      rankSo2:
+        name: SO2日排名(升序,1=最优)
+      rankNo2:
+        name: NO2日排名(升序,1=最优)
+      rankO3:
+        name: O3日排名(升序,1=最优)
+      rankCo:
+        name: CO日排名(升序,1=最优)
   SsfbCountyHour:
     dataset: DataCrawler.SsfbCountyHour
     grain: 一行 = 区县 × 小时
     applicability: 河南区县小时数据，含济源和功能区
     source_window: 采集源滚动窗口
     limitations: []
+    measures:
+      count:
+        name: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+      avgO38h:
+        name: O3-8h均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+      maxAqi:
+        name: AQI最大值
+      onlineCounties:
+        name: 有数据区县数(去重)
   SsfbCountyDay:
     dataset: DataCrawler.SsfbCountyDay
     grain: 一行 = 区县 × 日
     applicability: 河南区县日数据，含济源和功能区
     source_window: 采集源日值窗口
     limitations: []
+    measures:
+      count:
+        name: 日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+      onlineCounties:
+        name: 有数据区县数(去重)
   SsfbCountyHourRank:
     dataset: DataCrawler.SsfbCountyHourRank
     grain: 一行 = 小时 × 区县排名对象
@@ -51,6 +181,37 @@ cubes:
     source_window: 实时重算窗口
     limitations:
       - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI小时排名(升序,1=最优,含济源)
+      rankPm25:
+        name: PM2.5小时排名(升序,1=最优)
+      rankPm10:
+        name: PM10小时排名(升序,1=最优)
+      rankO3:
+        name: O3小时排名(升序,1=最优)
+      rankNo2:
+        name: NO2小时排名(升序,1=最优)
+      rankSo2:
+        name: SO2小时排名(升序,1=最优)
+      rankCo:
+        name: CO小时排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+      avgPm25:
+        name: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+      avgO38h:
+        name: O3-8h(μg/m³)
+      avgNo2:
+        name: NO2(μg/m³)
+      avgSo2:
+        name: SO2(μg/m³)
+      avgCo:
+        name: CO(mg/m³)
+      countyCount:
+        name: 参与排名区县数
   SsfbCountyDayRank:
     dataset: DataCrawler.SsfbCountyDayRank
     grain: 一行 = 日 × 区县排名对象
@@ -58,18 +219,87 @@ cubes:
     source_window: 实时重算窗口
     limitations:
       - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI日排名(升序,1=最优,含济源)
+      rankPm25:
+        name: PM2.5日排名(升序,1=最优)
+      rankPm10:
+        name: PM10日排名(升序,1=最优)
+      rankO3:
+        name: O3-8h日排名(升序,1=最优,平台O3列)
+      rankNo2:
+        name: NO2日排名(升序,1=最优)
+      rankSo2:
+        name: SO2日排名(升序,1=最优)
+      rankCo:
+        name: CO日排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+      countyCount:
+        name: 参与排名区县数(应≈188)
   SsfbSiteHour:
     dataset: DataCrawler.SsfbSiteHour
     grain: 一行 = 站点 × 小时
     applicability: 许昌县级站小时数据，剔除国控站
     source_window: 采集源滚动窗口
     limitations: []
+    measures:
+      count:
+        name: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+      avgO38h:
+        name: O3-8h均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+      maxAqi:
+        name: AQI最大值
+      onlineSites:
+        name: 有数据站点数(去重)
   SsfbSiteDay:
     dataset: DataCrawler.SsfbSiteDay
     grain: 一行 = 站点 × 日
     applicability: 许昌县级站日数据，剔除国控站
     source_window: 采集源日值窗口
     limitations: []
+    measures:
+      count:
+        name: 站点日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+      onlineSites:
+        name: 有数据站点数(去重)
   SsfbSiteHourRank:
     dataset: DataCrawler.SsfbSiteHourRank
     grain: 一行 = 小时 × 站点排名对象
@@ -77,6 +307,27 @@ cubes:
     source_window: 实时重算窗口
     limitations:
       - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI小时排名(升序,1=最优)
+      rankPm25:
+        name: PM2.5小时排名(升序,1=最优)
+      rankPm10:
+        name: PM10小时排名(升序,1=最优)
+      rankO3:
+        name: O3小时排名(升序,1=最优)
+      rankNo2:
+        name: NO2小时排名(升序,1=最优)
+      rankSo2:
+        name: SO2小时排名(升序,1=最优)
+      rankCo:
+        name: CO小时排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+      avgPm25:
+        name: PM2.5(μg/m³)
+      siteCount:
+        name: 参与排名站点数
   SsfbSiteDayRank:
     dataset: DataCrawler.SsfbSiteDayRank
     grain: 一行 = 日 × 站点排名对象
@@ -84,6 +335,27 @@ cubes:
     source_window: 实时重算窗口
     limitations:
       - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI日排名(升序,1=最优)
+      rankPm25:
+        name: PM2.5日排名(升序,1=最优)
+      rankPm10:
+        name: PM10日排名(升序,1=最优)
+      rankO3:
+        name: O3-8h日排名(升序,1=最优)
+      rankNo2:
+        name: NO2日排名(升序,1=最优)
+      rankSo2:
+        name: SO2日排名(升序,1=最优)
+      rankCo:
+        name: CO日排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+      siteCount:
+        name: 参与排名站点数
   TownHour:
     dataset: DataCrawler.view_dat_town_hour_src/view_dat_town_hour_app
     grain: 一行 = 乡镇站 × 小时 × 口径
@@ -93,6 +365,25 @@ cubes:
       - 必须过滤caliber=app或caliber=src，否则同站同时刻会重复计数
       - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
       - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+      maxAqi:
+        name: AQI最大值
+      onlineSites:
+        name: 有数据站点数(去重)
   TownDay:
     dataset: DataCrawler.view_dat_town_day_src/view_dat_town_day_app
     grain: 一行 = 乡镇站 × 日 × 口径
@@ -102,6 +393,25 @@ cubes:
       - 必须过滤caliber=app或caliber=src，否则同站同日会重复计数
       - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
       - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 站点日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+      avgO3:
+        name: O3日均(μg/m³)
+      maxAqi:
+        name: AQI最大值
+      onlineSites:
+        name: 有数据站点数(去重)
   TownFiveMinute:
     dataset: DataCrawler.TownStationFiveMinute
     grain: 一行 = 乡镇站 × 5分钟
@@ -112,6 +422,25 @@ cubes:
       - 平台5分钟不发布AQI/等级，AQI与首要污染物需按HJ633由六参数推算并在结论中注明
       - 乡镇站小时/日历史仍以TownHour/TownDay为准，本表不用于历史回溯
       - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 5分钟记录数
+      avgPm25:
+        name: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+      avgSo2:
+        name: SO2(μg/m³)
+      avgNo2:
+        name: NO2(μg/m³)
+      avgCo:
+        name: CO(mg/m³)
+      avgO3:
+        name: O3(μg/m³)
+      maxAqi:
+        name: AQI(平台5分钟不发布,恒空)
+      onlineSites:
+        name: 有数据站点数(去重)
   ProvinceMonth:
     dataset: DataCrawler.ProvinceMonthReport
     grain: 一行 = 期次(Scope=month) × 层级(Level) × 区域
@@ -121,6 +450,35 @@ cubes:
       - 供暖季期次无O3列；区/县表(Level=district/county)无SO2/NO2/CO/重污染天
       - 同比列为官方变化率(%)而非绝对值
       - 区域数量随期次变化（2025-12~2026-03为85区/103县市，2026-04起88区/101县市）
+    measures:
+      pm10:
+        name: PM10月均(μg/m³,官方)
+      pm10YoY:
+        name: PM10同比变化率(%,官方)
+      pm25:
+        name: PM2.5月均(μg/m³,官方)
+      pm25YoY:
+        name: PM2.5同比变化率(%,官方)
+      o3:
+        name: O3-8h第90百分位(μg/m³,供暖季期次无)
+      o3YoY:
+        name: O3同比变化率(%)
+      goodDays:
+        name: 优良天数(当月)
+      goodDaysChange:
+        name: 优良天数同比变化(天)
+      goodDaysRatio:
+        name: 优良比例(%)
+      heavyDays:
+        name: 重度及以上污染天数(仅city级有)
+      heavyDaysChange:
+        name: 重度及以上污染天数同比变化(天)
+      compositeIndex:
+        name: 综合指数(官方)
+      compositeIndexYoY:
+        name: 综合指数同比变化率(%)
+      count:
+        name: 记录数
   ProvinceMonthCum:
     dataset: DataCrawler.ProvinceMonthReport
     grain: 一行 = 期次(Scope=cum) × 层级(Level) × 区域
@@ -128,6 +486,35 @@ cubes:
     source_window: 同ProvinceMonth；2026年第1期无累计表
     limitations:
       - 累计为截至dataMonth当月的1-N月值；其余限制同ProvinceMonth
+    measures:
+      pm10:
+        name: PM10累计均值(μg/m³,官方)
+      pm10YoY:
+        name: PM10累计同比变化率(%)
+      pm25:
+        name: PM2.5累计均值(μg/m³,官方)
+      pm25YoY:
+        name: PM2.5累计同比变化率(%)
+      o3:
+        name: O3-8h第90百分位(累计,供暖季期次无)
+      o3YoY:
+        name: O3累计同比变化率(%)
+      goodDays:
+        name: 优良天数(1-N月累计)
+      goodDaysChange:
+        name: 优良天数累计同比变化(天)
+      goodDaysRatio:
+        name: 优良比例(累计,%)
+      heavyDays:
+        name: 重度及以上污染天数(累计,仅city级有)
+      heavyDaysChange:
+        name: 重度及以上污染天数累计同比变化(天)
+      compositeIndex:
+        name: 综合指数(累计,官方)
+      compositeIndexYoY:
+        name: 综合指数累计同比变化率(%)
+      count:
+        name: 记录数
   CountyMonth:
     dataset: DataCrawler.CountyMonthReport
     grain: 一行 = 区域 × 月(Scope=month)
@@ -136,6 +523,27 @@ cubes:
     limitations:
       - 重污染天2023年起才有
       - 魏都/开发/东城/示范/建安=国家平台，鄢陵/襄城/禹州/长葛=省平台，两平台口径不同
+    measures:
+      pm10:
+        name: PM10月均(μg/m³)
+      pm25:
+        name: PM2.5月均(μg/m³)
+      so2:
+        name: SO2月均(μg/m³)
+      no2:
+        name: NO2月均(μg/m³)
+      co95:
+        name: CO第95百分位月值(mg/m³)
+      o3_8h_90:
+        name: O3-8h第90百分位月值(μg/m³)
+      goodDays:
+        name: 优良天数(当月)
+      heavyDays:
+        name: 重污染天数(当月,2023起才有)
+      compositeIndex:
+        name: 综合指数(当月)
+      count:
+        name: 记录数
   CountyMonthCum:
     dataset: DataCrawler.CountyMonthReport
     grain: 一行 = 区域 × 累计截止月(Scope=cum)
@@ -144,6 +552,27 @@ cubes:
     limitations:
       - 个别区域累计与当月之和存在1~2天官方修订差，原值入库勿互相换算
       - 重污染天2023年起才有
+    measures:
+      pm10:
+        name: PM10累计均值(μg/m³)
+      pm25:
+        name: PM2.5累计均值(μg/m³)
+      so2:
+        name: SO2累计均值(μg/m³)
+      no2:
+        name: NO2累计均值(μg/m³)
+      co95:
+        name: CO第95百分位累计值(mg/m³)
+      o3_8h_90:
+        name: O3-8h第90百分位累计值(μg/m³)
+      goodDays:
+        name: 优良天数(1-N月合计)
+      heavyDays:
+        name: 重污染天数(1-N月合计,2023起才有)
+      compositeIndex:
+        name: 综合指数(1-N月累计)
+      count:
+        name: 记录数
   XuchangCityYearTarget:
     dataset: DataCrawler.XuchangCityYearTarget
     grain: 一行 = 年度
@@ -153,6 +582,35 @@ cubes:
       - 实际值为国家网口径，与 CityYearPm25Avg 平台实时未审核列有1~5μg/m³差，年度考核以本表为准
       - SO2/NO2/CO 年均仅2015-2025、O3年均仅2015-2020；2025年PM10目标为市定
       - 2026年仅有目标值（在途年度）
+    measures:
+      pm10Target:
+        name: PM10年度目标(μg/m³)
+      pm25Target:
+        name: PM2.5年度目标(μg/m³)
+      goodDaysTarget:
+        name: 优良天年度目标(天)
+      heavyDaysTarget:
+        name: 重污染天年度目标(天,2022起下达)
+      pm10:
+        name: PM10年均实际(μg/m³,国家网口径)
+      pm25:
+        name: PM2.5年均实际(μg/m³,国家网口径)
+      so2:
+        name: SO2年均(μg/m³,仅2015-2025)
+      no2:
+        name: NO2年均(μg/m³)
+      co95:
+        name: CO第95百分位年均(mg/m³)
+      o3:
+        name: O3年均(μg/m³,仅2015-2020)
+      goodDays:
+        name: 优良天实际(天)
+      heavyDays:
+        name: 重污染天实际(天,剔沙尘)
+      o3ExceedDays:
+        name: 臭氧超标天(天)
+      count:
+        name: 记录数(应=1/年)
   XuchangCountyYearTarget:
     dataset: DataCrawler.XuchangCountyYearTarget
     grain: 一行 = 区域 × 年度
@@ -162,6 +620,25 @@ cubes:
       - 2023年重污染天与CountyMonthReport月报差3~4天（2023-03沙尘，月报未剔沙尘），年度口径以本表为准
       - 2020年仅有重污染天；2025年许昌市PM10目标为市定未下达
       - 个别区域源表间1天出入以05表为准（Remark注明）
+    measures:
+      pm10Target:
+        name: PM10年度目标(μg/m³)
+      pm10:
+        name: PM10年均实际(μg/m³)
+      pm25Target:
+        name: PM2.5年度目标(μg/m³)
+      pm25:
+        name: PM2.5年均实际(μg/m³)
+      goodDaysTarget:
+        name: 优良天年度目标(天)
+      goodDays:
+        name: 优良天实际(天)
+      heavyDaysTarget:
+        name: 重污染天年度目标(天,2022起)
+      heavyDays:
+        name: 重污染天实际(天,剔沙尘)
+      count:
+        name: 记录数(应=1/区域/年)
   HenanCityYearTarget:
     dataset: DataCrawler.HenanCityYearTarget
     grain: 一行 = 地市 × 年度
@@ -171,6 +648,41 @@ cubes:
       - 优良天/重污染天2021/2022/2024为天数、2023/2025为比例%(Ratio列)，同列跨年口径不同
       - 5-9月臭氧超标天仅2022-2023；2023年PM10/PM2.5目标列源表为空
       - 2025年行源表未定稿，实际值勿引用；与市口径偶有1μg差（如2022许昌PM2.5省47/市46）
+    measures:
+      pm10Target:
+        name: PM10年度目标(μg/m³)
+      pm10:
+        name: PM10年均实际(μg/m³,省考核)
+      pm25Target:
+        name: PM2.5年度目标(μg/m³)
+      pm25:
+        name: PM2.5年均实际(μg/m³,省考核)
+      goodDaysTarget:
+        name: 优良天目标(天,2021/2022/2024)
+      goodDays:
+        name: 优良天实际(天,2021/2022/2024)
+      goodDaysRatioTarget:
+        name: 优良天比例目标(%)
+      goodDaysRatio:
+        name: 优良天比例实际(%,2023/2025)
+      heavyDaysTarget:
+        name: 重污染天目标(天)
+      heavyDays:
+        name: 重污染天实际(天)
+      heavyDaysRatioTarget:
+        name: 重污染天比例目标(%)
+      heavyDaysRatio:
+        name: 重污染天比例实际(%,2023/2025)
+      o3ExceedDaysTarget:
+        name: 5-9月臭氧超标天目标(天,仅2022-2023)
+      o3ExceedDays:
+        name: 5-9月臭氧超标天实际(天)
+      o3ExceedOver:
+        name: 臭氧超标天超出目标(天)
+      completedCount:
+        name: 完成指标数量(0-4)
+      count:
+        name: 记录数(应=18/年)
   Rank168CityMonthly:
     dataset: DataCrawler.Rank168CityMonthly
     grain: 一行 = 城市 × 期次类型(month/cum) × 月份
@@ -179,3 +691,14 @@ cubes:
     limitations:
       - 仅用于全国排名与横向对比；浓度绝对值以本地口径为准
       - 与省内排名SsfbCityRanking不可混算；排名并列时排名值可重复
+    measures:
+      compositeIndex:
+        name: 环境空气质量综合指数(部发布)
+      compositeIndexRank:
+        name: 综合指数排名(倒序,1=最差)
+      pm25:
+        name: PM2.5浓度(μg/m³,部发布)
+      pm25Rank:
+        name: PM2.5浓度排名(倒序,1=最差)
+      count:
+        name: 记录数
