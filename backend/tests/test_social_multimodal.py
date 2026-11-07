@@ -216,7 +216,7 @@ def test_memory_consolidator_prompt_filters_available_tools():
             "replace_memory",
             "remove_memory",
             "execute_python",
-            "create_pptx_with_ppt_master",
+            "list_directory",
         ],
     )
 

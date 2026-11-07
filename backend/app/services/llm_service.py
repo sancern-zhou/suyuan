@@ -250,7 +250,6 @@ class LLMService:
 
         profile = (auto_profile or "").strip().lower()
         profile_config = {
-            "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
         }.get(profile)
         if profile_config and profile_config.strip():
             candidates = [
@@ -363,7 +362,6 @@ class LLMService:
             return
 
         profile_configs = {
-            "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
         }
         profile_config = profile_configs.get(profile)
         if profile_config is None:

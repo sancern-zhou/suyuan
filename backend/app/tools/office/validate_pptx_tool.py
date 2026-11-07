@@ -87,7 +87,7 @@ class ValidatePptxTool(LLMTool):
             name="validate_pptx",
             description=(
                 "渲染PPTX并执行基础交付检查：PDF/PNG预览、montage、空页/越界/字体检测。\n\n"
-                "⚠️ 使用前请先阅读：backend/app/tools/office/PPT操作指南.md"
+                "生成 PPT 前先 view_skill: pptx_authoring 获取设计规范与 QA 闭环协议"
             ),
             category=ToolCategory.QUERY,
             version="1.0.0",

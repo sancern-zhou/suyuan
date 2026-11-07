@@ -241,7 +241,7 @@ def attach_document_resources(
         "svg": "image",
     }
     role = "output"
-    # docx 前端原生渲染（预览/下载）；编辑仅 xlsx（有 save 回传链路）与 pptx（editable_ppt 管线）
+    # docx 前端原生渲染（预览/下载）；编辑仅 xlsx（有 save 回传链路）与 pptx（页图渲染管线）
     capabilities = (
         ("preview", "download", "edit")
         if fmt in {"xlsx", "pptx"}

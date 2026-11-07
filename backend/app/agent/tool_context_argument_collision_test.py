@@ -241,7 +241,7 @@ async def test_planner_preserves_tool_input_from_streaming_start_block():
     class ToolBlock:
         type = "tool_use"
         id = "toolu_ppt"
-        name = "create_pptx_with_ppt_master"
+        name = "validate_pptx"
         input = {"title": "测试PPT", "slide_plan": [{"title": "第一页"}]}
 
     class FakeLLMService:
@@ -317,7 +317,7 @@ async def test_planner_does_not_execute_tool_when_streaming_json_delta_is_malfor
     class ToolBlock:
         type = "tool_use"
         id = "toolu_bad_ppt"
-        name = "create_pptx_with_ppt_master"
+        name = "validate_pptx"
 
     class Delta:
         type = "input_json_delta"
@@ -352,5 +352,5 @@ async def test_planner_does_not_execute_tool_when_streaming_json_delta_is_malfor
 
     assert tool_use_events == []
     assert actions[0]["type"] == "PLAIN_TEXT_REPLY"
-    assert "create_pptx_with_ppt_master" in actions[0]["answer"]
+    assert "validate_pptx" in actions[0]["answer"]
     assert "tool input JSON" in actions[0]["answer"]

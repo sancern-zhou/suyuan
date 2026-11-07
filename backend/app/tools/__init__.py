@@ -870,20 +870,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="validate_office", error=str(e))
 
     try:
-        from app.tools.office.ppt_master_tool import CreatePptxWithPptMasterTool
-        registry.register(CreatePptxWithPptMasterTool(), priority=352)
-        logger.info("tool_loaded", tool="create_pptx_with_ppt_master")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_pptx_with_ppt_master", error=str(e))
-
-    try:
-        from app.tools.office.editable_ppt.tool import ManageEditablePptTool
-        registry.register(ManageEditablePptTool(), priority=353)
-        logger.info("tool_loaded", tool="manage_editable_ppt")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="manage_editable_ppt", error=str(e))
-
-    try:
         from app.tools.office.wecom_cli import WeComCliTool
         registry.register(WeComCliTool(), priority=354)
         logger.info("tool_loaded", tool="wecom_cli")
