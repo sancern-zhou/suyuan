@@ -64,6 +64,9 @@ def test_shared_pptx_authoring_reference_contracts_are_preserved():
     # QA 协议覆盖 gate 三态与修复对照
     for token in ("passed", "needs_revision", "qa_failed", "structured_issues"):
         assert token in qa_loop
+    # 视觉自评协议：挂载通道与最差页定位（多模态看图，非可选）
+    for token in ("视觉自评", "as_multimodal_attachment", "worst_pages", "montage"):
+        assert token in qa_loop
     # 交付契约：归档路径与业务图嵌入约定
     assert "artifact_path(" in contract
     assert "create_business_chart" in contract

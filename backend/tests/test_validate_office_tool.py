@@ -145,3 +145,39 @@ async def test_unsupported_suffix_is_rejected(tool, tmp_path):
 
     assert result["success"] is False
     assert "只支持" in result["data"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_docx_render_produces_montage_and_visual_review_hint(tool, tmp_path, monkeypatch):
+    """docx 渲染成功时产出 montage 总览 + 视觉自评引导（xlsx 无渲染不适用）。"""
+    from PIL import Image
+
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    png_paths = []
+    for index in range(2):
+        png = pages_dir / f"page-{index:03d}.png"
+        Image.new("RGB", (320, 180), "#FFFFFF").save(png)
+        png_paths.append(png)
+    fake_pdf = tmp_path / "deck.pdf"          # 不存在：资源声明按 is_file 跳过
+    fake_pdf.write_bytes(b"%PDF-1.4\n%%EOF")  # 存在但非真 pdf → fonts 检测需 mock
+
+    monkeypatch.setattr(
+        ValidateOfficeTool,
+        "_render_docx",
+        lambda self, file_path, qa_dir, dpi: (fake_pdf, png_paths),
+    )
+    monkeypatch.setattr(
+        "app.tools.office.validate_office_tool.detect_pdf_fonts",
+        lambda pdf_path, expected_fonts=None: {"fonts": [], "issues": [], "missing_expected_fonts": []},
+    )
+    path = _write_docx(tmp_path / "ok.docx", [("heading", "标题"), ("para", "正文内容" * 5)])
+
+    result = await tool.execute(path=str(path), output_dir=str(tmp_path / "qa"))
+
+    assert result["success"] is True
+    render = result["data"]["render"]
+    assert Path(render["montage_path"]).is_file()
+    assert any("as_multimodal_attachment" in note for note in result["data"]["usage_notes"])
+    resource_renderers = [r.get("renderer") for r in result["resources"]]
+    assert "image" in resource_renderers          # montage 已声明

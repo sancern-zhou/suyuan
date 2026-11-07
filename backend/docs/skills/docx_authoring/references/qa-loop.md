@@ -35,6 +35,25 @@ validate_office({
 ## 4. 迭代纪律
 
 - 每轮：修改生成代码 → execute_python 重新生成（覆盖同一 artifact_path 文件）→ 重新 validate_office。
-- 最多 **3 轮**。仍有非阻断（low）问题且正文结构完整可交付并说明；
+- 最多 **3 轮**（含视觉自评修复）。仍有非阻断（low）问题且正文结构完整可交付并说明；
   仍有 high 或 `docx_no_heading` → 退回最简结构（H1/H2 + 段落 + 表格）重来。
-- 长文档（>8 页）每轮抽看首/尾/表格页的 page_png 复核跨页排版。
+
+## 5. 视觉自评（确定性 gate 通过后必须执行）
+
+validate_office（docx）返回 `render.montage_path` 与 `render.page_pngs`。
+**结构检查拦不住排版问题**——gate 通过后必须亲自看图：
+
+1. `read_file(path=<montage_path>, as_multimodal_attachment=true)` 挂载全文总览
+2. 疑似页（总览中观感异常的）逐页 `read_file(path=<page_png>, as_multimodal_attachment=true)` 挂载
+3. 检查清单（判定基线：用户会不会接受）：
+
+| 维度 | 检查点 |
+|---|---|
+| 跨页排版 | 无孤行（标题落页尾/单行落页首）；表格未在行中间断裂；图片未溢出页宽 |
+| 版面 | 页边距均匀；段落间距一致；无大段空白 |
+| 字体 | 全文中文一致（宋体混入 = eastasia 未设，回 code-recipes §1 修）；标题层级观感清晰 |
+| 表格 | 表头完整可见；列宽合理无挤压换行；隔行底色正确 |
+| 图片 | 居中、宽度统一（5.8in）；图题紧贴图下 |
+
+4. fail 项修复后重生成 + 重新 validate_office + 重新自评
+5. **交付标准：确定性 gate passed 且视觉自评无 fail 页**；目录域未更新的占位提示不算 fail（打开后 F9 更新，见 code-recipes §4 说明）

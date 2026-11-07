@@ -27,12 +27,13 @@ enabled: true
 2. execute_python 生成 DOCX：输出路径必须 `artifact_path("主题_YYYYMMDD.docx")`
 3. validate_office 验收：读取 `data.gate` 与 `data.structured_issues`
 4. 按修复对照表修复，重新生成并重新验收，最多 3 轮
-5. `gate.status == "passed"` 才算交付（PDF 页图随资源组自动发布）
+5. gate 通过后对 `render.montage_path` 用 `read_file(path, as_multimodal_attachment=true)`
+   挂载做视觉自评（跨页排版/字体一致性检查，标准见 qa-loop §5）
 
 ## 红线
 
 - 输出必须经 `artifact_path()`，禁止自拼 data registry 路径
-- 交付前 `gate.status` 必须为 `passed`；`qa_failed` 不得交付
+- 交付前 `gate.status` 必须为 `passed` 且视觉自评无 fail 页；`qa_failed` 不得交付
 - 全文至少 1 个标题，标题层级禁止跳级（H1→H3）；标题必须用标准 Heading 样式
 - 中文字体统一 Noto Sans CJK SC（Normal 样式 + eastasia 节点，见 code-recipes），
   validate_office 传 `expected_fonts: ["Noto Sans CJK SC"]` 校验

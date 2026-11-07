@@ -194,7 +194,10 @@ class ValidateOfficeTool(LLMTool):
         fonts: Dict[str, Any] = {"fonts": [], "issues": [], "missing_expected_fonts": []}
         try:
             pdf_path, png_paths = await asyncio.to_thread(self._render_docx, file_path, qa_dir, dpi)
+            from app.tools.office.slides_qa.create_montage import create_montage
+            montage_path = create_montage(png_paths, qa_dir / "montage.png")
             render = {"enabled": True, "pdf_path": str(pdf_path), "page_count": len(png_paths),
+                      "montage_path": str(montage_path) if montage_path else None,
                       "page_pngs": [str(p) for p in png_paths]}
             rendered = inspect_rendered_pages(png_paths)
             for issue in rendered.get("issues", []):
@@ -206,7 +209,14 @@ class ValidateOfficeTool(LLMTool):
             issues.append({"type": "rendered_qa_unavailable", "message": str(render_error)[:200]})
 
         issues.extend(self._inspect_docx_structure(file_path))
-        return {"file_path": str(file_path), "qa_dir": str(qa_dir), "render": render, "fonts": fonts, "issues": issues}
+        report = {"file_path": str(file_path), "qa_dir": str(qa_dir), "render": render, "fonts": fonts, "issues": issues}
+        if render.get("enabled"):
+            report["usage_notes"] = [
+                "视觉自评：确定性 gate 通过≠视觉合格。用 read_file(montage_path, "
+                "as_multimodal_attachment=true) 挂载总览定位排版问题（孤行/表格跨页断裂/图片溢出），"
+                "必要时逐页挂载 page_pngs，按技能 qa-loop 的视觉自评标准检查。",
+            ]
+        return report
 
     def _render_docx(self, file_path: Path, qa_dir: Path, dpi: int):
         # render_pptx_to_pdf 的 soffice 转换是通用的（docx→pdf 直接可用）
@@ -342,6 +352,12 @@ class ValidateOfficeTool(LLMTool):
             members.append(derivative_file(
                 Path(pdf_path), group_key=group_key, parent_key=suffix,
                 tool_name="validate_office", relation="preview", renderer="pdf",
+            ))
+        montage_path = render.get("montage_path")
+        if montage_path and Path(montage_path).is_file():
+            members.append(derivative_file(
+                Path(montage_path), group_key=group_key, parent_key=suffix,
+                tool_name="validate_office", relation="attachment", renderer="image",
             ))
         for png in render.get("page_pngs", [])[:30]:
             if Path(png).is_file():
