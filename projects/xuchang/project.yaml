@@ -207,6 +207,8 @@ backend:
       - execute_python
       # PPTX 自由创作（技能 pptx_authoring）的渲染级 QA 验收闭环
       - validate_pptx
+      # DOCX/XLSX 自由创作（技能 docx_authoring/xlsx_authoring）的验收闭环
+      - validate_office
       - create_report_package
       - run_agent_workflow
       - list_skills
