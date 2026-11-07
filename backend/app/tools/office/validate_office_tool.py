@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.office.validate_pptx_tool import PLACEHOLDER_RE
 from app.tools.office.slides_qa.detect_fonts import detect_pdf_fonts
 from app.tools.office.slides_qa.detect_overflow import inspect_rendered_pages
 from app.tools.office.slides_qa.render_pptx import render_pdf_to_pngs, render_pptx_to_pdf
@@ -39,6 +40,7 @@ DOCX_ISSUE_SEVERITY = {
     "validation_error": "high",
     "rendered_blank_page": "high",
     "docx_empty_document": "high",
+    "docx_placeholder_residue": "high",
     "docx_no_heading": "medium",
     "docx_heading_level_jump": "low",
     "expected_font_missing": "medium",
@@ -49,6 +51,7 @@ DOCX_ISSUE_SEVERITY = {
 XLSX_ISSUE_SEVERITY = {
     "validation_error": "high",
     "xlsx_error_value": "high",
+    "xlsx_placeholder_residue": "high",
     "xlsx_sheet_name_invalid": "high",
     "xlsx_empty_sheet": "medium",
     "xlsx_column_overflow": "medium",
@@ -60,6 +63,7 @@ DOCX_ISSUE_MESSAGES = {
     "validation_error": "DOCX 验证流程执行异常。",
     "rendered_blank_page": "渲染结果为空白页。",
     "docx_empty_document": "文档没有正文内容。",
+    "docx_placeholder_residue": "文档存在占位符残留（xxx/TODO/占位/待补充等），交付前必须清除。",
     "docx_no_heading": "文档缺少标题样式（Heading/标题），导航与目录无法建立。",
     "docx_heading_level_jump": "标题层级跳级（如 H1 直接到 H3），目录结构混乱。",
     "expected_font_missing": "PDF 字体检测未发现期望字体，中文可能未设置 eastasia 字体。",
@@ -70,6 +74,7 @@ DOCX_ISSUE_MESSAGES = {
 XLSX_ISSUE_MESSAGES = {
     "validation_error": "XLSX 验证流程执行异常。",
     "xlsx_error_value": "单元格存在公式错误值。",
+    "xlsx_placeholder_residue": "单元格存在占位符残留（xxx/TODO/占位/待补充等），交付前必须清除。",
     "xlsx_sheet_name_invalid": "工作表名称非法（>31 字符或含 \\ / * ? : [ ]）。",
     "xlsx_empty_sheet": "工作表为空。",
     "xlsx_column_overflow": "列宽不足以显示内容（中文按 2 字符宽计）。",
@@ -141,7 +146,8 @@ class ValidateOfficeTool(LLMTool):
             if suffix == ".docx":
                 report = await self._inspect_docx(file_path, qa_dir, expected_fonts, dpi)
             else:
-                report = self._inspect_xlsx(file_path)
+                # soffice 重算为阻塞调用，放线程避免卡事件循环
+                report = await asyncio.to_thread(self._inspect_xlsx, file_path, qa_dir)
 
             structured = _structure_issues(
                 report["issues"],
@@ -209,7 +215,8 @@ class ValidateOfficeTool(LLMTool):
             issues.append({"type": "rendered_qa_unavailable", "message": str(render_error)[:200]})
 
         issues.extend(self._inspect_docx_structure(file_path))
-        report = {"file_path": str(file_path), "qa_dir": str(qa_dir), "render": render, "fonts": fonts, "issues": issues}
+        report = {"file_path": str(file_path), "qa_dir": str(qa_dir), "render": render, "fonts": fonts,
+                  "issues": issues}
         if render.get("enabled"):
             report["usage_notes"] = [
                 "视觉自评：确定性 gate 通过≠视觉合格。用 read_file(montage_path, "
@@ -252,11 +259,16 @@ class ValidateOfficeTool(LLMTool):
                 if current - previous > 1:
                     issues.append({"type": "docx_heading_level_jump", "from_level": previous, "to_level": current})
                     break
+        for paragraph in document.paragraphs:
+            text = (paragraph.text or "").strip()
+            if text and PLACEHOLDER_RE.search(text):
+                issues.append({"type": "docx_placeholder_residue", "excerpt": text[:24]})
+                break
         return issues
 
     # ------------------------------------------------------------------ xlsx
 
-    def _inspect_xlsx(self, file_path: Path) -> Dict[str, Any]:
+    def _inspect_xlsx(self, file_path: Path, qa_dir: Path) -> Dict[str, Any]:
         try:
             from openpyxl import load_workbook
         except ImportError:
@@ -267,7 +279,9 @@ class ValidateOfficeTool(LLMTool):
         issues: List[Dict[str, Any]] = []
         sheets_meta: List[Dict[str, Any]] = []
         workbook = load_workbook(str(file_path), data_only=False)
-        values_view = load_workbook(str(file_path), data_only=True)
+        # 错误值扫描依赖公式缓存值：新写公式无缓存，先经 LibreOffice 重算通道填充
+        recalc_path, recalc_note = self._recalc_cached_values(file_path, qa_dir)
+        values_view = load_workbook(str(recalc_path or file_path), data_only=True)
 
         invalid_chars = set('\\/*?:[]')
         for sheet in workbook.worksheets:
@@ -311,6 +325,18 @@ class ValidateOfficeTool(LLMTool):
                 issues.append({"type": "xlsx_empty_sheet", "sheet": sheet.title})
             if error_cells:
                 issues.append({"type": "xlsx_error_value", "sheet": sheet.title, "cells": error_cells})
+            # 占位符残留扫描（与 docx/pptx 同一正则）
+            found_placeholders = []
+            for row in values.iter_rows():
+                for cell in row:
+                    if isinstance(cell.value, str) and PLACEHOLDER_RE.search(cell.value):
+                        found_placeholders.append(cell.coordinate)
+                        if len(found_placeholders) >= 10:
+                            break
+                if len(found_placeholders) >= 10:
+                    break
+            if found_placeholders:
+                issues.append({"type": "xlsx_placeholder_residue", "sheet": sheet.title, "cells": found_placeholders})
             if overflow_columns:
                 issues.append({"type": "xlsx_column_overflow", "sheet": sheet.title, "columns": overflow_columns})
             if not sheet.freeze_panes and filled_rows > 15:
@@ -323,7 +349,45 @@ class ValidateOfficeTool(LLMTool):
                 "error_cells": error_cells, "overflow_columns": overflow_columns,
             })
 
-        return {"file_path": str(file_path), "sheets": sheets_meta, "issues": issues}
+        return {"file_path": str(file_path), "sheets": sheets_meta,
+                "formula_recalc": recalc_note or "ok", "issues": issues}
+
+    @staticmethod
+    def _recalc_cached_values(file_path: Path, qa_dir: Path) -> tuple[Optional[Path], Optional[str]]:
+        """经 LibreOffice 重算填充公式缓存值（openpyxl 新写公式无缓存，错误值扫描依赖它）。
+
+        返回 (重算产物路径, None) 或 (None, 降级原因)。失败不阻断结构检查。
+        """
+        try:
+            import shutil
+
+            from openpyxl import load_workbook
+
+            from app.tools.office.soffice import run_soffice
+
+            staging = qa_dir / "recalc"
+            in_dir = staging / "in"
+            out_dir = staging / "out"
+            in_dir.mkdir(parents=True, exist_ok=True)
+            tmp = in_dir / "source.xlsx"
+            shutil.copy2(file_path, tmp)
+            workbook = load_workbook(str(tmp))
+            try:
+                workbook.calculation.fullCalcOnLoad = True
+            except AttributeError:
+                pass
+            workbook.save(str(tmp))
+            result = run_soffice(
+                ["--headless", "--convert-to", "xlsx", "--outdir", str(out_dir), str(tmp)],
+                timeout=90,
+                errors="replace",
+            )
+            converted = out_dir / "source.xlsx"
+            if result.returncode != 0 or not converted.exists():
+                return None, "recalc_unavailable"
+            return converted, None
+        except Exception:  # noqa: BLE001 — 重算通道失败降级，不阻断结构校验
+            return None, "recalc_failed"
 
     # ------------------------------------------------------------------ 声明
 

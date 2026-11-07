@@ -181,3 +181,41 @@ async def test_docx_render_produces_montage_and_visual_review_hint(tool, tmp_pat
     assert any("as_multimodal_attachment" in note for note in result["data"]["usage_notes"])
     resource_renderers = [r.get("renderer") for r in result["resources"]]
     assert "image" in resource_renderers          # montage 已声明
+
+
+_REAL_RECALC = ValidateOfficeTool._recalc_cached_values  # 模块导入期捕获原始实现
+
+
+@pytest.fixture(autouse=True)
+def _skip_recalc(monkeypatch):
+    """单测跳过 LibreOffice 重算通道（保持快且确定）；重算有独立用例覆盖。"""
+    monkeypatch.setattr(
+        ValidateOfficeTool,
+        "_recalc_cached_values",
+        staticmethod(lambda file_path, qa_dir: (None, "recalc_skipped_test")),
+    )
+
+
+@pytest.mark.asyncio
+async def test_xlsx_placeholder_residue_is_blocking(tool, tmp_path):
+    path = _write_xlsx(tmp_path / "ph.xlsx", {"明细": [["站点", "备注"], ["A站", "待补充"], ["B站", 1]]})
+
+    result = await tool.execute(path=str(path), output_dir=str(tmp_path / "qa"))
+
+    issues = {i["type"] for i in result["data"]["structured_issues"]}
+    assert "xlsx_placeholder_residue" in issues
+    assert result["data"]["gate"]["blocking"] is True
+
+
+def test_recalc_degrades_gracefully_when_soffice_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setattr(ValidateOfficeTool, "_recalc_cached_values", staticmethod(_REAL_RECALC))
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("soffice missing")
+
+    monkeypatch.setattr("app.tools.office.soffice.run_soffice", _boom)
+    path = _write_xlsx(tmp_path / "f.xlsx", {"S": [["a", 1]]})
+    result_path, note = ValidateOfficeTool._recalc_cached_values(path, tmp_path / "qa")
+
+    assert result_path is None
+    assert note == "recalc_failed"

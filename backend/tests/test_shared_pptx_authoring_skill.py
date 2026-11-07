@@ -58,6 +58,9 @@ def test_shared_pptx_authoring_reference_contracts_are_preserved():
     # 设计阈值与 validate_pptx 检查逻辑对齐（改任一侧必须同步）
     for token in ("620", "24pt", "8pt", "Noto Sans CJK SC", "repeated_layout_pattern"):
         assert token in design
+    # 审美层（挖掘移植）：母题结构 + AI 味黑名单 + 引用纪律
+    for token in ("母题", "黑名单", "数据来源"):
+        assert token in design
     # 中文字体必须写 eastasia 节点，否则服务器渲染漂移
     assert 'qn("a:ea")' in recipes
     assert "artifact_path(" in recipes
