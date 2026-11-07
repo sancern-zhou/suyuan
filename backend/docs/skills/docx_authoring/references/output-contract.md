@@ -19,7 +19,7 @@
 
 ## 4. 资源发布
 
-- execute_python 保存 .docx 后会自动生成 PDF 预览；validate_office 通过后把
+- docx 前端原生预览（Web 渲染器直读 OOXML，无需 PDF 派生）；validate_office 通过后把
   docx 主文件 + report.json + PDF/页图作为同一资源组自动发布，
   `gate.status == "passed"` 即完成交付，无需手动 publish_session_file。
 - 多文件交付（文档 + 附表 xlsx）每份单独 artifact_path + 单独验收。
