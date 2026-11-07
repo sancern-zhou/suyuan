@@ -101,79 +101,27 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
     """Execute read-only SQL against the DataCrawler MySQL long-history database."""
 
     def __init__(self) -> None:
-        from app.tools.query.execute_crawler_sql_query.table_contracts import (
-            render_table_contracts,
-        )
-
-        contracts_block = render_table_contracts()
-        if not contracts_block:
-            contracts_block = (
-                "\n\n表字段契约缺失：写 SQL 前必须先用 describe_table 确认字段名与大小写。"
-            )
         schema_description = (
-            "大气监测采集库（MySQL）只读 SQL 查询工具：许昌本地长历史数据"
-            "（站点/城市逐小时与逐日、PM2.5 年均值、沙尘日清单、站点目录）+ 河南实时发布采集表"
-            "（Ssfb*：18 城市组含济源的小时/日/单项浓度排名、许昌县级站）。"
-            "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
-            f"仅允许白名单表：{', '.join(CRAWLER_SQL_TABLES)}；禁止采集运行日志和失败记录表。"
-            "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
-            f"使用 LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
-            "不确定字段时先调用 describe_table，不要查询 information_schema。"
-            "\n\n【查询优先级】常规指标（18 城含济源的排名/最新小时日值/县级站/乡镇站）优先走"
-            " xuchang_cube_metrics 语义层；本工具用于长历史、同比、跨年趋势和语义层未覆盖的明细。"
-            "国控站点日值（含昨日）优先走 query_airdata_platform 中台接口"
-            "（v_s_d_app_145 审核 / v_s_d_src_145 原始，μg/m³，timepoint 过滤值用纯日期 YYYY-MM-DD）；"
-            "StationDay 保留用于 2018-09 起的长历史与中台接口缺数时的补充，两者口径为中大同源。"
-            "省内城市日排名（含济源）：SsfbCityRanking（仅 periodType='daily'，Rank* 升序=1 最优，"
-            "相同值并列），不要从 SsfbCityDay 逐日聚合。"
-            "城市/区/县市月与 1-N月累计官方统计：ProvinceMonthReport"
-            "（Level=city/district/county/province，Scope=month/cum，同比列 Xxx_YoY 为变化率；"
-            "本地手算的 SsfbCityRanking monthly/yearly 已停用并删除）。"
-            "\n\n【统计口径硬规则】禁止用 CityDay/StationDay/CityHour/StationHour/SsfbCityDay 等"
-            "逐日、逐小时明细自行汇总或计算月度、季度、半年、年度统计值"
-            "（包括均值、极值、有效天数、达标率、重污染天数、排名、同比等任何月度及以上指标）："
-            "许昌月度及以上统计的唯一来源是 airdata_calc_report_summary 报表接口，"
-            "河南 19 市（区）月/年累计官方统计查 ProvinceMonthReport（官方月报），"
-            "许昌 PM2.5 年均历史查 CityYearPm25Avg（平台预计算表）；"
-            "许昌县市区（10 区域）月度与 1-N 月累计统计查 CountyMonthReport"
-            "（官方月报剔除沙尘原值，勿从明细自算）。"
-            "年度目标与完成情况（含历史年度值）查 XuchangCityYearTarget/XuchangCountyYearTarget/"
-            "HenanCityYearTarget（年度考核定版，勿从明细或月报累计自算年度值；"
-            "XuchangCountyYearTarget 2023 年重污染天为剔沙尘考核口径，与 CountyMonthReport 月报差"
-            " 3~4 天系 2023-03 沙尘所致，年度问题以年度表为准）；"
-            "168 城市全国排名查 Rank168CityMonthly（PeriodType='month'/'cum'，"
-            "仅用于全国排名与横向对比，浓度绝对值以本地口径为准）。"
-            "逐日/逐小时明细仅用于过程分析、逐日序列与趋势展示，不是统计口径来源；"
-            "报表或排名表没有的口径要如实说明无该统计，不得用明细手算代替。"
-            "\n\n【扣沙天口径】CitySandDay 是官方沙尘日清单（许昌市，唯一城市 411000/许昌市，"
-            "时间列 DayTime 为当日 00:00:00，表里只有城市+日期、没有任何浓度数值），"
-            "\u201c扣除沙尘天\u201d一律用它过滤逐日明细："
-            "SELECT ... FROM CityDay WHERE Date NOT IN (SELECT DayTime FROM CitySandDay)；"
-            "不要把 CitySandDay 当数值表查询或聚合，也不要自行判断某天是不是沙尘天。"
-            "官方报表/排名接口没有现成的扣沙天统计时，才按上述过滤从明细表算，并在结果中注明口径。"
-            "\n\n【各表数据时间范围】（查询窗口必须在范围内，否则空结果）：\n"
-            + "\n".join(f"- {name}: {desc}" for name, desc in TABLE_TIME_RANGES.items())
-            + "\n注意：StationHour 站名列是 StationName；StationDay/CityDay 没有 StationName 列，"
-            "站名/城市名用 PositionName/Area，不要跨表套用列名。"
-            "\n注意：老表（StationHour/CityHour/StationDay/CityDay/CitySandDay/CityYearPm25Avg）仅覆盖许昌单城市，"
-            "Ssfb* 表覆盖河南 18 城市组与许昌县级站，两套口径不要混算同比。"
-            f"{contracts_block}"
-            "\n注意：以上表都在同一个 MySQL 采集库，可跨表 JOIN；"
-            "与 SQL Server 历史库、PostgreSQL 主库不支持跨库 JOIN。"
-            "\n\n示例："
-            "\n- 站点小时历史：SELECT TimePoint, StationName, Pm25Value, So2Value "
-            "FROM StationHour WHERE StationName LIKE '%许昌%' AND TimePoint >= '2016-01-01' "
-            "ORDER BY TimePoint LIMIT 100"
-            "\n- 城市日历史：SELECT Date, Area, AQI, PM2_5, O3_8h FROM CityDay "
+            "大气监测采集库（MySQL）只读 SQL 查询工具：许昌本地长历史"
+            "（站点/城市小时日、PM2.5 年均、沙尘日清单）+ 河南实时发布采集表"
+            "（Ssfb*：18 城市组含济源小时/日/排名、许昌县级站）+ 官方月报/年度定版表。"
+            "describe_table 查表结构（含数据时间范围），或 sql 执行 SELECT/CTE，二者二选一。"
+            f"白名单表：{', '.join(CRAWLER_SQL_TABLES)}。只允许 SELECT（禁写/DDL/注释/多语句），"
+            f"LIMIT 分页最大 {MAX_LIMIT} 条；不确定字段先 describe_table，禁查 information_schema。"
+            "\n【查询优先级】常规指标（排名/最新值/县级站/乡镇站）优先 xuchang_cube_metrics；"
+            "国控站日值（含昨日）优先 query_airdata_platform；本工具用于长历史、同比、跨年趋势"
+            "与语义层未覆盖的明细。"
+            "\n【统计口径硬规则】月度/季度/年度等统计禁止从 CityDay/StationDay/Ssfb* 等明细自算："
+            "许昌月度及以上唯一来源 airdata_calc_report_summary；河南官方月报 ProvinceMonthReport；"
+            "许昌县市区官方月报 CountyMonthReport；年均历史 CityYearPm25Avg；"
+            "年度目标 XuchangCityYearTarget/XuchangCountyYearTarget/HenanCityYearTarget；"
+            "168 城排名 Rank168CityMonthly。报表没有的口径如实说明，不得明细手算。"
+            "\n【扣沙天】用 CitySandDay（仅城市+日期清单，无数值）过滤："
+            "WHERE Date NOT IN (SELECT DayTime FROM CitySandDay)。"
+            "\n【易错列名】StationHour 站点列=StationName；StationDay/CityDay 用 PositionName/Area。"
+            "老表仅许昌单城市，Ssfb* 覆盖 18 城市，两套口径勿混算同比。"
+            "\n示例：SELECT Date, Area, AQI, PM2_5 FROM CityDay "
             "WHERE Area LIKE '%许昌%' AND Date >= '2020-01-01' ORDER BY Date LIMIT 100"
-            "\n- PM2.5 年均值：SELECT Year, ActualPm25Avg, StandardPm25Avg FROM CityYearPm25Avg "
-            "WHERE CityName LIKE '%许昌%' ORDER BY Year"
-            "\n- 扣沙天城市日值：SELECT Date, Area, AQI, PM2_5 FROM CityDay "
-            "WHERE Area LIKE '%许昌%' AND Date NOT IN (SELECT DayTime FROM CitySandDay) "
-            "ORDER BY Date LIMIT 100"
-            "\n- 19市官方月报累计（含济源/航空港）：SELECT City, PM25, PM25_YoY, CompositeIndex "
-            "FROM ProvinceMonthReport WHERE Level='city' AND Scope='cum' AND DataMonth='2026-09-01' "
-            "ORDER BY PM25"
         )
         function_schema = {
             "name": "execute_crawler_sql_query",
@@ -270,8 +218,9 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                 "table_name": table_name,
                 "columns": columns,
                 "sample_data": sample_rows[0] if sample_rows else None,
+                "time_range": TABLE_TIME_RANGES.get(table_name, "未登记"),
             },
-            "summary": f"表 {table_name} 共 {len(columns)} 个字段；已返回字段结构和一条样例。",
+            "summary": f"表 {table_name} 共 {len(columns)} 个字段；已返回字段结构、一条样例与数据时间范围。",
         }
 
     async def _execute_sql(

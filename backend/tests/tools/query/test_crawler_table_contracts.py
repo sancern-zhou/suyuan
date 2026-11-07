@@ -79,14 +79,18 @@ def test_render_contracts_empty_when_missing(tmp_path, monkeypatch):
     assert render_table_contracts() == ""
 
 
-def test_tool_description_embeds_contracts(tmp_path, monkeypatch):
+def test_tool_description_routes_to_describe_table_not_embeds_contracts(tmp_path, monkeypatch):
+    """预算策略：描述只留路由与红线，字段契约走 describe_table 按需通道。"""
     _use_tmp_contracts(tmp_path, monkeypatch)
     tool = ExecuteCrawlerSQLQueryTool()
     description = tool.function_schema["description"]
-    assert "表字段契约" in description
-    assert "PositionName" in description
-    assert "DataTypePlan" in description  # 口径列进契约
-    # 手写表说明已移除，不再有漂移文本
+    # 契约与逐表字段不再内联进描述
+    assert "表字段契约" not in description
+    assert "DataTypePlan" not in description
+    # 路由保留：白名单、口径红线与 describe_table 指引
+    assert "describe_table" in description
+    assert "StationDay" in description
+    assert "统计口径硬规则" in description
     assert "站点字段 StationCode/StationName/" not in description
 
 
