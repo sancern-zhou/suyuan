@@ -238,6 +238,12 @@ backend/docs/skills/*
 !backend/docs/skills/pptx_authoring.md
 !backend/docs/skills/pptx_authoring/
 !backend/docs/skills/pptx_authoring/**
+!backend/docs/skills/docx_authoring.md
+!backend/docs/skills/docx_authoring/
+!backend/docs/skills/docx_authoring/**
+!backend/docs/skills/xlsx_authoring.md
+!backend/docs/skills/xlsx_authoring/
+!backend/docs/skills/xlsx_authoring/**
 scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py
