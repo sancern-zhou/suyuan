@@ -28,12 +28,13 @@ enabled: true
 2. execute_python 生成 PPTX：输出路径必须 `artifact_path("主题_YYYYMMDD.pptx")`
 3. validate_pptx 验收：读取 `data.gate` 与 `data.structured_issues`
 4. 按修复对照表修复，重新生成并重新验收，最多 3 轮
-5. `gate.status == "passed"` 才算交付（QA 产物 montage/页图随资源组自动发布）
+5. gate 通过后对 `visual_review.worst_pages` 与 montage 用
+   `read_file(png_path, as_multimodal_attachment=true)` 挂载做视觉自评（标准见 qa-loop §5）
 
 ## 红线
 
 - 输出必须经 `artifact_path()`，禁止自拼 data registry 路径写文件
-- 交付前 `gate.status` 必须为 `passed`；`qa_failed`（渲染/验证异常）不得交付
+- 交付前 `gate.status` 必须为 `passed` 且视觉自评无 fail 页；`qa_failed`（渲染/验证异常）不得交付
 - 每页正文 ≤620 字且 ≤20 行；内容页标题 ≥24pt；最小字号 ≥10pt；层级差 ≥8pt
 - 内容页（封面/目录/章节隔页除外）至少 1 个视觉元素（图表/图片/表格/形状卡片）
 - 已支持的专用业务图型必须 create_business_chart 生成后嵌入，禁止用 Python 重绘替代

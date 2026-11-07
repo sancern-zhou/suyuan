@@ -192,6 +192,9 @@ class ValidatePptxTool(LLMTool):
                 "usage_notes": [
                     "pages 中的 slide/page_number 与 page-XXX.png 文件名均为 1-based。",
                     "montage_path 仅用于全局总览；修复或核查指定页时应读取 pages 中对应 slide 的 png_path。",
+                    "视觉自评：确定性 gate 通过≠视觉合格。对 visual_review.worst_pages 与 montage 用 "
+                    "read_file(png_path, as_multimodal_attachment=true) 逐页挂载后，按技能 qa-loop "
+                    "的视觉自评标准检查（密度/对齐/层级/配色/图表可读/中文渲染）。",
                 ],
                 "geometry": geometry,
                 "rendered_pages": rendered_checks,
@@ -203,6 +206,7 @@ class ValidatePptxTool(LLMTool):
                 "issue_count": len(issues),
             }
             report.update(self._build_structured_quality_sections(report))
+            report["visual_review"] = self._build_visual_review(report)
 
             report_path = qa_dir / "report.json"
             report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -242,6 +246,29 @@ class ValidatePptxTool(LLMTool):
         if output_dir:
             return resolve_agent_path(output_dir)
         return (self.default_qa_root / f"{pptx_path.stem}_{uuid.uuid4().hex[:8]}").resolve()
+
+    def _build_visual_review(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        """视觉自评定位：按渲染分数升序取最差页（供 read_file 挂载自评）。"""
+        visual = report.get("visual_quality") if isinstance(report.get("visual_quality"), dict) else {}
+        slides = [s for s in (visual.get("slides") or []) if isinstance(s, dict)]
+        pages_by_slide = {
+            page.get("slide"): page.get("png_path")
+            for page in report.get("pages", [])
+            if isinstance(page, dict)
+        }
+        worst = sorted(slides, key=lambda s: s.get("score") if s.get("score") is not None else 100)[:3]
+        return {
+            "hint": "对 worst_pages 逐页 read_file(png_path, as_multimodal_attachment=true) 挂载自评；"
+                    "总览用 montage_path。",
+            "worst_pages": [
+                {
+                    "slide": item["slide"],
+                    "score": item.get("score"),
+                    "png_path": pages_by_slide.get(item["slide"]),
+                }
+                for item in worst
+            ],
+        }
 
     def _build_structured_quality_sections(self, report: Dict[str, Any]) -> Dict[str, Any]:
         raw_issues = [issue for issue in report.get("issues", []) if isinstance(issue, dict)]

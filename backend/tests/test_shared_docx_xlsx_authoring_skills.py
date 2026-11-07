@@ -81,5 +81,9 @@ def test_reference_contracts_are_preserved():
             assert token in recipes, (skill_id, token)
         for token in ("passed", "needs_revision", "qa_failed", "structured_issues"):
             assert token in qa_loop, (skill_id, token)
+        if skill_id == "docx_authoring":
+            # docx 有渲染产物：视觉自评协议（挂载通道）必须存在
+            for token in ("视觉自评", "as_multimodal_attachment", "montage_path"):
+                assert token in qa_loop, (skill_id, token)
         for token in spec["contract_tokens"]:
             assert token in contract, (skill_id, token)
