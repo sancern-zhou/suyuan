@@ -68,6 +68,13 @@ SKILL_METADATA = {
         "entry_reference": "backend/app/tools/office/editable_ppt/references/index.md",
         "required_tools": ["manage_editable_ppt", "read_file", "edit_file", "validate_pptx"],
     },
+    "pptx_authoring": {
+        "enabled": True,
+        "aliases": ["PPT设计", "PPT制作", "幻灯片生成", "python-pptx", "自由PPT"],
+        "name": "PPT 设计与生成技能",
+        "description": "用 execute_python 编写 python-pptx 代码自由创作高质量 PPTX，配合 validate_pptx 渲染验收闭环",
+        "required_tools": ["read_file", "execute_python", "validate_pptx"],
+    },
     "routine_monitoring_analysis_expert": {"enabled": True, "aliases": [], "required_tools": []},
     "skill_template": {"enabled": False, "aliases": [], "required_tools": []},
     "top3_city_identification_rules": {"enabled": True, "aliases": [], "required_tools": []},

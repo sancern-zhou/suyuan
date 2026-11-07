@@ -769,3 +769,52 @@ async def test_expert_node_timeout_floor_overrides_authored_smaller_value(monkey
     # 超时由 coordinator 按节点定义的 asyncio.timeout 执行，不随 kwargs 下发；
     # 下限生效体现在节点视图 timeout_seconds 被抬到 900
     assert result["data"]["node_results"]["met"]["timeout_seconds"] == 900
+
+
+def test_compact_node_view_surfaces_published_charts_and_artifact_paths(tmp_path):
+    """D7：紧凑节点视图保留子信封图表声明形状，并以 published_charts 暴露可引用图表资源。"""
+    from app.tools.agent_tools.run_agent_workflow import compact_parent_node_result
+
+    chart_png = tmp_path / "fig_demo.png"
+    chart_png.write_bytes(b"\x89PNG\r\n")
+    node = {
+        "status": "success",
+        "success": True,
+        "result": "分析完成",
+        "data": {
+            "file_paths": [str(chart_png)],
+            "resource_refs": [{
+                "handle_type": "session_resource",
+                "source_session_id": "child-session",
+                "resource_id": "res-chart-1",
+                "resource_key": "chart-image",
+                "kind": "file",
+                "label": "清远10月AQI时序图",
+                "locator": {"path": str(chart_png)},
+            }],
+            "structured_result": {
+                "status": "completed", "summary": "s", "findings": [], "evidence": [],
+                "uncertainties": [], "data_gaps": [],
+                "artifacts": [{"type": "chart", "path": str(chart_png), "description": "时序图"}],
+                "deliverables": [{"format": "png", "path": str(chart_png)}],
+            },
+        },
+        "metadata": {},
+        "result_envelope": {
+            "status": "completed", "summary": "s", "findings": [], "evidence": [],
+            "uncertainties": [], "data_gaps": [],
+            "artifacts": [{"type": "chart", "path": str(chart_png), "description": "时序图"}],
+        },
+    }
+    view = compact_parent_node_result(
+        "charts", node, target_mode="expert_analysis", max_iterations=20, timeout_seconds=900,
+    )
+    # 子信封图表声明不再塌缩成空对象
+    assert view["result_envelope"]["artifacts"][0]["type"] == "chart"
+    assert view["result_envelope"]["artifacts"][0]["path"] == str(chart_png)
+    # 已发布图表资源成列：父侧可 [[chart:<resource_id>]] 引用或作为报告 image assets
+    assert view["published_charts"] == [{
+        "resource_id": "res-chart-1",
+        "label": "清远10月AQI时序图",
+        "path": str(chart_png),
+    }]

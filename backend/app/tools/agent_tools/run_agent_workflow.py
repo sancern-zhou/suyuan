@@ -121,6 +121,8 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "任务书写清时间范围、区域与指标口径即可，不要教写 SQL。"
     "专家节点 task_contract.deliverables 最多 3 项，超过必须拆成多个并行节点。"
     "专家分析类节点 timeout 下限 900s（跨节点数据分析实测 8–12 分钟），声明更小值也会被抬到 900s。"
+    "节点视图 published_charts 列出子代理已产出并发布到本会话的图表（resource_id/label/path）："
+    "聊天答复中用 [[chart:<resource_id>]] 引用即可渲染；成稿作为 create_report_package 的 image assets。"
     "报告需要的分析图表必须在对应子节点的 goal/task_contract 中要求随节点产出，"
     "禁止 DAG 完成后由父 Agent 重新绘制分析图表。"
     "报告 DAG 禁止综合问数（query / query_monitoring）与综合 expert 子节点；"
@@ -373,13 +375,30 @@ def compact_parent_node_result(
     artifacts_view = []
     for item in (envelope.get("artifacts") or [])[:_PARENT_NODE_EVIDENCE_ITEMS]:
         if isinstance(item, Mapping):
+            # 保留 type/path/description：子信封的图表声明是 {type:"chart",path,...}
+            # 形状，只按 kind/name/url 白名单提取会塌缩成空对象，父侧就"看不见"图了
             artifacts_view.append({
                 key: item.get(key)
-                for key in ("kind", "name", "url", "resource_id")
+                for key in ("kind", "name", "url", "resource_id", "type", "path", "description")
                 if item.get(key) is not None
             })
         elif item:
             artifacts_view.append({"kind": "artifact", "name": str(item)})
+
+    # D7：已发布到父会话的图表资源单独成列（统一资源目录的增量投影）——
+    # 父侧引用（[[chart:<resource_id>]]，finalizer 自动换 visual_id）与
+    # create_report_package 的 image assets 都以此为抓手。
+    published_charts = [
+        {
+            "resource_id": ref.get("resource_id"),
+            "label": ref.get("label"),
+            "path": (ref.get("locator") or {}).get("path"),
+        }
+        for ref in (data.get("resource_refs") or [])
+        if isinstance(ref, Mapping)
+        and str(ref.get("resource_key") or "") == "chart-image"
+        and ref.get("resource_id")
+    ][:10]
 
     return {
         "task_id": task_id,
@@ -401,6 +420,7 @@ def compact_parent_node_result(
             ],
             "artifacts": artifacts_view,
         },
+        "published_charts": published_charts,
         "file_paths": [str(p) for p in (data.get("file_paths") or [])[:20]],
         "resource_ids": [
             str(ref.get("resource_id"))
