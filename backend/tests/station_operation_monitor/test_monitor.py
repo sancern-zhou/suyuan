@@ -546,3 +546,165 @@ def test_fixed_note_is_11pt_in_first_page_footer_only(tmp_path):
     document.save(output)
     with pytest.raises(ValueError, match='first_page_note'):
         validate_template_format(source,output,data=data)
+
+
+@pytest.mark.asyncio
+async def test_hourly_collect_workflow_skips_report_hour(monkeypatch):
+    from types import SimpleNamespace
+    from app.services.station_operation_monitor import runtime, workflow
+    calls=[]
+    monkeypatch.setattr(runtime,'load_config',lambda:{'cfg':'test'})
+    def fake_collect(config,now=None,**kwargs):
+        calls.append(now)
+        return {'success':True,'successful_slices':21,'failed_slices':[],'end':now.isoformat(),'snapshot_path':'snap'}
+    monkeypatch.setattr(runtime,'collect',fake_collect)
+    task=SimpleNamespace(workflow_args={})
+    skipped=await workflow.run_hourly_collect(task,SimpleNamespace(),now='2026-11-05T10:30:00')
+    assert '跳过' in skipped['summary'] and not calls
+    result=await workflow.run_hourly_collect(task,SimpleNamespace(),now='2026-11-05T11:30:00')
+    assert len(calls)==1 and '小时采集完成' in result['summary']
+
+
+@pytest.mark.asyncio
+async def test_hourly_collect_workflow_fails_loudly_on_failed_slices(monkeypatch):
+    from types import SimpleNamespace
+    from app.services.station_operation_monitor import runtime, workflow
+    monkeypatch.setattr(runtime,'load_config',lambda:{})
+    monkeypatch.setattr(runtime,'collect',lambda config,now=None,**kwargs:{
+        'success':False,'successful_slices':10,'failed_slices':[{'city':'广州'},{'city':'珠海'}],
+        'end':'x','snapshot_path':'y'})
+    with pytest.raises(ValueError,match='广州、珠海'):
+        await workflow.run_hourly_collect(SimpleNamespace(workflow_args={}),SimpleNamespace(),now='2026-11-05T09:30:00')
+
+
+def test_blind_window_merges_one_outage_into_cumulative_event(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    # Day-1 gap and a later gap with no observation in between: one outage.
+    absent={('A',h) for h in hours(BASE,BASE+timedelta(hours=6))}
+    ingest(store,BASE,BASE+timedelta(hours=6),rows(BASE,BASE+timedelta(hours=6),missing=absent))
+    later=BASE+timedelta(days=1)
+    absent={('A',h) for h in hours(later,later+timedelta(hours=6))}
+    ingest(store,later,later+timedelta(hours=6),rows(later,later+timedelta(hours=6),missing=absent))
+    end=later+timedelta(hours=6)
+    entries=report(store,end)['entries']
+    # Duration follows the reported span (6 observed + 18 blind + 6 observed).
+    assert len(entries)==1 and entries[0]['affected_hours']==30
+    assert entries[0]['observed_missing_hours']==12
+    assert local_time(entries[0]['offline_start'])==BASE
+    assert local_time(entries[0]['offline_end'])==end and entries[0]['carry_over']
+
+
+def test_sub_threshold_blip_is_not_dragged_into_later_incident(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    # A 3-hour blip never qualifies on its own, so a blind window must not
+    # promote it into the following outage.
+    absent={('A',h) for h in hours(BASE,BASE+timedelta(hours=3))}
+    ingest(store,BASE,BASE+timedelta(hours=3),rows(BASE,BASE+timedelta(hours=3),missing=absent))
+    later=BASE+timedelta(days=1)
+    absent={('A',h) for h in hours(later,later+timedelta(hours=5))}
+    ingest(store,later,later+timedelta(hours=5),rows(later,later+timedelta(hours=5),missing=absent))
+    end=later+timedelta(hours=5)
+    entries=report(store,end)['entries']
+    assert len(entries)==1 and entries[0]['affected_hours']==5
+    assert local_time(entries[0]['offline_start'])==later
+
+
+def test_seed_drops_stations_removed_from_roster(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite')
+    store.seed(ROSTER)
+    removed=store.seed([s for s in ROSTER if s['code']!='OLD'])
+    assert removed==['OLD']
+    assert {s['code'] for s in store.stations()}=={'A','B'}
+
+
+def test_counts_report_configured_scope_not_observed_subset(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite')
+    # B never returns data, so it stays inactive but must still count in scope.
+    store.seed(ROSTER)
+    end=BASE+timedelta(hours=1)
+    ingest(store,BASE,end,rows(BASE,end,codes=('A',)))
+    data=store.report(end,national_sources=['primary'],provincial_source='primary')
+    assert data['station_counts']=={'国控':2,'省控':1}
+
+
+def _flaky_server(fail_first=1, fail_status=500):
+    """Serve `fail_first` error responses, then succeed; returns (server, state)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    state = {'calls': 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            state['calls'] += 1
+            if state['calls'] <= fail_first:
+                self.send_response(fail_status)
+                self.end_headers()
+                self.wfile.write(b'Internal Server Error')
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"success":true,"result":"token-value"}')
+
+        def do_POST(self):
+            state['calls'] += 1
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"success":true,"result":[]}')
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, state
+
+
+def test_transient_5xx_is_retried_and_recovers():
+    from app.services.station_operation_monitor.runtime import retrying_session
+    server, state = _flaky_server(fail_first=1)
+    try:
+        session = retrying_session(attempts=3, backoff_seconds=0.01)
+        response = session.get(f'http://127.0.0.1:{server.server_address[1]}/token', timeout=5)
+        assert response.status_code == 200
+        assert response.json()['result'] == 'token-value'
+        assert state['calls'] == 2
+    finally:
+        server.shutdown()
+
+
+def test_persistent_5xx_still_reports_real_status():
+    from app.services.station_operation_monitor.runtime import retrying_session
+    server, state = _flaky_server(fail_first=99)
+    try:
+        session = retrying_session(attempts=2, backoff_seconds=0.01)
+        response = session.get(f'http://127.0.0.1:{server.server_address[1]}/token', timeout=5)
+        # Retries are bounded and the surfaced status stays the upstream one.
+        assert response.status_code == 500
+        assert 1 < state['calls'] <= 3
+    finally:
+        server.shutdown()
+
+
+def test_failed_slice_is_retried_once_within_same_run(tmp_path):
+    """A slice that fails on first attempt but succeeds on replay is recovered."""
+    class FlakyOnce:
+        # Class-level: the retry pass builds a fresh source with a new session.
+        calls = 0
+
+        def __init__(self, config):
+            pass
+
+        def fetch(self, codes, start, end):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                raise RuntimeError('transient upstream 500')
+            return rows(start, end, codes=[c for c in codes if c != 'OLD'])
+
+    now = BASE + timedelta(days=1, minutes=30)
+    result = collect(config(), now=now, root=tmp_path, source_factory=FlakyOnce)
+    assert result['success'], result['failed_slices']
+    assert result['failed_slices'] == []
+    assert result['successful_slices'] >= 1

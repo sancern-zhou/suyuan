@@ -119,6 +119,30 @@ class FontManager:
         'sans-serif',
     ]
 
+    # 逐字形回退链：font.family 必须是具体字体族列表（不能是 'sans-serif' 通用族），
+    # matplotlib>=3.7 才会在首选字体缺字形（如 −、³、μ、–）时按字符落到后续字体，
+    # 否则缺字直接渲染为黑色方块。末尾 DejaVu Sans 随 matplotlib 内置，始终可用。
+    FALLBACK_FAMILY_TAIL = [
+        'Microsoft YaHei',
+        'SimHei',
+        'SimSun',
+        'Noto Sans CJK SC',
+        'WenQuanYi Micro Hei',
+        'DejaVu Sans',
+    ]
+
+    def concrete_font_families(self, preferred: Optional[str] = None) -> List[str]:
+        """返回可用具体字体族列表，preferred 在首位，供 font.family 逐字形回退。"""
+        names: List[str] = []
+        if preferred:
+            names.append(preferred)
+        for name in self.FALLBACK_FAMILY_TAIL:
+            if name in names:
+                continue
+            if name == 'DejaVu Sans' or name in self._available_fonts:
+                names.append(name)
+        return names or ['DejaVu Sans']
+
     # 字体文件路径（按平台优先级排列）
     FONT_FILE_PATHS = [
         PROJECT_ROOT / 'frontend/public/fonts/FZXiaoBiaoSong-B05S.ttf',
@@ -203,8 +227,9 @@ class FontManager:
 
         # 应用字体配置
         try:
-            plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = [font_name] + self.FONT_FALLBACK_CHAIN[1:]
+            families = self.concrete_font_families(font_name)
+            plt.rcParams['font.family'] = families
+            plt.rcParams['font.sans-serif'] = families
             plt.rcParams['axes.unicode_minus'] = False
             plt.rcParams['mathtext.fontset'] = 'dejavusans'
             plt.rcParams['mathtext.default'] = 'it'
@@ -288,20 +313,31 @@ def select_preferred_chinese_font_path() -> Path | None:
 
 
 def chinese_font_prop() -> fm.FontProperties | None:
-    """Return the preferred Chinese font, aligned with create_business_chart."""
+    """Return the preferred Chinese font, aligned with create_business_chart.
+
+    以具体字体族列表构造 FontProperties，set_fontproperties 应用到文本后
+    仍保留逐字形回退；fname 单字体构造会在首选字体缺字时渲染黑框。
+    """
     font_manager = get_font_manager()
+    preferred_name: Optional[str] = None
     for font_path in font_manager.FONT_FILE_PATHS:
         if not font_path.exists():
             continue
         try:
             fm.fontManager.addfont(str(font_path))
-            return fm.FontProperties(fname=str(font_path))
+            if preferred_name is None:
+                preferred_name = fm.FontProperties(fname=str(font_path)).get_name()
         except Exception as exc:
             logger.debug(f"注册字体文件失败 {font_path}: {exc}")
-    font_name = font_manager._find_best_chinese_font()
-    if font_name:
-        return fm.FontProperties(family=[font_name])
-    return None
+    font_name = preferred_name or font_manager._find_best_chinese_font()
+    if not font_name:
+        return None
+    return fm.FontProperties(family=font_manager.concrete_font_families(font_name))
+
+
+def concrete_font_families(preferred: Optional[str] = None) -> List[str]:
+    """快捷函数：返回可用具体字体族回退链，供 font.family 逐字形回退。"""
+    return get_font_manager().concrete_font_families(preferred)
 
 
 def apply_font_to_figure(fig: Any, label_normalizer: Any = None) -> None:

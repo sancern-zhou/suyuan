@@ -20,6 +20,7 @@ author: Claude
 date: 2026-05-08
 """
 
+import asyncio
 import shutil
 import subprocess
 from copy import copy
@@ -865,12 +866,13 @@ class ConsultationFileFetcher(DataFetcher):
             # 填充额外sheet
             await self._fill_extra_sheets(wb, time_range, full_month=full_month)
 
-            # 保存
-            wb.save(str(output_path))
+            # 保存。openpyxl 写大表与 LibreOffice 重存都是秒级阻塞操作，
+            # 放线程池避免冻结 worker 事件循环。
+            await asyncio.to_thread(wb.save, str(output_path))
             wb.close()
 
             # 使用LibreOffice重新保存以正确保留图表渲染
-            self._resave_with_libreoffice(output_path)
+            await asyncio.to_thread(self._resave_with_libreoffice, output_path)
 
             logger.info(
                 "consultation_file_fetch_complete",

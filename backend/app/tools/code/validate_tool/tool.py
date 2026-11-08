@@ -6,6 +6,7 @@ validate_tool 工具
 
 from app.tools.base import LLMTool, ToolCategory
 from typing import Dict, Any, Optional
+import asyncio
 import structlog
 import os
 import subprocess
@@ -91,11 +92,13 @@ class ValidateToolTool(LLMTool):
     async def _check_syntax(self, tool_path: str) -> Dict[str, Any]:
         """检查Python语法"""
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "py_compile", tool_path],
-                capture_output=True,
-                text=True,
-                timeout=10
+            result = await asyncio.to_thread(
+                lambda: subprocess.run(
+                    [sys.executable, "-m", "py_compile", tool_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
             )
 
             if result.returncode == 0:

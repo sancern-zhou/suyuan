@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -576,7 +577,9 @@ class QueryStationStandardReportTool(LLMTool):
                 "summary": "时间格式错误，期望 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS",
             }
 
-        return execute_query_station_standard_report(
+        # 内部走 suncere 同步 requests（timeout=60），放线程池避免阻塞事件循环。
+        return await asyncio.to_thread(
+            execute_query_station_standard_report,
             cities=kwargs.get("cities"),
             stations=kwargs.get("stations"),
             start_time=start_time,
@@ -681,7 +684,9 @@ class QueryStationStandardYoyReportTool(LLMTool):
                 "summary": "时间格式错误，期望 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS，且每个时间范围包含起止两个值",
             }
 
-        return execute_query_station_standard_yoy_report(
+        # 内部走 suncere 同步 requests（timeout=60），放线程池避免阻塞事件循环。
+        return await asyncio.to_thread(
+            execute_query_station_standard_yoy_report,
             cities=kwargs.get("cities"),
             stations=kwargs.get("stations"),
             time_point=time_point,

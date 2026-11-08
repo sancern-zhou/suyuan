@@ -317,8 +317,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
           : (body?.detail?.message || body?.detail || 'Failed to create task'));
       }
       const task = await response.json();
-      await this.fetchTasks();
-      await this.fetchStats();
+      await Promise.all([this.fetchTasks(), this.fetchStats()]);
       return task;
     },
 

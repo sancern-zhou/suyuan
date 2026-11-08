@@ -9,11 +9,44 @@ from pydantic import BaseModel, ConfigDict
 from app.utils.path_config import resolve_agent_path, format_agent_path
 
 WORKFLOW_NAME = 'station_operation_daily_report'
+HOURLY_WORKFLOW_NAME = 'station_operation_hourly_collect'
 
 
 class ReportArguments(BaseModel):
     model_config = ConfigDict(extra='forbid')
     date: str | None = None
+
+
+async def run_hourly_collect(task, execution, *, now=None):
+    """Collect hourly so outages are observed before any platform-side backfill.
+
+    The seeded cron fires at :30 with the report's 20-minute arrival grace, so
+    the default collection window ends at the hour label that closed 30 minutes
+    earlier. Hour 10 is skipped: the daily report workflow collects the same
+    cutoff itself, and a duplicate fetch would only double the source load.
+    """
+    from .core import local_time
+    from .runtime import collect, load_config
+
+    now = local_time(now)
+    if now.hour == 10:
+        message = '10:30 为日报汇总时段，本次小时采集跳过（日报工作流自带同窗口取数）。'
+        return {'summary': message, 'final_message': message}
+    config = load_config()
+    collection = await asyncio.to_thread(collect, config, now=now)
+    if not collection['success']:
+        failed = '、'.join(sorted({item['city'] for item in collection['failed_slices']}))
+        raise ValueError('小时采集取数失败（' + failed +
+                         '）；该窗口证据缺失，待下次采集补验，不得视为站点运行正常')
+    message = (f"小时采集完成：截止{collection['end']}，成功{collection['successful_slices']}个切片，"
+               f"快照目录 {collection['snapshot_path']}。")
+    return {'summary': message, 'final_message': message, 'data': collection}
+
+
+def register_hourly_collect_workflow():
+    from app.scheduled_tasks.workflow_tasks import register_workflow_handler
+    register_workflow_handler(HOURLY_WORKFLOW_NAME, run_hourly_collect, version='1',
+                              description='每小时30分采集上一小时站点小时数据并入库；仅取证不生成报告。')
 
 
 async def run_daily_report(task, execution):

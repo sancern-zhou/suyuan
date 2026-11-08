@@ -65,6 +65,19 @@
   ! grep -R "/visualizations" frontend/dist/assets
   ```
 
+## 后台任务与事件循环隔离规范（后台任务不得与前端竞争）
+
+web/worker 进程的事件循环同时承载前端 API：worker 还承载 web 代理过来的全部 `/api/scheduled-tasks` 管理接口，AsyncIOScheduler 把所有 fetcher、scheduled-task 执行器把所有 agent 工具都跑在同一循环上。一次同步阻塞调用（哪怕只带 30~60 秒超时）会冻结整个循环，让同进程全部前端请求排队。生产实例：NMC 小时抓取任务用同步 requests 把 worker 卡住每小时约 70 秒，定时任务面板点击响应 2~4 秒。规则：
+
+- async 代码内禁止直接调用同步阻塞 IO：`requests`/`urllib`、`httpx` 同步入口、`time.sleep`、`subprocess.run/call/check_*` 等；必须经 `asyncio.to_thread()`（或 `loop.run_in_executor()`）调度到线程。`subprocess.Popen` 仅构造进程不阻塞，可用；其 `wait()/communicate()` 必须走 to_thread。
+- 同步客户端方法（如 `gd_suncere_api_client` 的 `query_*`/`_make_request`）在 async 中只能作为 to_thread 的参数出现，不得直接调用，也不得 `await`（await 同步方法会立刻 TypeError）。
+- 新后台任务优先用异步客户端（`httpx.AsyncClient`、async SQLAlchemy）；确需同步库时，把同步逻辑收拢为一个同步函数，在 async 入口处一次性 to_thread，不要在循环上散落多次小段同步调用。
+- 重 CPU 工作（pandas、openpyxl 大表、报表渲染、SVG 转码）与长批处理同样不得占用事件循环：小批量收拢 + to_thread；小时级批处理放独立进程，不与 web/worker 共循环。
+- 守门测试 `backend/tests/core/test_async_no_blocking_calls.py` 静态扫描全部 async def（含同文件同步调用链的传递闭包与跨文件登记的同步客户端方法），违规即测试失败。新增同步客户端的网络方法必须在该测试的 `BLOCKING_METHOD_NAMES` 登记；一次性独立脚本可在 `ALLOWED_FILES` 说明豁免。
+- 定位事件循环卡顿：web/worker 日志中的 `event_loop_lag`（loop_watchdog）与 web 的 `scheduled_task_proxy_slow` 告警即阻塞信号；采样用 `py-spy dump`。
+- 同步存储层（`scheduled_task_*_storage`）经 `app/db/sync_bridge.py` 的 `run_db()` 落到常驻线程池：**每个池线程持有私有事件循环和池化引擎**（asyncpg 连接不能跨事件循环复用）。禁止退回"每次查询 `create_async_engine` + `NullPool`"——本机 asyncpg 单次握手约 200ms，会让每个定时任务管理接口固定多付 200~300ms，并在 fetcher 批量落库时（每小时 504 行）造成连接风暴和数秒级尖峰。
+- `run_db()` 内部用 `loop.run_until_complete` 而非 `run_coroutine_threadsafe`（后者要求目标循环已在 `run_forever`）。池大小 6 容纳 1 层嵌套调用（协程内再同步调 `run_db`，见 `tests/scheduled_tasks/test_runtime_monitor_tool.py`）；加深嵌套层级必须同步调大 `_DB_POOL_SIZE`，否则会耗尽线程死锁。
+
 ## 上下文注入选型策略（工具描述 / skill / describe_table）
 
 写入请求上下文的约束文本按"稳定性 × 内容类型"三选一，禁止把长文档整体内联进工具描述或系统提示词（单工具 schema 与单模式注入总量受 `backend/tests/test_agent_mode_context_budget.py` 预算上限守门）：

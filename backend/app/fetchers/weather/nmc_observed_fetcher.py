@@ -207,7 +207,9 @@ class NMCObservedWeatherFetcher(DataFetcher):
     async def _fetch_station_weather(self, station: NMCCityStation) -> dict[str, Any]:
         for attempt in range(1, self.max_attempts + 1):
             try:
-                return self.client.fetch_weather(station.station_id)
+                # fetch_weather 是同步 requests 调用；必须放线程池执行，
+                # 否则阻塞 worker 事件循环，拖慢同进程内代理的全部管理接口。
+                return await asyncio.to_thread(self.client.fetch_weather, station.station_id)
             except Exception as exc:
                 if self._is_platform_limit_error(exc) or attempt == self.max_attempts:
                     raise

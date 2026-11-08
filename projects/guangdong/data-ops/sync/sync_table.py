@@ -13,6 +13,9 @@ guangdong_sync.sync_watermark（dataset/watermark/highwater 结构）不兼容�
 Incremental modes per table (sync_config.json):
   - incremental_column + incremental_type=datetime  -> watermark - 1s overlap
   - incremental_column + incremental_type=int       -> strict > watermark
+  - incremental_expr                                -> SQL 表达式替代裸列做谓词
+      （如 ISNULL(update_time, create_time)），用于水位列可为 NULL 的表；
+      watermark 仍按原始列最大值推进
   - mode "daily_full"                               -> no watermark; --full reload
       (master data without a reliable update column)
   - refresh_window_days=N (with explicit --full)    -> rolling-window refresh:
@@ -25,6 +28,11 @@ Incremental modes per table (sync_config.json):
   - where (static SQL predicate)                    -> row scope filter applied on
       EVERY pull (full and incremental); watermark only advances over fetched
       (filtered) rows.
+  - always_where (static SQL predicate)             -> rows matched here are pulled
+      on EVERY run regardless of the watermark (incremental AND --full window),
+      and are not required to satisfy the incremental predicate.
+      用途：源端在状态流转时不写更新时间列（如工单审批不动 update_time），
+      单靠水位永远看不见这些改动；把「当前活跃」的行无条件重拉即可兜住。
   - source_db 省缺时使用 cfg["source"]["database"]（广东运维源为单库）。
 
 Usage:
@@ -167,12 +175,22 @@ async def log_batch(pg, entry: dict) -> None:
     )
 
 
+def _incr_filter(spec: dict, op: str, value: str) -> str:
+    """Incremental WHERE predicate. incremental_expr（如 ISNULL(update_time, create_time)）
+    覆盖裸列名：水位列为 NULL 的行（源系统建后未更新）对裸列比较永远不可见，
+    用表达式回落到创建时间后才能被全量窗口与增量拉到；水位推进仍取原始列最大值。"""
+    expr = spec.get("incremental_expr")
+    if expr:
+        return f"({expr}) {op} '{value}'"
+    return f"[{spec['incremental_column']}] {op} '{value}'"
+
+
 def build_source_sql(spec: dict, watermark, full: bool, since: str | None,
                      refresh_days: int | None = None) -> str:
     cols = spec["columns"]
     col_sql = ", ".join(f"[{c}]" for c in cols)
     incr = spec.get("incremental_column")
-    clauses = []
+    scope = []
     if full:
         if refresh_days and incr:
             # 滚动窗口全量：表单在送审流程中是原行修改（打回重报不换行，
@@ -182,19 +200,31 @@ def build_source_sql(spec: dict, watermark, full: bool, since: str | None,
             window_start = (
                 dt.datetime.now() - dt.timedelta(days=int(refresh_days))
             ).strftime("%Y-%m-%d %H:%M:%S.000")
-            clauses.append(f"[{incr}] >= '{window_start}'")
+            scope.append(f"[{incr}] >= '{window_start}'")
         elif spec.get("apply_window") and since:
             if spec.get("initial_where_tpl"):
-                clauses.append(spec["initial_where_tpl"].format(since=since))
+                scope.append(spec["initial_where_tpl"].format(since=since))
             elif incr:
-                clauses.append(f"[{incr}] >= '{since}'")
+                scope.append(_incr_filter(spec, ">=", since))
     elif watermark is not None and incr:
         if spec.get("incremental_type") == "datetime":
             low = dt.datetime.fromisoformat(watermark) - DATETIME_OVERLAP
             since_str = low.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         else:
             since_str = str(watermark)
-        clauses.append(f"[{incr}] > '{since_str}'")
+        scope.append(_incr_filter(spec, ">", since_str))
+
+    # always_where 命中的行每轮都拉，且不要求满足水位：源端在状态流转时不写
+    # 更新时间列，仅靠水位永远看不见这些改动，必须按「当前状态」无条件覆盖。
+    always = spec.get("always_where")
+    if always:
+        if scope:
+            clauses = [f"({' AND '.join(f'({c})' for c in scope)}) OR ({always})"]
+        else:
+            clauses = [always]
+    else:
+        clauses = scope
+
     where = (" WHERE " + " AND ".join(f"({c})" for c in clauses)) if clauses else ""
     fixed_where = spec.get("where")
     if fixed_where:

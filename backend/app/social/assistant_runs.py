@@ -170,6 +170,10 @@ class AssistantRunService:
         results = []
         for task in done:
             record = getattr(task, "_assistant_run_record", None) or {}
+            if record and not record.get("wake_state"):
+                # 交付边界吸收方就地认领：阻止完成回调把同一结果再唤醒一轮。
+                record["wake_state"] = "absorbed_in_turn"
+                _persist_wake_state(record)
             results.append(
                 {
                     "run_id": record.get("run_id"),
@@ -265,6 +269,7 @@ class AssistantRunService:
             "run_id": run_id,
             "kind": kind,
             "status": "running",
+            "owner_user_id": user.id,
             "source_session_id": context.session_id,
             "source_request_id": request.request_id,
             "target_mode": kwargs.get("target_mode"),
@@ -349,6 +354,7 @@ class AssistantRunService:
                 )
                 if session_tasks is not None:
                     session_tasks.discard(done)
+                _request_wake_after_terminal(record)
             if not done.cancelled():
                 done.exception()
 
@@ -442,3 +448,53 @@ class AssistantRunService:
 
         kwargs["_on_session_started"] = started
         return kwargs
+
+
+def _persist_wake_state(record: dict) -> None:
+    """把 wake_state 收口落盘（fail-soft）：账本与磁盘委派记录保持同形。"""
+    try:
+        from config.settings import settings
+
+        owner = record.get("owner_user_id")
+        if not owner:
+            return
+        AssistantRunService()._save(settings.project_id, str(owner), record)
+    except Exception:
+        logger.warning(
+            "assistant_delegation_wake_state_persist_failed",
+            run_id=record.get("run_id"),
+            exc_info=True,
+        )
+
+
+def _request_wake_after_terminal(record: dict) -> None:
+    """后台委派终态沿：交付边界未认领时请求唤醒（对齐 ZCode 完成通知生产者）。
+
+    终态为 cancelled（用户取消/停止）的委派不唤醒，直接收口 discarded；
+    交付边界吸收方会把 wake_state 改为 absorbed_in_turn，本函数据此让路。
+    """
+    try:
+        if record.get("wake_state"):
+            return
+        status = record.get("status")
+        if status == "cancelled":
+            record["wake_state"] = "discarded"
+            _persist_wake_state(record)
+            return
+        if status not in TERMINAL:
+            return
+        from config.settings import settings
+
+        if not settings.assistant_delegation_wakeup_enabled:
+            return
+        record["wake_state"] = "pending"
+        _persist_wake_state(record)
+        from app.social.assistant_wakeup import request_delegation_wakeup
+
+        request_delegation_wakeup(record)
+    except Exception:
+        logger.warning(
+            "assistant_delegation_wake_request_failed",
+            run_id=record.get("run_id"),
+            exc_info=True,
+        )

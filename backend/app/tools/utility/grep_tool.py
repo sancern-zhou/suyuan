@@ -20,6 +20,7 @@ Grep 工具 - 基于ripgrep的高速文件内容搜索（完整版）
 - 大小写不敏感搜索
 - 默认结果限制：DEFAULT_HEAD_LIMIT = 250
 """
+import asyncio
 import subprocess
 import re
 from pathlib import Path
@@ -229,13 +230,15 @@ class GrepTool(LLMTool):
                 output_mode=output_mode
             )
 
-            # 3. 执行搜索
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=str(self.backend_dir)
+            # 3. 执行搜索（子进程最长 30 秒，放线程池避免阻塞事件循环）
+            result = await asyncio.to_thread(
+                lambda: subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    cwd=str(self.backend_dir)
+                )
             )
 
             # 4. 解析输出

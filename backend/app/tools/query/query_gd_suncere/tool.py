@@ -10,6 +10,7 @@
 """
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
+import asyncio
 import structlog
 import json
 from pathlib import Path
@@ -4233,7 +4234,9 @@ async def query_day_data_by_segment(
             data_type_name="原始实况" if data_type == 0 else "审核实况"
         )
 
-        response = api_client.query_city_day_data(
+        # suncere 客户端是同步 requests，放线程池避免阻塞事件循环。
+        response = await asyncio.to_thread(
+            api_client.query_city_day_data,
             city_codes=city_codes,
             start_date=start_date,
             end_date=end_date,

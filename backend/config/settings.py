@@ -165,6 +165,11 @@ class Settings(BaseSettings):
         le=20000,
         description="交付边界吸收时单条委派结果的内联上限字符数",
     )
+    # 后台委派终态唤醒：回合结束后的完成结果主动触发源会话整合回复（回灌通路）。
+    assistant_delegation_wakeup_enabled: bool = Field(
+        default=True,
+        description="后台委派终态后主动唤醒源会话整合回复；false 回退为仅交付边界等待",
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:

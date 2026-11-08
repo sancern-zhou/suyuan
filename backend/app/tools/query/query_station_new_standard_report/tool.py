@@ -16,6 +16,7 @@
 - 支持多站点汇总统计（aggregate参数）
 """
 
+import asyncio
 import math
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -1076,8 +1077,9 @@ class QueryStationNewStandardReportTool(LLMTool):
             # 场景3: 同时提供 cities 和 stations，使用用户指定的 station_type（如果有）
             effective_station_type = station_type
 
-        # 调用同步函数（不使用await）
-        return execute_query_station_new_standard_report(
+        # 同步函数内部走 suncere requests，必须经线程池调度（直接调用会阻塞事件循环）。
+        return await asyncio.to_thread(
+            execute_query_station_new_standard_report,
             cities=cities,
             stations=stations,
             start_date=start_date,

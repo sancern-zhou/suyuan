@@ -800,6 +800,7 @@ knowledge:
   - query
 scheduled_tasks:
 - gd_station_operation_daily
+- gd_station_operation_hourly_collect
 - gd_station_alarm_status_watch
 - gd_work_order_timeout_watch
 - gd_work_order_monthly_report

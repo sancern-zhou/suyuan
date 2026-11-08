@@ -485,7 +485,8 @@ async def upload_chat_file(
         with open(source_file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         if is_svg:
-            convert_svg_to_png(source_file_path, file_path)
+            # SVG 转 PNG 是 CPU 密集操作，放线程池避免阻塞事件循环。
+            await asyncio.to_thread(convert_svg_to_png, source_file_path, file_path)
             os.remove(source_file_path)
     except ValueError as e:
         for path in {source_file_path, file_path}:

@@ -9,10 +9,39 @@ from pathlib import Path
 from uuid import uuid4
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from app.utils.path_config import format_agent_path, get_data_registry, resolve_agent_path
 from .core import MonitorStore, hour_key, local_time, merge_hour_spans
 from .feedback import closed_unrecoverable, load_feedback, match_feedback
+
+# Transient upstream failures (5xx, resets, read timeouts) are retried inside the
+# HTTP adapter. The station API is read-only, so replaying GET/POST is safe; a
+# single 500 from the token endpoint previously discarded an entire daily run.
+RETRY_STATUS_CODES = (500, 502, 503, 504)
+
+
+def retrying_session(*, attempts=3, backoff_seconds=0.5):
+    """Session whose adapter retries transient failures with exponential backoff."""
+    session = requests.Session()
+    retry = Retry(
+        total=attempts,
+        connect=attempts,
+        read=attempts,
+        status=attempts,
+        backoff_factor=backoff_seconds,
+        status_forcelist=RETRY_STATUS_CODES,
+        allowed_methods=frozenset({'GET', 'POST'}),
+        # Return the last response so raise_for_status() reports the real status
+        # instead of an opaque retry wrapper error.
+        raise_on_status=False,
+        respect_retry_after_header=True,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
 
 
 def config_path():
@@ -40,7 +69,10 @@ class StationHourHTTPSource:
 
     def __init__(self, config):
         self.config = config
-        self.session = requests.Session()
+        self.session = retrying_session(
+            attempts=int(config.get('retry_attempts', 3)),
+            backoff_seconds=float(config.get('retry_backoff_seconds', 0.5)),
+        )
         self.token = None
 
     def authenticate(self):
@@ -162,11 +194,71 @@ def collect(config=None, *, now=None, end=None, source_factory=StationHourHTTPSo
         finally:
             if hasattr(source, 'session'):
                 source.session.close()
+    # Second line of defence: the adapter handles per-request transients, but a
+    # longer upstream wobble can still fail a whole slice. Re-fetch failed slices
+    # once more so a city is not silently dropped from the daily scope.
+    if failures:
+        failures = _retry_failed_slices(config, failures, successes, store, now, raw_root,
+                                        source_factory=source_factory)
     if not failures:
         (root / 'initialized.json').write_text(json.dumps({'initialized_at': now.isoformat()}))
     return {'success': not failures, 'run_id': run_id, 'end': end.isoformat(),
             'successful_slices': len(successes), 'failed_slices': failures,
             'snapshot_path': format_agent_path(raw_root), 'state_path': format_agent_path(store.path)}
+
+
+def _retry_failed_slices(config, failures, successes, store, now, raw_root, *, source_factory):
+    """Re-attempt each failed slice once; drop slices that now succeed."""
+    still_failed = []
+    source_by_name = {item['name']: item for item in config['sources']}
+    sources = {}
+    try:
+        for failed in failures:
+            source_config = source_by_name.get(failed['source'])
+            if source_config is None:
+                still_failed.append(failed)
+                continue
+            if failed['source'] not in sources:
+                sources[failed['source']] = source_factory(source_config)
+            source = sources[failed['source']]
+            codes = [s['code'] for s in config['stations']
+                     if s['city'] == failed['city']
+                     and s['type'] in source_config.get('station_types', ['国控', '省控'])
+                     and (not s.get('confirmed') or s.get('active'))]
+            detail = ''
+            try:
+                records = source.fetch(codes, local_time(failed['start']), local_time(failed['end']))
+                success = True
+            except Exception as exc:
+                records, success, detail = [], False, f'取数失败（{type(exc).__name__}），状态待核实'
+            try:
+                stored = store.ingest(source=failed['source'], city=failed['city'],
+                                      start=local_time(failed['start']), end=local_time(failed['end']),
+                                      records=records, observed_at=now, success=success, detail=detail,
+                                      station_types=source_config.get('station_types', ['国控', '省控']))
+                if not stored:
+                    success = False
+                    detail = detail or '返回数据格式错误，状态待核实'
+            except (ValueError, TypeError):
+                success, detail = False, '站点编码或数据格式异常，状态待核实'
+                store.ingest(source=failed['source'], city=failed['city'],
+                             start=local_time(failed['start']), end=local_time(failed['end']),
+                             records=[], observed_at=now, success=False, detail=detail,
+                             station_types=source_config.get('station_types', ['国控', '省控']))
+            envelope = {**failed, 'success': success, 'detail': detail}
+            # Keep the replay attempt in the raw evidence trail, matching the main loop.
+            path = raw_root / f'{len(successes) + len(failures):04d}.json.gz'
+            with gzip.open(path, 'wt', encoding='utf-8') as handle:
+                json.dump({**envelope, 'records': records}, handle, ensure_ascii=False)
+            if success:
+                successes.append(envelope)
+            else:
+                still_failed.append(envelope)
+    finally:
+        for source in sources.values():
+            if hasattr(source, 'session'):
+                source.session.close()
+    return still_failed
 
 
 def generate_report(config=None, *, date=None, now=None, root=None, refresh=True):

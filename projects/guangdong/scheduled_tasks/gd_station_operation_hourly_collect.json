@@ -1,0 +1,31 @@
+{
+  "task_id": "gd_station_operation_hourly_collect",
+  "name": "广东站点运行小时采集",
+  "description": "每天每小时30分采集上一个整点小时的站点小时数据并入库，确保连续缺数在平台回补之前被观察到；10:30为日报汇总时段自动跳过（日报工作流自带同窗口取数）。",
+  "execution_mode": "workflow",
+  "model_tier": "auto",
+  "tool_names": null,
+  "schedule_type": "cron",
+  "cron": "30 * * * *",
+  "timezone_name": "Asia/Shanghai",
+  "enabled": true,
+  "prompt": "执行固定站点小时采集工作流：仅取数入库，不生成报告，无需LLM。",
+  "timeout_seconds": 1800,
+  "created_by": "system",
+  "owner_user_id": "system",
+  "tags": [
+    "广东",
+    "站点运行监控",
+    "小时采集"
+  ],
+  "workspace_entry": {
+    "enabled": false,
+    "title": ""
+  },
+  "history_learning": {
+    "enabled": false
+  },
+  "skill_id": null,
+  "workflow_name": "station_operation_hourly_collect",
+  "workflow_args": {}
+}

@@ -6,8 +6,11 @@ const requireTaskId = (task) => {
 
 
 export const refreshScheduledTaskManagement = async (store) => {
-  await store.fetchTasks()
-  await store.fetchStats()
+  // 任务列表与统计相互独立，并行请求，避免串行等待拖慢面板首屏。
+  await Promise.all([
+    store.fetchTasks(),
+    store.fetchStats()
+  ])
 }
 
 

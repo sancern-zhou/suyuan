@@ -24,7 +24,7 @@ from app.tools.visualization.create_business_chart.text_layout import (
 from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
 from app.tools.visualization.create_business_chart.validation import ChartDataError
 from app.utils.chart_legend import position_legends_below_plot, visible_legends
-from app.utils.font_utils import chinese_font_prop, normalize_figure_text, select_preferred_chinese_font_path
+from app.utils.font_utils import chinese_font_prop, concrete_font_families, normalize_figure_text, select_preferred_chinese_font_path
 
 
 WORD_TARGET_WIDTH_IN = 5.8
@@ -616,9 +616,10 @@ def _normalized_notes(options: Dict[str, Any]) -> List[str]:
 
 def _apply_fonts() -> None:
     font_prop = _chinese_font_prop()
-    family = font_prop.get_name() if font_prop is not None else "Droid Sans Fallback"
-    plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.sans-serif"] = [family, "Noto Sans CJK SC", "Droid Sans Fallback", "DejaVu Sans"]
+    family = font_prop.get_name() if font_prop is not None else None
+    families = concrete_font_families(family)
+    plt.rcParams["font.family"] = families
+    plt.rcParams["font.sans-serif"] = families
     plt.rcParams["axes.unicode_minus"] = False
 
 

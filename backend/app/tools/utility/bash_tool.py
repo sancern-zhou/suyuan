@@ -68,7 +68,8 @@ class BashTool(LLMTool):
             return self._failure("Missing required parameter: command", "spawn_error", "MISSING_PARAMETER")
 
         command = command.strip()
-        validation = self._validate_command(command)
+        # bash -n 语法检查走同步子进程（Linux 上最长 5 秒），放线程池。
+        validation = await asyncio.to_thread(self._validate_command, command)
         if not validation["valid"]:
             self._log_command(command, validation["error"])
             return self._failure(validation["error"], "spawn_error", "COMMAND_NOT_PARSABLE", command=command)

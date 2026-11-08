@@ -8,6 +8,7 @@ worker 数焊死在 3。把权重收敛到独立服务（app.services.embedding_
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Callable, Union
 
@@ -154,12 +155,13 @@ def build_llama_index_embedding(
             return self._remote.encode(texts).tolist()
 
         async def _aget_query_embedding(self, query: str) -> list[float]:
-            return self._get_query_embedding(query)
+            # encode 是同步 HTTP 调用，放线程池避免阻塞事件循环。
+            return await asyncio.to_thread(self._get_query_embedding, query)
 
         async def _aget_text_embedding(self, text: str) -> list[float]:
-            return self._get_text_embedding(text)
+            return await asyncio.to_thread(self._get_text_embedding, text)
 
         async def _aget_text_embeddings(self, texts: list[str]) -> list[list[float]]:
-            return self._get_text_embeddings(texts)
+            return await asyncio.to_thread(self._get_text_embeddings, texts)
 
     return RemoteHTTPEmbedding(remote)

@@ -11,6 +11,7 @@ MERGE 整体替换当期数据(当月/当年文件每日运行时更新);
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -352,7 +353,8 @@ class XuchangHenanMonthYearAccumulateFetcher(DataFetcher):
         fetched_at = self.now_factory().replace(microsecond=0)
         results: dict[str, Any] = {}
         for kind in ("monthly", "yearly"):
-            json_payload, db_records = self._fetch_kind(kind, fetched_at)
+            # _fetch_kind 内部是同步 requests，放线程池避免阻塞事件循环。
+            json_payload, db_records = await asyncio.to_thread(self._fetch_kind, kind, fetched_at)
             # 当月/当年的 period 文件每日运行时整体替换, 历史月份归档保留。
             target = self.output_root_factory() / kind / f"{json_payload['period']}.json"
             write_json(target, json_payload)

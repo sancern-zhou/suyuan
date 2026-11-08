@@ -4,6 +4,7 @@
 查询广东省城市日空气质量数据，支持十三五和十四五两种标准。
 """
 from typing import Dict, Any, List, Optional
+import asyncio
 import structlog
 
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
@@ -78,7 +79,9 @@ async def execute_query_city_day_old_standard(
         max_result_count = 40
 
         while True:
-            response = api_client.query_city_day_old_standard(
+            # suncere 客户端是同步 requests，放线程池避免阻塞事件循环。
+            response = await asyncio.to_thread(
+                api_client.query_city_day_old_standard,
                 city_codes=city_codes,
                 start_time=start_time,
                 end_time=end_time,

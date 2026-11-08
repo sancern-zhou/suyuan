@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -857,7 +858,9 @@ async def execute_query_city_standard_report(
 
     try:
         api_client = get_gd_suncere_api_client()
-        response = api_client._make_request(
+        # suncere 客户端是同步 requests（timeout=60），放线程池避免阻塞事件循环。
+        response = await asyncio.to_thread(
+            api_client._make_request,
             "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeListFilterAsync",
             payload,
             method="POST",
@@ -1067,7 +1070,9 @@ async def execute_query_city_standard_yoy_report(
 
     try:
         api_client = get_gd_suncere_api_client()
-        response = api_client._make_request(
+        # suncere 客户端是同步 requests（timeout=60），放线程池避免阻塞事件循环。
+        response = await asyncio.to_thread(
+            api_client._make_request,
             "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeCompareListFilterAsync",
             payload,
             method="POST",
@@ -1093,7 +1098,9 @@ async def execute_query_city_standard_yoy_report(
         pm25_decimal_increase_error = None
         if records:
             try:
-                _attach_pm25_decimal_increase(
+                # 内部会再发两次 suncere 报表查询（同步 requests），放线程池。
+                await asyncio.to_thread(
+                    _attach_pm25_decimal_increase,
                     records,
                     requested_cities=requested_cities,
                     expanded_cities=expanded_cities,

@@ -74,6 +74,17 @@ def normalize(record):
     }
 
 
+def _consecutive_groups(cells):
+    """Split hour-ending labels into runs of adjacent hours."""
+    groups = []
+    for cell in cells:
+        if groups and local_time(cell['hour']) - local_time(groups[-1][-1]['hour']) == timedelta(hours=1):
+            groups[-1].append(cell)
+        else:
+            groups.append([cell])
+    return groups
+
+
 class MonitorStore:
     """SQLite transactions serialize collector/report calls without losing first observations."""
 
@@ -119,6 +130,14 @@ class MonitorStore:
                     active=CASE WHEN excluded.confirmed=1 THEN excluded.active ELSE stations.active END''',
                     (station['code'], station['name'], station['city'], station['type'],
                      int(station.get('active', False)), int(station.get('confirmed', False))))
+            # The roster table mirrors the configuration exactly: a station dropped
+            # from the configured scope must leave the monitored set, otherwise it
+            # keeps inflating counts and the unverified-candidate list forever.
+            keep = {station['code'] for station in stations}
+            removed = [row['code'] for row in db.execute('SELECT code FROM stations')
+                       if row['code'] not in keep]
+            db.executemany('DELETE FROM stations WHERE code=?', [(code,) for code in removed])
+            return removed
 
     def stations(self):
         with self.connect() as db:
@@ -238,19 +257,36 @@ class MonitorStore:
                 missing = list(db.execute('''SELECT * FROM cells WHERE code=? AND source=?
                     AND first_missing_at IS NOT NULL AND hour<=? ORDER BY hour''',
                     (station['code'], main_source, end.isoformat())))
-                groups = []
-                for cell in missing:
-                    if groups and local_time(cell['hour']) - local_time(groups[-1][-1]['hour']) == timedelta(hours=1):
-                        groups[-1].append(cell)
-                    else:
-                        groups.append([cell])
+                groups = [group for group in _consecutive_groups(missing)
+                          if len(group) > min_missing_hours]
+                # One ongoing outage can straddle a never-observed blind window,
+                # which would otherwise print as two identical incidents. Bridge
+                # only confirmed gaps: a sub-threshold blip is never dragged into
+                # an incident it does not itself qualify for.
+                outages = []
                 for group in groups:
+                    if outages and db.execute('''SELECT 1 FROM cells WHERE code=? AND source=?
+                            AND hour>? AND hour<? LIMIT 1''',
+                            (station['code'], main_source,
+                             outages[-1][-1]['hour'], group[0]['hour'])).fetchone() is None:
+                        outages[-1].extend(group)
+                    else:
+                        outages.append(list(group))
+                for group in outages:
                     # Only continuous gaps longer than min_missing_hours become incidents;
                     # shorter or partial-parameter blips stay in raw evidence only.
                     if len(group) <= min_missing_hours:
                         continue
                     event_start = local_time(group[0]['hour']) - timedelta(hours=1)
                     event_end = local_time(group[-1]['hour'])
+                    # Duration follows the reported offline span, so a bridged outage
+                    # never prints a start-to-end range longer than its own hour count.
+                    span_hours = int((event_end - event_start).total_seconds() // 3600)
+                    first_observed = local_time(group[0]['hour'])
+                    last_observed = local_time(group[-1]['hour'])
+                    window_affected_hours = sum(
+                        start < local_time(hour_key(first_observed + timedelta(hours=offset))) <= end
+                        for offset in range(1, span_hours + 1))
                     complete_sources, remaining = [], {}
                     for source in sources:
                         holes = []
@@ -289,8 +325,9 @@ class MonitorStore:
                     entries.append({
                         **dict(station), 'source': main_source,
                         'offline_start': event_start.isoformat(), 'offline_end': event_end.isoformat(),
-                        'affected_hours': len(group),
-                        'window_affected_hours': sum(start < local_time(c['hour']) <= end for c in group),
+                        'affected_hours': span_hours,
+                        'window_affected_hours': window_affected_hours,
+                        'observed_missing_hours': len(group),
                         'first_observed_at': min(c['first_missing_at'] for c in group),
                         'recovered': recovered, 'status_as_of': latest['hour'] if latest else None,
                         'backfill_status': '已回补' if backfilled else '待回补',
@@ -313,7 +350,9 @@ class MonitorStore:
                 last[(run['city'], run['source'])] = run
             errors.extend({'city': r['city'], 'source': r['source'], 'reason': r['detail']}
                           for r in last.values() if not r['success'])
-            counts = {kind: sum(s['active'] and s['type'] == kind for s in roster) for kind in ('国控', '省控')}
+            # Report the configured monitoring scope, not the subset that happened
+            # to return data this run: a station with no uploads is still in scope.
+            counts = {kind: sum(s['type'] == kind for s in roster) for kind in ('国控', '省控')}
         return {
             'schema_version': 'station_operation_daily/v2', 'window_start': start.isoformat(),
             'window_end': end.isoformat(), 'generated_at': local_time().isoformat(),

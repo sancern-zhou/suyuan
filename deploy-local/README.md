@@ -30,6 +30,16 @@ deploy-local\start-web.bat / stop-all.bat（内部即上述命令）
 
 服务配置（WinSW）位于 `M:\suyuan-tools\winsvcs\`，修改 `.env` 后需 `net stop/start suyuan-web`、`suyuan-worker` 生效。
 
+**停止服务必须回收整个进程树**：venv 的 `Scripts\python.exe` 是启动器，会 exec 到 `python311\python.exe` 真实解释器，`app.worker` 实际跑在孙进程上。WinSW XML 缺少 `<stopparentprocessfirst>true</stopparentprocessfirst>` 时，`net stop` 只杀直接子进程，孙进程会变成孤儿继续占用 8011，导致后续每次启动都因 `Errno 10048` 端口占用失败、服务陷入分钟级重启循环。`suyuan-web` / `suyuan-cube-gd` 已配置该项，`suyuan-worker` 已于 2026-11-06 补上。若再遇到 `suyuan-worker` 反复重启且 8011 被占，用以下命令清理孤儿后再启动：
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+  Where-Object { $_.CommandLine -like '*app.worker*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+修改 WinSW XML 后需重新注册才生效：`winsvcs\<服务>\<服务>.exe stop` → `install`（覆盖安装）→ `start`。
+
 ## 统一入口网关（8092，公网 113.108.142.147:8093）
 
 防火墙把公网 `113.108.142.147:8093` 映射到本机 `8092`。原运维平台（IIS `Operation` 站点，ASP.NET）独占了该入口；2026-10-27 起改为 nginx 统一分流，两个平台共用一个公网地址：

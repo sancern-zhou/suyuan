@@ -2548,10 +2548,22 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
         if not selected_name:
             return
         merged_fonts = [selected_name] + [f for f in current_fonts if f != selected_name]
-        _suyuan_plt.rcParams['font.family'] = 'sans-serif'
+        family_chain = [selected_name]
+        for _candidate in ('Microsoft YaHei', 'SimHei', 'SimSun', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'DejaVu Sans'):
+            if _candidate in family_chain:
+                continue
+            try:
+                _suyuan_font_manager.findfont(_suyuan_font_manager.FontProperties(family=[_candidate]), fallback_to_default=False)
+                family_chain.append(_candidate)
+            except Exception:
+                pass
+        # font.family 必须是具体字体族列表：matplotlib>=3.7 按字形逐个回退，
+        # 首选字体缺字形（−、³、μ、–）时落到后续字体；'sans-serif' 通用族无回退。
+        _suyuan_plt.rcParams['font.family'] = family_chain
         _suyuan_plt.rcParams['font.sans-serif'] = merged_fonts
         _suyuan_plt.rcParams['axes.unicode_minus'] = False
-        _SUYUAN_CHINESE_FONT_PROP = selected_prop
+        _SUYUAN_CHINESE_FONT_PROP = _suyuan_font_manager.FontProperties(
+            family=family_chain + [f for f in merged_fonts if f not in family_chain])
         _SUYUAN_LAST_CONFIGURED_FONT = selected_name
     except Exception:
         pass
