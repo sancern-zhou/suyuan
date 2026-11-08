@@ -145,6 +145,18 @@ def _result_envelope(result: Any) -> Mapping[str, Any]:
     return {}
 
 
+def _seq(value: Any) -> list:
+    """装配视图只接受真序列；子代理输出形状不可控，dict/标量一律退化为空列表。
+
+    背景：节点结果装配对信封字段做 `[:10]` 类切片，子代理若把
+    uncertainties/data_gaps/artifacts/file_paths 交付成 dict，切片会抛
+    "unhashable type: 'slice'"，把已跑完的整轮工作流按失败丢弃。
+    """
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return []
+
+
 def collect_result_handles(task_id: str, result: Any) -> list[Dict[str, Any]]:
     """Extract reusable file/artifact handles from one node result."""
     if not isinstance(result, Mapping):
@@ -260,11 +272,11 @@ def format_upstream_summaries(dependency_results: Mapping[str, Any]) -> str:
                 for item in envelope.get("evidence") or []
                 if isinstance(item, Mapping)
             ],
-            "uncertainties": [str(item) for item in envelope.get("uncertainties") or []],
-            "data_gaps": [str(item) for item in (
-                ((envelope.get("outputs") or {}).get("data_gaps") or [])
+            "uncertainties": [str(item) for item in _seq(envelope.get("uncertainties"))],
+            "data_gaps": [str(item) for item in _seq(
+                (envelope.get("outputs") or {}).get("data_gaps")
                 if isinstance(envelope.get("outputs"), Mapping)
-                else (envelope.get("data_gaps") or [])
+                else envelope.get("data_gaps")
             )],
         })
     if not summaries:
@@ -360,7 +372,7 @@ def compact_parent_node_result(
         for item in evidence_items[:_PARENT_NODE_EVIDENCE_ITEMS]
     ]
     artifacts_view = []
-    for item in (envelope.get("artifacts") or [])[:_PARENT_NODE_EVIDENCE_ITEMS]:
+    for item in _seq(envelope.get("artifacts"))[:_PARENT_NODE_EVIDENCE_ITEMS]:
         if isinstance(item, Mapping):
             # 保留 type/path/description：子信封的图表声明是 {type:"chart",path,...}
             # 形状，只按 kind/name/url 白名单提取会塌缩成空对象，父侧就"看不见"图了
@@ -400,19 +412,19 @@ def compact_parent_node_result(
             "findings": _compact_findings(structured),
             "evidence": evidence_view,
             "uncertainties": [
-                str(item) for item in (envelope.get("uncertainties") or [])[:10]
+                str(item) for item in _seq(envelope.get("uncertainties"))[:10]
             ],
             "data_gaps": [
-                str(item) for item in (
-                    ((envelope.get("outputs") or {}).get("data_gaps") or [])
+                str(item) for item in _seq(
+                    (envelope.get("outputs") or {}).get("data_gaps")
                     if isinstance(envelope.get("outputs"), Mapping)
-                    else (envelope.get("data_gaps") or [])
+                    else envelope.get("data_gaps")
                 )[:10]
             ],
             "artifacts": artifacts_view,
         },
         "published_charts": published_charts,
-        "file_paths": [str(p) for p in (data.get("file_paths") or [])[:20]],
+        "file_paths": [str(p) for p in _seq(data.get("file_paths"))[:20]],
         "resource_ids": [
             str(ref.get("resource_id"))
             for ref in (data.get("resource_refs") or [])
@@ -958,7 +970,7 @@ class RunAgentWorkflowTool(LLMTool):
                 # 渐进发现摘要：失败/被阻断节点的发现优先（envelope 可能缺失），
                 # 供父 Agent 在最终视图组织"抢救到了什么"
                 "node_findings": {
-                    task_id: findings[-5:]
+                    task_id: _seq(findings)[-5:]
                     for task_id, findings in (snapshot.get("node_findings") or {}).items()
                     if findings
                 },
@@ -981,7 +993,10 @@ class RunAgentWorkflowTool(LLMTool):
                 ),
             }
             salvage = snapshot.get("delivery", {}).get("salvage") or []
-            salvaged_files = sum(len(item.get("delivered_files") or []) for item in salvage)
+            salvaged_files = sum(
+                len(_seq(item.get("delivered_files") if isinstance(item, Mapping) else None))
+                for item in _seq(salvage)
+            )
             if succeeded:
                 result_message = "工作流已完成"
             elif isinstance(quota_pause, Mapping) and quota_pause.get("reset_at"):
@@ -1023,6 +1038,14 @@ class RunAgentWorkflowTool(LLMTool):
                 "resources": resources,
             }
         except (TypeError, ValueError, KeyError) as exc:
+            # 该兜底覆盖定义校验与结果装配两段：装配期异常（如子代理把列表字段
+            # 交付成 dict 触发切片错误）也会落在这里，必须留堆栈才能定位字段来源。
+            logger.warning(
+                "workflow_result_assembly_failed",
+                workflow_id=str(definition.get("workflow_id") or ""),
+                error=str(exc),
+                exc_info=True,
+            )
             return self._failure(f"工作流定义无效：{exc}")
         except Exception as exc:
             return self._failure(f"工作流执行失败：{exc}")

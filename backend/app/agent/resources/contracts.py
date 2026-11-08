@@ -51,6 +51,8 @@ class ResourceRenderer(str, Enum):
     IMAGE = "image"
     CHART = "chart"
     BOARD = "board"
+    # Web 端 docx 原生渲染（docx-editor），generated_file_products 对 .docx 发出
+    DOCX = "docx"
 
 
 class ResourceCapability(str, Enum):

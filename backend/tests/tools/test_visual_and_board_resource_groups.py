@@ -91,8 +91,9 @@ def test_generated_office_file_and_pdf_preview_are_one_resource_group(tmp_path):
     assert len(resources) == 2
     primary, child = resources
     assert primary.resource_key == "primary:docx"
-    assert primary.renderer.value == "file"
-    assert set(item.value for item in primary.capabilities) == {"download"}
+    # docx 前端原生渲染（docx-editor）：主资源 renderer=docx，带预览/编辑能力
+    assert primary.renderer.value == "docx"
+    assert set(item.value for item in primary.capabilities) == {"preview", "download", "edit"}
     assert child.parent_key == primary.resource_key
     assert child.relation.value == "preview"
     assert child.renderer.value == "pdf"
