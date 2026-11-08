@@ -146,10 +146,19 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
 
 
 MAX_SPREADSHEET_SAVE_BYTES = 50 * 1024 * 1024
-SPREADSHEET_SIGNATURES = {
+# 浏览器端编辑回传的格式签名与渲染器映射（xlsx/xls 走 SheetJS，docx 走 docx-editor）
+EDITABLE_RESOURCE_SIGNATURES = {
     "xlsx": b"PK\x03\x04",
     "xls": b"\xd0\xcf\x11\xe0",
+    "docx": b"PK\x03\x04",
 }
+EDITABLE_RESOURCE_RENDERERS = {
+    "xlsx": "spreadsheet",
+    "xls": "spreadsheet",
+    "docx": "docx",
+}
+# 兼容旧引用
+SPREADSHEET_SIGNATURES = EDITABLE_RESOURCE_SIGNATURES
 
 
 def _is_valid_spreadsheet(path: Path, format_name: str) -> bool:
@@ -159,6 +168,10 @@ def _is_valid_spreadsheet(path: Path, format_name: str) -> bool:
 
             workbook = load_workbook(path, read_only=True, data_only=False)
             workbook.close()
+        elif format_name == "docx":
+            from docx import Document
+
+            Document(str(path))
         else:
             import xlrd
 
@@ -177,7 +190,7 @@ async def save_session_resource(
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
-    """Publish a browser-edited spreadsheet as the group's next version."""
+    """Publish a browser-edited document (xlsx/xls via SheetJS, docx via docx-editor) as the next version."""
     await catalog.require_write(session_id, user)
     service = SessionResourceService.database()
     resource = await service.get_resource(session_id, resource_id, status="active")
@@ -185,8 +198,8 @@ async def save_session_resource(
         raise HTTPException(status_code=404, detail="resource_not_found")
     if not (
         resource.relation == "primary"
-        and resource.renderer == "spreadsheet"
-        and resource.format in SPREADSHEET_SIGNATURES
+        and resource.format in EDITABLE_RESOURCE_SIGNATURES
+        and resource.renderer == EDITABLE_RESOURCE_RENDERERS.get(resource.format)
         and "edit" in resource.capabilities
     ):
         raise HTTPException(status_code=422, detail="resource_not_editable")

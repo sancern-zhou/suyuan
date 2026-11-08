@@ -241,10 +241,10 @@ def attach_document_resources(
         "svg": "image",
     }
     role = "output"
-    # docx 前端原生渲染（预览/下载）；编辑仅 xlsx（有 save 回传链路）与 pptx（页图渲染管线）
+    # 交互编辑仅 xlsx（SheetJS save）与 docx（docx-editor save）；pptx 无回传链路不声明
     capabilities = (
         ("preview", "download", "edit")
-        if fmt in {"xlsx", "pptx"}
+        if fmt in {"xlsx", "docx"}
         else ("preview", "download")
     )
     primary = primary_file(

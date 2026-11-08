@@ -31,12 +31,14 @@ def resource_action_links(
         actions["download"] = f"{base}?disposition=attachment"
     if "render" in resource.capabilities:
         actions["render"] = base.removesuffix("/content") + "/render"
-    if (
-        "edit" in resource.capabilities
-        and resource.relation == "primary"
-        and resource.renderer == "spreadsheet"
+    editable = (
+        resource.renderer == "spreadsheet"
         and resource.format in {"xls", "xlsx"}
-    ):
+    ) or (
+        resource.renderer == "docx"
+        and resource.format == "docx"
+    )
+    if "edit" in resource.capabilities and resource.relation == "primary" and editable:
         actions["save"] = base.removesuffix("/content") + "/save"
     return actions
 
