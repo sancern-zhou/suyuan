@@ -168,14 +168,14 @@
 
 | 文件 | 职责 |
 |---|---|
-| `backend/app/tools/agent_tools/run_agent_workflow.py` | 编排入口：DAG 校验、粒度校验、节点执行器、缓存、持久化 |
+| `backend/app/tools/agent_tools/run_agent_workflow.py` | 编排入口：DAG 定义、节点执行器、缓存、持久化 |
 | `backend/app/tools/agent_tools/call_sub_agent.py` | 子 agent 调用：会话隔离/续用、事件持久化、subagent 思考档位 |
 | `backend/app/agent/workflow/coordinator.py` | DAG 协调器：调度、重试、预算扩容、血缘、快照 |
 | `backend/app/agent/workflow/graph.py` | 依赖图（无环校验、就绪集）与并发信号量 |
 | `backend/app/agent/workflow/mode_workflows.py` | 问数固定工作流定义与阶段推进状态机 |
 | `backend/app/agent/workflow/catalog.py` | 固定工作流注册表（agent_mode / scheduled_task 两个入口） |
 | `backend/app/agent/workflow/target_mode_contract.py` | 子 agent 能力契约与路由规则 |
-| `backend/app/agent/workflow/resource_handoff.py` | 跨节点资源交接（目录登记 + 授权） |
+| `backend/app/agent/workflow/deliverable_validation.py` | 子 Agent 声明交付文件的真实路径校验 |
 | `backend/app/agent/workflow/result_cache.py` | 节点结果指纹与缓存复用 |
 | `backend/app/agent/workflow/journal.py` | 工作流事件 SQLite 流水账 |
 | `backend/app/agent/workflow/runtime.py` | 任务生命周期状态机（queued→running→…→终态） |

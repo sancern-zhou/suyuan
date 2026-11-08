@@ -1,6 +1,13 @@
 # 助手单入口与两层路由实施方案
 
-状态：设计定稿，待排期。上游背景见 `backend/docs/superagent-design-borrowing.md`（dsh-superagent 借鉴笔记）；
+> 历史方案。2026-11-08 起，DAG 的机械 delivery checklist、固定 task_contract 和
+> input/output resource contracts 已移除，改由可选 result_schema、真实文件路径
+> 和父 Agent 业务验收承担。文中相关 C 阶段设计不再作为当前实现依据。
+
+> 历史方案。2026-11-08 起，DAG 的机械 delivery checklist、固定 task_contract 和
+> input/output resource contracts 已移除，改由可选 result_schema、真实文件路径
+> 和父 Agent 业务验收承担。文中相关 C 阶段设计不再作为当前实现依据。
+>
 本文只覆盖"路由—交付—可控性—入口收敛"主线，不重复共享基础设施（统一 Effects/Outbox、事件订阅）那部分。
 
 ## 0. 问题与目标

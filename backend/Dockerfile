@@ -19,8 +19,6 @@ RUN apt-get update && apt-get install -y \
     libreoffice-writer \
     libmagic1 \
     librsvg2-bin \
-    nodejs \
-    npm \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-chi-sim \
@@ -45,11 +43,6 @@ RUN python -m playwright install --with-deps chromium
 
 # Copy application code
 COPY . .
-
-# Install the isolated editable-PPT compiler runtime without downloading a
-# second Chromium copy.
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-RUN npm ci --omit=dev --prefix /app/app/tools/office/editable_ppt_runtime
 
 # Quarto is required by the report renderer; pin the version documented and
 # validated by this repository.

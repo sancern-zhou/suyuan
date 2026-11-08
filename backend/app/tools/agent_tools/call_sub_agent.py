@@ -31,17 +31,13 @@ from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
 from app.agent.workflow.delegation import is_leaf_mode, delegation_error
 from app.agent.workflow import route_decisions
-from app.agent.workflow.delivery_checklists import (
-    checklist_text,
-    evaluate_delivery_checklist,
-)
 
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
     result_resource_declarations,
     stored_resource_ref,
 )
-from app.agent.workflow.resource_contract import validate_deliverable_entries
+from app.agent.workflow.deliverable_validation import validate_deliverable_entries
 from app.agent.workflow.target_mode_contract import (
     build_target_mode_contract,
     target_mode_values,
@@ -99,11 +95,10 @@ def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) ->
 
 
 def ensure_structured_delivery_schema(target_mode: str, result_schema):
-    """固定工作流叶子模式默认附加证据结果协议。
+    """固定工作流叶子模式默认获得一个最小结构化交付通道。
 
-    这些模式的 deliver 阶段会把工具清空到只剩 submit_result；不注入
-    result_schema 就等于没有交付通道，子 Agent 只能以文本收尾，数据
-    文件留在子会话里无法结构化回传父 Agent（与 DAG 节点行为对齐）。
+    这些模式的 deliver 阶段会把工具清空到只剩 submit_result；具体业务字段由
+    调用方的 result_schema 决定，不再强制统一专家任务书或证据字段。
     """
     if isinstance(result_schema, dict) and result_schema:
         return result_schema
@@ -111,11 +106,7 @@ def ensure_structured_delivery_schema(target_mode: str, result_schema):
 
     if get_mode_workflow(str(target_mode)) is None:
         return result_schema
-    from copy import deepcopy
-
-    from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
-
-    return deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA)
+    return {"type": "object", "additionalProperties": True}
 
 
 def build_escalation_tool(workflow_run, effective_task_id, tool_executor, observer):
@@ -513,7 +504,6 @@ class CallSubAgentTool(LLMTool):
         profile: Optional[str] = None,
         run_in_background: bool = False,
         _upstream_handles: Optional[List[Dict[str, Any]]] = None,
-        _input_contracts: Optional[List[Dict[str, Any]]] = None,
         _on_session_started: Optional[Callable[[str], None]] = None,
         _escalation_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
         _finding_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -959,7 +949,6 @@ class CallSubAgentTool(LLMTool):
 
             handoff_resource_service = getattr(tool_executor, "resource_service", None)
             imported_resource_refs: List[Dict[str, Any]] = []
-            resource_contract_warnings: List[Dict[str, Any]] = []
             parent_resource_handles = await self._collect_parent_resource_handles(context)
             upstream_group_ids = {
                 (str(item.get("source_session_id") or ""), str(item.get("group_id") or ""))
@@ -1006,22 +995,6 @@ class CallSubAgentTool(LLMTool):
                         ],
                     },
                 )
-
-            # Validate the imported catalog, not just requested handles. A stale
-            # or missing group must fail before the child starts model calls.
-            if _input_contracts:
-                from app.agent.workflow.resource_contract import (
-                    ResourceContractError, check_resource_contracts, fatal_resource_contract_violations,
-                )
-                violations = check_resource_contracts(_input_contracts, imported_resource_refs)
-                # 形态不符（format/fields）降为缺口提示随上下文进入子 Agent，
-                # 仅 required 上游资源整体缺失仍在模型调用开始前失败（2026-11-05）。
-                fatal = fatal_resource_contract_violations(violations)
-                if fatal:
-                    raise ResourceContractError(fatal)
-                resource_contract_warnings = [item for item in violations if item not in fatal]
-                if resource_contract_warnings:
-                    effective_context = (effective_context or "") + "\n资源导入后发现与资源契约不符/可选证据缺口：" + json.dumps(resource_contract_warnings, ensure_ascii=False) + "\n仅基于可用证据交付并明确限制，不重新取数。"
 
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
@@ -1089,8 +1062,6 @@ class CallSubAgentTool(LLMTool):
                     + "分析完成后必须调用 `submit_result` 工具提交结构化结果（字段结构见工具定义），"
                     + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
                     + "将触发重试。证据足以回答任务问题即应交付，不要为追求完整性用尽迭代预算。\n"
-                    + "\n## 验收清单（交付前逐项自查）\n"
-                    + checklist_text(str(target_mode))
                 )
             # 升级提问（escalate）：工作流节点子 Agent 可以向用户提出阻塞性澄清
             # 问题（问数口径/统计范围/时间边界），只挂起本节点、其余节点照常跑；
@@ -1246,17 +1217,10 @@ class CallSubAgentTool(LLMTool):
             repair_workflow_progress = self._fixed_workflow_deliver_progress(target_mode)
             structured_result = None
             validation_errors = []
-            checklist_violations = []
             if result_schema and final_result["status"] != "cancelled":
                 structured_result, validation_errors = self._validate_structured_result(
                     final_result.get("answer", ""), result_schema
                 )
-                blocking, checklist_violations = self._evaluate_delivery_checklist(
-                    target_mode, mandate, structured_result
-                )
-                # enforce 模式：清单违规并入校验错误通道，由既有修复轮喂回修正；
-                # observe 模式只记录（见 envelope metadata 与日志）。
-                validation_errors = validation_errors + blocking
                 attempts = max(0, min(int(repair_attempts or 0), 2))
                 for repair_index in range(attempts):
                     if not validation_errors:
@@ -1313,10 +1277,6 @@ class CallSubAgentTool(LLMTool):
                     structured_result, validation_errors = self._validate_structured_result(
                         final_result.get("answer", ""), result_schema
                     )
-                    blocking, checklist_violations = self._evaluate_delivery_checklist(
-                        target_mode, mandate, structured_result
-                    )
-                    validation_errors = validation_errors + blocking
                     if validation_errors:
                         workflow_runtime.start(workflow_run.run_id)
 
@@ -1344,9 +1304,7 @@ class CallSubAgentTool(LLMTool):
 
             # 提取结构化数据
             extracted_file_paths = self._extract_file_paths(result_events)
-            # 交付信封核验后的文件并入 file_paths：下游 input_contracts
-            # （kind/format/fields）凭文件后缀与 CSV/JSON 字段即可自然满足，
-            # 不需要额外的元数据写入通道。
+            # 交付信封核验后的文件并入 file_paths，供下游按实际内容读取。
             if isinstance(structured_result, dict):
                 for item in structured_result.get("deliverables") or []:
                     if not isinstance(item, dict):
@@ -1365,8 +1323,6 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
-            if resource_contract_warnings:
-                structured_data["resource_contract_warnings"] = resource_contract_warnings
             if handoff_resource_service is None:
                 from app.agent.resources.resource_service import SessionResourceService
 
@@ -1415,11 +1371,6 @@ class CallSubAgentTool(LLMTool):
                     **(
                         {"mandate": mandate}
                         if isinstance(mandate, dict) and mandate
-                        else {}
-                    ),
-                    **(
-                        {"delivery_checklist_violations": checklist_violations}
-                        if checklist_violations
                         else {}
                     ),
                 },
@@ -1559,7 +1510,6 @@ class CallSubAgentTool(LLMTool):
             }
 
         except Exception as e:
-            from app.agent.workflow.resource_contract import ResourceContractError
             if workflow_runtime is not None:
                 try:
                     run = workflow_run
@@ -1581,7 +1531,7 @@ class CallSubAgentTool(LLMTool):
                 "status": "failed",
                 "success": False,
                 "result": f"子Agent执行失败：{str(e)}",
-                "data": ({"resource_contract_violations": e.violations} if isinstance(e, ResourceContractError) else {}),
+                "data": {},
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "call_sub_agent"
@@ -1919,33 +1869,6 @@ class CallSubAgentTool(LLMTool):
         }
         return mode_names.get(mode, mode)
 
-    def _evaluate_delivery_checklist(
-        self,
-        target_mode: str,
-        mandate: Optional[Dict[str, Any]],
-        structured_result: Optional[Dict[str, Any]],
-    ) -> tuple:
-        """交付验收清单（阶段 C）。返回 (blocking, observed)。
-
-        observe：只记录（日志 + envelope metadata），不拦截交付；
-        enforce：违规并入校验错误触发既有修复轮；off：跳过。
-        """
-        from config.settings import settings as _settings
-
-        mode = str(getattr(_settings, "delivery_checklist_mode", "observe") or "observe")
-        if mode == "off" or not isinstance(structured_result, dict):
-            return [], []
-        observed = evaluate_delivery_checklist(
-            str(target_mode), structured_result, mandate
-        )
-        if observed:
-            logger.info(
-                "delivery_checklist_evaluated",
-                target_mode=target_mode,
-                checklist_mode=mode,
-                violations=observed,
-            )
-        return (observed if mode == "enforce" else []), observed
 
     @staticmethod
     def _validate_structured_result(answer: str, schema: Dict[str, Any]):
@@ -1957,7 +1880,7 @@ class CallSubAgentTool(LLMTool):
                 "got": "no structured JSON result",
             }]
         violations = validate_result_schema(structured_result, schema)
-        # 交付文件机械核验（交货方自报路径 → 文件存在/后缀/字段核对），
+        # 交付文件只核验真实存在；格式与业务完整性不属于 DAG 交接层。
         # 违规并入同一校验错误通道，由既有修复轮喂回原子会话修正。
         if isinstance(structured_result, dict):
             violations = violations + validate_deliverable_entries(structured_result.get("deliverables"))

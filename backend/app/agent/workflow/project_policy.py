@@ -1,7 +1,6 @@
 """Project-owned leaf capabilities and bounded workflow contracts."""
 
 from copy import deepcopy
-from collections.abc import Mapping
 
 
 def active_backend():
@@ -53,9 +52,8 @@ def scope_delegation_schema(schema, parent_mode):
 
     is_direct_call = schema["name"] == "call_sub_agent"
     if shared_children and not is_direct_call:
-        # 混合父模式（如 assistant）的 DAG 工具只收窄 enum：一行制子模式清单与
-        # 项目子模式契约要求已在同父模式的 call_sub_agent 承载，双份注入属重复
-        # 计费；DAG 节点缺 task_contract 由 prepare_node 运行时报错召回修复。
+        # 混合父模式（如 assistant）的 DAG 工具只收窄 enum：子模式定位与边界
+        # 已在同父模式的 call_sub_agent 承载，双份注入属重复计费。
         return schema
 
     # 一行制定位+边界：完整 scope/outputs 由子模式自身提示词承载，
@@ -68,75 +66,56 @@ def scope_delegation_schema(schema, parent_mode):
     target["description"] = description
     if shared_children:
         # 混合父模式保留原工具描述：后台委派、describe_mode 等委派语义仍是
-        # 该父模式的主路径，只追加项目子模式的契约要求。
+        # 该父模式的主路径；goal 与按需 result_schema 承载具体任务要求。
         schema["description"] = (
             str(schema.get("description") or "").rstrip()
-            + "\n项目工作流子模式（上列清单，单点调用与 DAG 节点同规则）必须携带 "
-            "task_contract：protocol_version=workflow.v1、question、scope、required_evidence、"
-            "deliverables（最多三项）；父侧整合并成稿，简单问题直接执行。"
+            + "\n项目子模式用 goal 完整描述问题、范围和预期交付；父侧整合并成稿，简单问题直接执行。"
         )
     else:
         schema["description"] = (
             "项目内部子 Agent 工作流：按独立问题分配任务，dependencies 复用共享资源，"
             "无依赖节点并行，已知条件用 when，首轮结束后仅对具体缺口使用 extension 补图。"
-            "节点 task_contract 必须含 protocol_version=workflow.v1、question、scope、required_evidence、"
-            "deliverables（最多三项）。父 Agent 整合并成稿，简单问题直接执行。"
+            "节点用 goal 描述独立问题、范围和预期交付，可按需传 result_schema。"
+            "父 Agent 整合并成稿，简单问题直接执行。"
             f"允许子模式：{', '.join(enabled_modes)}。"
         )
     return schema
 
 
 def prepare_node(node):
-    """Require a bounded question and structured evidence before starting a child."""
+    """Apply project-owned execution limits and optional evidence requirements."""
     policy = child_modes().get(str(node.get("target_mode") or ""))
     if policy is None:
         return
-    contract = node.get("task_contract")
-    if not isinstance(contract, Mapping):
-        raise ValueError("项目子节点必须提供 task_contract")
-    for field in ("question", "scope", "required_evidence", "deliverables"):
-        if not contract.get(field):
-            raise ValueError(f"项目子节点 task_contract 缺少 {field}")
-    if contract.get("protocol_version") != "workflow.v1":
-        raise ValueError("项目子节点协议必须为 workflow.v1")
-    if not isinstance(contract["question"], str) or not contract["question"].strip():
-        raise ValueError("项目子节点 question 必须为非空字符串")
-    if not isinstance(contract["scope"], Mapping):
-        raise ValueError("项目子节点 scope 必须为对象，包含时间、站点范围及口径")
-    for field in ("required_evidence", "deliverables"):
-        values = contract[field]
-        if not isinstance(values, list) or not all(isinstance(v, str) and v.strip() for v in values):
-            raise ValueError(f"项目子节点 {field} 必须为非空字符串列表")
-    if len(contract["deliverables"]) > policy.max_deliverables:
-        raise ValueError(f"项目子节点最多 {policy.max_deliverables} 项交付物，请按独立问题拆分")
     for field in ("max_iterations", "timeout_seconds"):
         limit = getattr(policy, field)
         node[field] = min(node.get(field) or limit, limit)
     node["iteration_cap"] = policy.max_iterations
     node["timeout_cap"] = policy.timeout_seconds
-    # Caller schemas cannot weaken the evidence contract.
-    from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
-
-    schema = deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA)
-    schema["x-evidence-references"] = True
-    schema["properties"]["findings"]["items"] = {
-        "type": "object", "required": ["statement", "evidence_ids"],
-        "properties": {"statement": {"type": "string"},
-                       "evidence_ids": {"type": "array", "items": {"type": "string"}}},
+    if node.get("result_schema") or not policy.require_counter_evidence:
+        return
+    node["result_schema"] = {
+        "type": "object",
+        "required": ["findings", "evidence"],
+        "properties": {
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["statement", "evidence_ids", "counter_evidence", "alternative_explanations"],
+                    "properties": {
+                        "statement": {"type": "string"},
+                        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                        "counter_evidence": {"type": "array", "items": {"type": "string"}},
+                        "alternative_explanations": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "evidence": {"type": "array", "items": {"type": "object"}},
+        },
+        "x-evidence-references": True,
+        "additionalProperties": True,
     }
-    schema["properties"]["evidence"]["items"] = {
-        "type": "object", "required": ["id", "source", "locator"],
-        "properties": {key: {"type": "string"} for key in ("id", "source", "locator")},
-    }
-    if policy.require_counter_evidence:
-        finding = schema["properties"]["findings"]["items"]
-        finding["required"] += ["counter_evidence", "alternative_explanations"]
-        finding["properties"].update({
-            field: {"type": "array", "items": {"type": "string"}}
-            for field in ("counter_evidence", "alternative_explanations")
-        })
-    node["result_schema"] = schema
-    node["task_contract"] = {**dict(contract), "result_schema": deepcopy(schema)}
 
 
 def apply_workflow_limits(parent_mode, definition, max_concurrency):

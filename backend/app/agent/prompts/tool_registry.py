@@ -55,21 +55,25 @@ OFFICE_TOOL_NAMES = [
     "execute_python",
     "web_search",
     "web_fetch",
+    # PPTX/文档交付的渲染级验收（QA 闭环，见技能 pptx_authoring/docx_authoring/xlsx_authoring）。
+    "validate_pptx",
+    "validate_office",
     # 任务调度、技能目录和重型工作空间委托。
     "list_skills",
     "view_skill",
     "create_skill_draft",
 ]
 
-# ===== 幻灯片模式工具 =====
+# ===== 幻灯片模式工具（技能路线：pptx_authoring + execute_python + validate_pptx 闭环） =====
 PPT_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
-    # PPT 源码项目和交付
-    "manage_editable_ppt",
+    # 自由创作技能与渲染验收闭环
+    "list_skills",
+    "view_skill",
     "validate_pptx",
-    "create_pptx_with_ppt_master",
-    # 文件读取与直接源码编辑
+    # 文件读取与代码迭代
     "read_file",
     "write_file",
     "edit_file",

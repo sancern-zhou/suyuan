@@ -560,21 +560,16 @@ class AgentRuntime:
         later PPT/chart generation to run from memory instead of pixels.
         """
         visual_tools = {
-            "create_pptx_with_ppt_master",
+            "execute_python",
+            "validate_pptx",
             "create_business_chart",
             "create_drawio_board",
             "render_drawio_board_candidate",
             "edit_file",
             "write_file",
         }
-        visual_ppt_operations = {
-            "edit_source",
-            "edit_sources",
-        }
-        for tool_name, args in cls._planner_action_tool_calls(action):
+        for tool_name, _args in cls._planner_action_tool_calls(action):
             if tool_name in visual_tools:
-                return True
-            if tool_name == "manage_editable_ppt" and str(args.get("operation") or "") in visual_ppt_operations:
                 return True
         return False
 

@@ -33,8 +33,7 @@ def test_run_agent_workflow_schema_documents_free_form_dag():
     for token in (
         "自主决定",
         "nodes",
-        "dependencies",
-        "task_contract",
+        "goal",
         "result_schema",
         "expert_meteorology",
         "expert_analysis",
@@ -59,7 +58,7 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
     description = schema["description"]
     target_mode = schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]
 
-    assert "能力与工具边界" in description
+    assert "定位与边界" in description
     assert "同源数据由一个节点获取，后续节点通过 dependencies 复用" in description
     assert {"query", "expert", "report"}.isdisjoint(target_mode["enum"])
     call_target_mode = CallSubAgentTool().get_function_schema()["parameters"]["properties"]["target_mode"]
@@ -69,54 +68,34 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
 def test_run_agent_workflow_schema_requires_one_question_per_expert_node():
     schema = RunAgentWorkflowTool().get_function_schema()
     description = schema["description"]
-    assert "一个专家节点只能回答一个分析问题" in description
-    assert "deliverables 最多 3 项" in description
+    assert "一个专家节点只回答一个独立问题" in description
+    assert "input_contracts" not in description
+    assert "output_contract" not in description
+    assert "input_contracts" not in schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]
+    assert "output_contract" not in schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]
 
 
 @pytest.mark.asyncio
-async def test_run_agent_workflow_rejects_overloaded_expert_node():
-    result = await RunAgentWorkflowTool().execute(
-        workflow={
-            "workflow_id": "overloaded-expert",
-            "nodes": [{
-                "task_id": "analysis-all",
-                "target_mode": "expert_analysis",
-                "goal": "完成所有分析",
-                "task_contract": {
-                    "deliverables": ["相关性", "超标统计", "时空对比", "趋势图"],
-                },
-            }],
-        },
-    )
-    assert result["success"] is False
-    assert "超过专家节点上限" in result["result"]
+async def test_expert_node_does_not_require_fixed_task_contract(monkeypatch):
+    seen = {}
 
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            seen.update(kwargs)
+            return {"status": "success", "success": True, "data": {}}
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("node,expect", [
-    (
-        {"task_id": "met-all", "target_mode": "expert_meteorology", "goal": "气象集中研判"},
-        "缺少 task_contract",
-    ),
-    (
-        {"task_id": "analysis-all", "target_mode": "expert_analysis", "goal": "集中研判",
-         "task_contract": {"protocol_version": "workflow.v1", "question": "成因"}},
-        "缺少 deliverables",
-    ),
-    (
-        {"task_id": "analysis-empty", "target_mode": "expert_analysis", "goal": "集中研判",
-         "task_contract": {"protocol_version": "workflow.v1", "question": "成因", "deliverables": []}},
-        "为空",
-    ),
-])
-async def test_report_expert_node_requires_contract_with_deliverables(node, expect):
-    """专家节点必须携带 task_contract.deliverables（1~3 项），缺失即整单拒绝。"""
+    monkeypatch.setattr(RunAgentWorkflowTool, "_build_sub_agent_tool", staticmethod(FakeSubAgentTool))
     result = await RunAgentWorkflowTool().execute(
-        workflow={"workflow_id": "granularity", "nodes": [node]},
+        workflow={"workflow_id": "simple-expert", "nodes": [{
+            "task_id": "analysis",
+            "target_mode": "expert_analysis",
+            "goal": "回答一个独立分析问题",
+        }]},
+        run_in_background=False,
     )
-    assert result["success"] is False
-    assert expect in result["result"]
-    assert "拆" in result["result"]
+    assert result["success"] is True
+    assert seen["goal"] == "回答一个独立分析问题"
+    assert seen["task_contract"] is None
 
 
 def test_call_sub_agent_extracts_current_tool_result_file_handles():
@@ -402,7 +381,7 @@ async def test_run_agent_workflow_returns_compact_view_and_persists_full_results
                         "status": "completed_with_gaps",
                         "summary": "分析完成。\n" + embedded_json,
                         "evidence": [],
-                        "data_gaps": ["组分数据缺测"],
+                        "outputs": {"data_gaps": ["组分数据缺测"]},
                     },
                 },
                 "metadata": {
@@ -557,7 +536,7 @@ async def test_non_report_mode_allows_expert_nodes(monkeypatch):
         }
 
     monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
-    context = SimpleNamespace(runtime_mode="assistant", session_id="assistant_session_x")
+    context = SimpleNamespace(runtime_mode="expert", session_id="expert_session_x")
     result = await RunAgentWorkflowTool().execute(
         context=context,
         workflow={
@@ -694,7 +673,7 @@ async def test_non_report_mode_rejects_generic_query(monkeypatch):
         }
 
     monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
-    context = SimpleNamespace(runtime_mode="assistant", session_id="assistant_session_x")
+    context = SimpleNamespace(runtime_mode="expert", session_id="expert_session_x")
     result = await RunAgentWorkflowTool().execute(
         context=context,
         workflow={

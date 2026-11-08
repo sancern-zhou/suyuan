@@ -11,7 +11,6 @@ Office Automation Tools
 
 工具列表：
 - ReadPptxTool: 读取 PPTX 内容
-- CreatePptxWithPptMasterTool: 按 operation 创建、续改或渲染生产级 PPTX
 - WeComCliTool: 官方企业微信 CLI 包装工具
 - soffice: LibreOffice 沙箱适配（跨平台）
 
@@ -20,19 +19,16 @@ Excel操作说明：
 配合 openpyxl、pandas、xlsxwriter 等库实现。
 
 PPT操作说明：
-读取PPT请优先使用 read_pptx。
-生成正式或业务型PPT请优先直接调用 create_pptx_with_ppt_master，按 operation=create/append/
-replace/patch/render 生成、续改或刷新可编辑PPTX预览。
-execute_python 仅用于复杂的局部编辑、特殊兼容处理或前置数据/图片资产生成。
+读取既有 PPTX 用 read_pptx。
+生成与多轮修改走技能路线：view_skill: pptx_authoring → execute_python 生成/迭代 →
+validate_pptx 渲染验收 + 视觉自评，双过后交付。
 """
 
 from .read_pptx_tool import ReadPptxTool
-from .ppt_master_tool import CreatePptxWithPptMasterTool
 from .wecom_cli import WeComCliTool
 
 
 __all__ = [
     'ReadPptxTool',
-    'CreatePptxWithPptMasterTool',
     'WeComCliTool',
 ]

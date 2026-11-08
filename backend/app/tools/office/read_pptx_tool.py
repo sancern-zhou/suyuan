@@ -29,7 +29,7 @@ class ReadPptxTool(LLMTool):
             name="read_pptx",
             description=(
                 "读取PPTX演示文稿，提取每页文本、表格、图片信息、备注和基础元数据。\n\n"
-                "⚠️ 使用前请先阅读：backend/app/tools/office/PPT操作指南.md"
+                "生成/修改 PPT 走技能路线：view_skill: pptx_authoring"
             ),
             category=ToolCategory.QUERY,
             version="1.0.0",
