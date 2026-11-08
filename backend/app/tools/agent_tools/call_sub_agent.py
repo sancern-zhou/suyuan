@@ -313,7 +313,12 @@ class CallSubAgentTool(LLMTool):
                     },
                     "run_in_background": {
                         "type": "boolean",
-                        "description": "助手模式默认后台执行并返回 run_id（本轮先答复计划，结果在交付边界整合）；显式传 false 同步等待结果。其他模式传 true 转入进程内后台。"
+                        "description": (
+                            "助手模式默认后台执行并返回 run_id。不要反复查询进度："
+                            "需要等待时用 manage_assistant_runs action=get 传 wait_seconds（如 120）一次阻塞等待；"
+                            "也可先做其他工作或给出阶段答复，委派完成后系统会自动注入结果。"
+                            "显式传 false 同步等待结果。其他模式传 true 转入进程内后台。"
+                        )
                     },
                     "background_task_id": {
                         "type": "string",

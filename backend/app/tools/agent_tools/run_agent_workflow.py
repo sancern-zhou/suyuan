@@ -463,7 +463,12 @@ class RunAgentWorkflowTool(LLMTool):
                             },
                             "run_in_background": {
                                 "type": "boolean",
-                                "description": "助手模式默认后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止；显式传 false 等待本次结果。其他模式传 true 转入进程内后台。",
+                                "description": (
+                                    "助手模式默认后台执行并返回 run_id。不要反复查询进度："
+                                    "需要等待时用 manage_assistant_runs action=get 传 wait_seconds（如 120）一次阻塞等待；"
+                                    "也可先做其他工作或给出阶段答复，委派完成后系统会自动注入结果。"
+                                    "显式传 false 同步等待本次结果。其他模式传 true 转入进程内后台。"
+                                ),
                             },
                         "workflow": {
                             "type": "object",

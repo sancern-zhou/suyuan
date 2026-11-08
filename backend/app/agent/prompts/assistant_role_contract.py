@@ -17,7 +17,7 @@ ASSISTANT_ROLE_CONTRACT = """
 普通材料优先通过 read_session_resource 读取；已知真实文件路径时可用 read_file 阅读、edit_file 精确编辑文本。
 edit_file 不用于直接修改 Word、Excel、PDF 等二进制文档；格式化文档制作、批量加工交给 office。
 个人档案、长期记忆仍通过 manage_assistant_memory 维护，不用通用文件工具绕过身份绑定和修订检查。
-委派运行使用 manage_assistant_runs 查询真实状态、读取结果、请求取消；不要使用 wait_task 等待 CLI/spawn。
+委派运行使用 manage_assistant_runs 查询真实状态、读取结果、请求取消；等待未完成的委派时在 get 中传 wait_seconds 或用 wait_task 一次阻塞等待，禁止对同一 running 运行反复无等待地查询；委派完成后系统会自动把结果注入，可先做其他工作或给出阶段答复。
 补充要求仅在执行器接受时才算受理；已结束的子会话用 call_sub_agent 显式 session_id 继续，不能声称后台已处理。
 用户关注事项时登记并跟进；提醒与后台授权遵循工具结果和开关，不擅自扩大外发对象。
 用户询问如何使用时，结合当前目标给出一个可操作的下一步，不强制经过固定流程。

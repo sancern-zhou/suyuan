@@ -21,19 +21,19 @@ class WaitTaskTool(LLMTool):
         function_schema = {
             "name": "wait_task",
             "description": (
-                "等待后台任务完成，避免反复轮询状态。适用于 cli_session 返回的 cli_task_* "
-                "和 spawn 返回的 spawn_task_*；默认自动识别任务类型。"
+                "等待后台任务完成，避免反复轮询状态。适用于 cli_session 返回的 cli_task_*、"
+                "spawn 返回的 spawn_task_*、助手委派返回的 delegation_*；默认自动识别任务类型。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "后台任务ID，如 cli_task_... 或 spawn_task_..."
+                        "description": "后台任务ID，如 cli_task_...、spawn_task_... 或 delegation_..."
                     },
                     "task_type": {
                         "type": "string",
-                        "enum": ["auto", "cli", "spawn"],
+                        "enum": ["auto", "cli", "spawn", "delegation"],
                         "description": "任务类型，默认auto。无法从ID判断时显式指定。",
                         "default": "auto"
                     },
@@ -44,7 +44,7 @@ class WaitTaskTool(LLMTool):
                     },
                     "wait_interval": {
                         "type": "number",
-                        "description": "检查间隔秒数，默认2，范围0.2-60。",
+                        "description": "检查间隔秒数，默认2，范围0.2-60（delegation 类型忽略此项，完成即唤醒）。",
                         "default": 2
                     }
                 },
@@ -56,7 +56,7 @@ class WaitTaskTool(LLMTool):
             description="等待后台任务完成，避免重复轮询状态",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.0.0",
+            version="1.1.0",
             requires_context=False,
         )
 
@@ -74,6 +74,12 @@ class WaitTaskTool(LLMTool):
             return self._failed("缺少必填参数：task_id")
 
         task_type = self._resolve_task_type(task_id, task_type)
+        if task_type == "delegation":
+            return await self._wait_for_delegation(
+                task_id=task_id,
+                wait_timeout=wait_timeout,
+                context=context,
+            )
         if task_type not in {"cli", "spawn"}:
             return self._failed(f"无法识别任务类型，请显式指定 task_type：{task_id}")
 
@@ -146,6 +152,57 @@ class WaitTaskTool(LLMTool):
                 f"等待后台任务 {task_id} 超过 {wait_timeout:g} 秒，"
                 f"当前状态: {data.get('status')}"
             ),
+        )
+
+    async def _wait_for_delegation(
+        self,
+        *,
+        task_id: str,
+        wait_timeout: float,
+        context: Any,
+    ) -> Dict[str, Any]:
+        """等待助手委派（delegation_*）到终态；完成即唤醒，不做固定间隔轮询。"""
+        DELEGATION_TERMINAL = {"succeeded", "failed", "cancelled", "partial"}
+        try:
+            from app.social.assistant_runs import AssistantRunService
+            from app.tools.scheduled_tasks.session_identity import resolve_task_user
+            from config.settings import settings
+
+            user = await resolve_task_user(context)
+            service = AssistantRunService()
+            record = await service.wait_for_run(
+                settings.project_id, user.id, task_id, wait_timeout, poll_interval=1.0
+            )
+        except ValueError as exc:
+            return self._failed(str(exc))
+        except Exception:
+            logger.exception("wait_task_delegation_failed", task_id=task_id)
+            return self._failed(
+                f"委派等待暂不可用：{task_id}；请改用 manage_assistant_runs action=get 并传 wait_seconds"
+            )
+        status = str(record.get("status") or "unknown")
+        terminal = status in DELEGATION_TERMINAL
+        data: Dict[str, Any] = {
+            "task_id": task_id,
+            "status": status,
+            "source_session_id": record.get("source_session_id"),
+        }
+        for key in ("kind", "goal", "target_mode", "updated_at"):
+            if record.get(key) is not None:
+                data[key] = record.get(key)
+        summary = (
+            f"委派 {task_id} 已结束，当前状态: {status}"
+            if terminal
+            else f"等待委派 {task_id} 超过 {wait_timeout:g} 秒，当前状态: {status}；"
+            "可继续等待或先用 manage_assistant_runs action=result 读已完成部分"
+        )
+        return self._success(
+            task_id=task_id,
+            task_type="delegation",
+            task=data,
+            wait_timed_out=not terminal,
+            wait_polls=0,
+            summary=summary,
         )
 
     def _get_manager(self, task_type: str) -> Any:
@@ -223,6 +280,8 @@ class WaitTaskTool(LLMTool):
             return "cli"
         if task_id.startswith("spawn_task_"):
             return "spawn"
+        if task_id.startswith("delegation_"):
+            return "delegation"
         return "auto"
 
     def _get_user_key(self, context: Any = None) -> str:

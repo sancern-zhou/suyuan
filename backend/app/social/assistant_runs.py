@@ -21,6 +21,8 @@ _LIVE_TASKS = set()
 # 委派完成并把结果作为工具观察注入（参考 _LIVE_TASKS 的进程内语义：
 # 进程重启后登记丢失，等待自然退化为"无待完成委派"）。
 _PENDING_BY_SESSION: dict[str, set] = {}
+# (session_id, run_id) → 连续无进展 get 次数；用于反轮询软提示（见 _polling_hint）。
+_GET_POLL_COUNTS: dict[tuple[str, str], int] = {}
 managed_delegation = ContextVar("managed_assistant_delegation", default=None)
 TERMINAL = {"succeeded", "failed", "cancelled", "partial"}
 
@@ -157,6 +159,77 @@ class AssistantRunService:
         """源会话当前仍在运行的后台委派数（进程内登记）。"""
         return len(_PENDING_BY_SESSION.get(session_id) or ())
 
+    @staticmethod
+    def _result_from_task(task) -> dict:
+        record = getattr(task, "_assistant_run_record", None) or {}
+        return {
+            "run_id": record.get("run_id"),
+            "kind": record.get("kind"),
+            "status": record.get("status"),
+            "target_mode": record.get("target_mode"),
+            "goal": record.get("goal"),
+            "result": record.get("result"),
+        }
+
+    def _pending_task(self, session_id: str, run_id: str):
+        for task in _PENDING_BY_SESSION.get(session_id) or ():
+            record = getattr(task, "_assistant_run_record", None) or {}
+            if record.get("run_id") == run_id:
+                return task
+        return None
+
+    async def collect_completed_runs(self, session_id: str) -> tuple[list[dict], int]:
+        """非阻塞收割本会话已完成的后台委派，返回 (结果列表, 仍在运行数)。
+
+        供会话运行时在工具轮次边界注入"完成通知"观察（轮询风暴修复）：
+        委派一完成下一轮即可看到结果，模型无需查询 manage_assistant_runs。
+        """
+        tasks = set(_PENDING_BY_SESSION.get(session_id) or ())
+        if not tasks:
+            return [], 0
+        done, pending = await asyncio.wait(tasks, timeout=0)
+        return [self._result_from_task(task) for task in done], len(pending)
+
+    async def wait_for_run(
+        self,
+        project,
+        owner,
+        run_id: str,
+        timeout: float,
+        *,
+        poll_interval: float = 1.0,
+    ) -> dict:
+        """阻塞等待单个委派到达终态，返回最新 record（超时则可能仍非终态）。
+
+        进程内 pending task 优先（完成即唤醒，无轮询开销）；task 不在本
+        进程（多 worker 部署、进程重启）时退化为落盘文件轮询——run() 的
+        finally 会把终态 _save 到磁盘，跨 worker 依然可见。
+        """
+        record = self.get(project, owner, run_id)
+        if record.get("status") in TERMINAL:
+            return record
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, min(float(timeout), 3600.0))
+        task = self._pending_task(str(record.get("source_session_id") or ""), run_id)
+        if task is not None:
+            remaining = deadline - loop.time()
+            if remaining > 0:
+                await asyncio.wait({task}, timeout=remaining)
+            in_memory = getattr(task, "_assistant_run_record", None)
+            if isinstance(in_memory, dict):
+                record = in_memory
+            if record.get("status") in TERMINAL:
+                return record
+        while loop.time() < deadline:
+            await asyncio.sleep(poll_interval)
+            try:
+                record = self.get(project, owner, run_id)
+            except ValueError:
+                break
+            if record.get("status") in TERMINAL:
+                return record
+        return record
+
     async def wait_for_session_runs(self, session_id: str, timeout: float) -> tuple[list[dict], int]:
         """等待该会话的后台委派完成，返回 (已完成结果列表, 仍在运行数)。
 
@@ -167,28 +240,31 @@ class AssistantRunService:
         if not tasks:
             return [], 0
         done, pending = await asyncio.wait(tasks, timeout=timeout)
-        results = []
-        for task in done:
-            record = getattr(task, "_assistant_run_record", None) or {}
-            results.append(
-                {
-                    "run_id": record.get("run_id"),
-                    "kind": record.get("kind"),
-                    "status": record.get("status"),
-                    "target_mode": record.get("target_mode"),
-                    "goal": record.get("goal"),
-                    "result": record.get("result"),
-                }
-            )
-        return results, len(pending)
+        return [self._result_from_task(task) for task in done], len(pending)
 
-    async def command(self, context, *, action, run_id=None, message=None, offset=0, limit=20):
+    async def command(
+        self,
+        context,
+        *,
+        action,
+        run_id=None,
+        message=None,
+        offset=0,
+        limit=20,
+        wait_seconds=0,
+    ):
         from config.settings import settings
 
         user = await resolve_task_user(context)
         project, owner = settings.project_id, user.id
         if action not in {"list", "get", "result", "cancel", "steer"}:
             raise ValueError("不支持的委派操作")
+        try:
+            wait_seconds = float(wait_seconds)
+        except (TypeError, ValueError):
+            raise ValueError("wait_seconds 须为不小于 0 的秒数")
+        if wait_seconds < 0 or wait_seconds > 600:
+            raise ValueError("wait_seconds 须在 0-600 秒之间")
         if action == "list":
             paths = sorted(
                 self._directory(project, owner).glob("delegation_*.json"),
@@ -240,7 +316,40 @@ class AssistantRunService:
                 "total_chars": len(serialized),
                 "has_more": offset + size < len(serialized),
             }
+        if action == "get":
+            if wait_seconds > 0 and record["status"] not in TERMINAL:
+                record = await self.wait_for_run(project, owner, run_id, wait_seconds)
+            view = await self.inspect(project, owner, record)
+            hint = self._polling_hint(context, run_id, record, used_wait=bool(wait_seconds))
+            if hint:
+                view["polling_hint"] = hint
+            return {"run": view}
         return {"run": await self.inspect(project, owner, record)}
+
+    @staticmethod
+    def _polling_hint(context, run_id: str, record: dict, *, used_wait: bool) -> str | None:
+        """连续无进展 get 的反轮询提示；等待式查询或到达终态即清零。
+
+        事故复盘（2026-11-08）显示主 Agent 会把 get 当唯一进度通道空转上百
+        次：这里在第三次起直接在返回里给出确定性改道指引（错误信息即召回
+        钩子），引导模型改用 wait_seconds 阻塞等待或转做其他工作。
+        """
+        key = (str(getattr(context, "session_id", "") or ""), str(run_id))
+        if record.get("status") in TERMINAL or used_wait:
+            _GET_POLL_COUNTS.pop(key, None)
+            return None
+        count = min(_GET_POLL_COUNTS.get(key, 0) + 1, 9999)
+        if len(_GET_POLL_COUNTS) > 128:
+            for stale in list(_GET_POLL_COUNTS)[: len(_GET_POLL_COUNTS) - 128]:
+                _GET_POLL_COUNTS.pop(stale, None)
+        _GET_POLL_COUNTS[key] = count
+        if count < 3:
+            return None
+        return (
+            "该运行仍为 running，连续查询未带来新信息。不要继续轮询："
+            "改用 action=get 且传 wait_seconds（如 120）阻塞等待终态；"
+            "或先执行其他工作/直接给出阶段答复，委派完成后系统会自动把结果注入。"
+        )
 
     async def launch(self, context, execute, kwargs, *, kind):
         from config.settings import settings
@@ -365,7 +474,11 @@ class AssistantRunService:
                 "success": True,
                 "status": "async_launched",
                 "data": {"run_id": run_id},
-                "summary": "委派已受理，使用 manage_assistant_runs 查询实际进度和结果",
+                "summary": (
+                    "委派已受理（后台执行）。不要轮询进度：需要等待时用 "
+                    "manage_assistant_runs action=get run_id 传 wait_seconds（如 120）阻塞等待；"
+                    "也可先做其他工作或给出阶段答复，委派完成后系统会自动把结果注入下一轮。"
+                ),
             }
         return await task
 

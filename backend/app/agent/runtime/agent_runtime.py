@@ -418,6 +418,8 @@ class AgentRuntime:
                 return
             async for event in self.observation_processor.process(state, planner_result, action, observation):
                 yield event
+            async for event in self._inject_completed_delegation_results(state, planner_result):
+                yield event
             return
 
         observation = {
@@ -1400,6 +1402,67 @@ class AgentRuntime:
         }
         yield {"type": "_delegation_absorbed", "absorbed": True}
 
+    async def _inject_completed_delegation_results(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """工具轮次边界收割已完成的后台委派，结果作为观察注入下一轮。
+
+        交付边界（PLAIN_TEXT_REPLY）的 _absorb_background_delegations 负责
+        阻塞等待；这里补齐工具循环内的信号通路——委派一完成，下一轮
+        planner 即可看到结果（等价"完成通知"），模型无需查询
+        manage_assistant_runs 获取进度（2026-11-08 轮询风暴复盘修复）。
+        非阻塞：未完成的委派不动，仍由交付边界等待。
+        """
+        if self.config.runtime_mode != "assistant" or state.task_completed:
+            return
+        from app.social.assistant_runs import (
+            AssistantRunService,
+            apply_inline_or_spill,
+        )
+        from config.settings import settings
+
+        service = AssistantRunService()
+        if service.pending_background_count(state.session_id) <= 0:
+            return
+        results, still_running = await service.collect_completed_runs(state.session_id)
+        if not results:
+            return
+        apply_inline_or_spill(
+            results, int(settings.assistant_delegation_inline_result_chars)
+        )
+        statuses = [str(item.get("status")) for item in results]
+        observation = {
+            "success": all(status == "succeeded" for status in statuses),
+            "delegation_results": results,
+            "summary": (
+                "后台委派已完成 {} 项（{}）{}：结果已注入，无需再用 "
+                "manage_assistant_runs 查询这些 run。".format(
+                    len(results),
+                    "/".join(statuses),
+                    f"；仍有 {still_running} 项在运行" if still_running else "",
+                )
+            ),
+        }
+        self._ensure_user_message_written(state)
+        self.writer.add_iteration(
+            planner_result.thought, {"type": "DELEGATION_RESULT"}, observation
+        )
+        state.last_observation = observation
+        yield {
+            "type": "delegation_status",
+            "data": {
+                "phase": "completed",
+                "runs": [
+                    {key: item.get(key) for key in ("run_id", "kind", "status", "goal", "target_mode")}
+                    for item in results
+                ],
+                "still_running": still_running,
+                "session_id": state.session_id,
+            },
+        }
+
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""
         suppressed = set(state.suppress_tool_names_next_turn)
@@ -1589,6 +1652,8 @@ class AgentRuntime:
             return
 
         async for event in self.observation_processor.process(state, planner_result, action, observation):
+            yield event
+        async for event in self._inject_completed_delegation_results(state, planner_result):
             yield event
 
     @staticmethod

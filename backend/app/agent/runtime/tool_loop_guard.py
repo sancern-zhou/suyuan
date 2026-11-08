@@ -16,6 +16,18 @@ class ToolLoopGuard:
     hard_block_tools: frozenset[str] = frozenset({"navigate", "open", "act"})
     history: List[Dict[str, str]] = field(default_factory=list)
 
+    # 状态查询类工具的循环改道指引：拦截不是终点，把正确用法随错误信息带回
+    # （错误信息即召回钩子）。委派轮询风暴事故（2026-11-08 复盘）后引入。
+    _REDIRECTION_HINTS: Dict[str, str] = field(
+        default_factory=lambda: {
+            "manage_assistant_runs": (
+                " 改道：委派进度查询已无进展——需要等待时用 action=get 且传 "
+                "wait_seconds（如 120）一次阻塞等待终态；或先做其他工作/直接交付，"
+                "委派完成后系统会自动注入结果。"
+            ),
+        }
+    )
+
     def before_call(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any] | None:
         args_hash = self._hash(tool_args)
         repeated = self._count_recent(tool_name, args_hash)
@@ -54,7 +66,10 @@ class ToolLoopGuard:
             "success": False,
             "error": "tool_loop_warning",
             "severity": "warning",
-            "summary": f"WARNING: 工具 {tool_name} 重复调用 {repeated} 次，先提醒，不强制阻断。",
+            "summary": (
+                f"WARNING: 工具 {tool_name} 重复调用 {repeated} 次，先提醒，不强制阻断。"
+                f"{self._redirection_hint(tool_name)}"
+            ),
             "loop_guard": True,
         }
 
@@ -63,9 +78,15 @@ class ToolLoopGuard:
             "success": False,
             "error": "tool_loop_detected",
             "severity": "block",
-            "summary": f"ERROR: 工具 {tool_name} 已重复调用 {repeated} 次，系统已阻止。",
+            "summary": (
+                f"ERROR: 工具 {tool_name} 已重复调用 {repeated} 次，系统已阻止。"
+                f"{self._redirection_hint(tool_name)}"
+            ),
             "loop_guard": True,
         }
+
+    def _redirection_hint(self, tool_name: str) -> str:
+        return self._REDIRECTION_HINTS.get(tool_name, "")
 
     def _hash(self, value: Any) -> str:
         raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
