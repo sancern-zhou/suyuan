@@ -135,3 +135,119 @@ async def test_save_spreadsheet_rejects_corrupt_xlsx_before_replacement(monkeypa
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail == "invalid_spreadsheet_content"
+
+
+def docx(**updates):
+    values = {
+        "resource_id": "doc-1",
+        "session_id": "session-1",
+        "group_id": "group-2",
+        "parent_resource_id": None,
+        "resource_key": "primary:docx",
+        "relation": "primary",
+        "kind": "file",
+        "role": "attachment",
+        "label": "报告.docx",
+        "locator": {"path": "/registry/报告.docx"},
+        "format": "docx",
+        "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "renderer": "docx",
+        "capabilities": ["preview", "download", "edit"],
+        "metadata": {},
+        "tool_name": "execute_python",
+        "run_id": "run-1",
+        "turn_sequence": 0,
+        "version": 1,
+        "status": "active",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+    }
+    values.update(updates)
+    return StoredResource(**values)
+
+
+def docx_bytes(title="编辑后"):
+    from docx import Document
+
+    document = Document()
+    document.add_heading(title, level=1)
+    output = BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_save_docx_replaces_the_primary_and_returns_catalog_receipt(monkeypatch):
+    current = docx()
+
+    class Service:
+        saved = b""
+
+        async def get_resource(self, *_args, **_kwargs):
+            return current
+
+        async def replace_primary_file(self, session_id, run_id, resource_id, path):
+            assert (session_id, resource_id) == ("session-1", "doc-1")
+            self.saved = open(path, "rb").read()
+            return ResourcePublishResult(11, 2, [docx(resource_id="doc-2", version=2)])
+
+    service = Service()
+    monkeypatch.setattr(
+        session_resource_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: service),
+    )
+    edited = docx_bytes("浏览器编辑后的标题")
+    upload = UploadFile(filename="报告.docx", file=BytesIO(edited))
+
+    result = await session_resource_routes.save_session_resource(
+        "session-1", "doc-1", file=upload, user=object(), catalog=Catalog()
+    )
+
+    assert result["success"] is True
+    assert result["resource_version"] == 11
+    assert service.saved == edited
+
+
+@pytest.mark.asyncio
+async def test_save_docx_rejects_invalid_payload(monkeypatch):
+    current = docx()
+
+    class Service:
+        async def get_resource(self, *_args, **_kwargs):
+            return current
+
+    monkeypatch.setattr(
+        session_resource_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: Service()),
+    )
+    upload = UploadFile(filename="报告.docx", file=BytesIO(b"PK\x03\x04 not-a-docx"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await session_resource_routes.save_session_resource(
+            "session-1", "doc-1", file=upload, user=object(), catalog=Catalog()
+        )
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_save_rejects_docx_without_edit_capability(monkeypatch):
+    current = docx(capabilities=["preview", "download"])
+
+    class Service:
+        async def get_resource(self, *_args, **_kwargs):
+            return current
+
+    monkeypatch.setattr(
+        session_resource_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: Service()),
+    )
+    upload = UploadFile(filename="报告.docx", file=BytesIO(docx_bytes()))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await session_resource_routes.save_session_resource(
+            "session-1", "doc-1", file=upload, user=object(), catalog=Catalog()
+        )
+    assert exc_info.value.status_code == 422

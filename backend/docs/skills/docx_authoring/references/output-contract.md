@@ -23,6 +23,8 @@
   docx 主文件 + report.json + PDF/页图作为同一资源组自动发布，
   `gate.status == "passed"` 即完成交付，无需手动 publish_session_file。
 - 多文件交付（文档 + 附表 xlsx）每份单独 artifact_path + 单独验收。
+- 用户可在预览面板直接编辑 docx 并保存为新版本（前端 docx-editor 回传）；
+  后续轮次基于资源最新版本迭代，不要覆盖用户的手工修改。
 
 ## 5. 汇报口径
 

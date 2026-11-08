@@ -400,7 +400,7 @@ class ValidateOfficeTool(LLMTool):
             group_key=group_key,
             tool_name="validate_office",
             renderer="spreadsheet" if suffix == "xlsx" else "docx",
-            capabilities=("preview", "download", "edit") if suffix == "xlsx" else ("preview", "download"),
+            capabilities=("preview", "download", "edit"),
         )
         primary["resource_key"] = suffix
         members = [primary]
