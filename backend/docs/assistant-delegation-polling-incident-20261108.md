@@ -37,7 +37,7 @@
 
 1. 委派受理后引导/强制走阻塞等待（`wait_task`，或 `manage_assistant_runs` 支持 block=true 长轮询），消除轮询风暴。
 2. 排查 `_absorb_background_delegations` 为何未等待本会话委派（疑似 detach/后台模式或等待边界判断遗漏）。
-3. workflow 资源契约 json/csv mismatch 降为 warning，不整体降级 partial。
+3. ~~workflow 资源契约 json/csv mismatch 降为 warning，不整体降级 partial。~~ 已改为删除 DAG 资源契约与重复机械验收，见 `backend/app/agent/workflow/ORCHESTRATION.md` 的“2026-11-08 交付验收简化定案”。
 4. office 子 Agent 产出校验：声明生成 docx 而实际未产出时不得报 success；查明反复覆写原因。
 5. 子 Agent 会话内存 history_length=0 的原因排查。
 

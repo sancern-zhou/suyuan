@@ -1,5 +1,10 @@
 # Workflow 资源契约格式不符误标 partial 问题说明（2026-11-08）
 
+> 历史分析。下文 `warnings/gaps` 分流方案未实施，已由
+> `backend/app/agent/workflow/ORCHESTRATION.md` 的“2026-11-08 交付验收简化定案”取代：DAG 的
+> input/output resource contracts 已整体移除，终态只由真实节点执行状态决定。
+
+
 对应 [`assistant-delegation-polling-incident-20261108.md`](assistant-delegation-polling-incident-20261108.md) 问题清单第 3 项（workflow 假阴性 partial）的深入分析与修复方案。本文档只做分析定案，代码修复另行提交。
 
 ## 背景
