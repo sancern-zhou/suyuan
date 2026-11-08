@@ -31,11 +31,7 @@ def policy(monkeypatch):
 
 
 def node():
-    return {"target_mode": "internal_data", "task_contract": {
-        "protocol_version": "workflow.v1", "question": "count failures",
-        "scope": {"time_range": "September", "objects": ["station-a"]},
-        "required_evidence": ["source records"], "deliverables": ["data", "gaps"],
-    }}
+    return {"target_mode": "internal_data", "goal": "按指定时间和站点统计故障，交付数据与证据"}
 
 
 def test_project_children_are_scoped_and_cannot_delegate_or_override_profile(policy):
@@ -88,7 +84,7 @@ def test_hybrid_parent_keeps_shared_children_and_direct_tool_description(monkeyp
     # 一行制定位进 target 描述；原工具描述保留并追加项目子模式契约要求
     assert direct_target["description"].startswith("- internal_data：data；边界：no report")
     assert "direct delegation tool" in scoped_direct["description"]
-    assert "task_contract" in scoped_direct["description"]
+    assert "goal" in scoped_direct["description"]
 
     # DAG 工具只收窄 enum：描述与 target 描述原样保留（避免与 call_sub_agent 双份计费）
     scoped_dag = project_policy.scope_delegation_schema(dag, "assistant")
@@ -122,36 +118,47 @@ def test_invalid_manifest_fails_before_runtime():
             BackendManifest.model_validate(config)
 
 
-def test_node_contract_and_budget_cannot_be_weakened(policy):
+def test_project_budget_is_bounded_without_replacing_result_schema(policy):
     value = node()
-    value.update(max_iterations=120, timeout_seconds=3600, result_schema={})
+    caller_schema = {"type": "object", "required": ["route_value"]}
+    value.update(max_iterations=120, timeout_seconds=3600, result_schema=caller_schema)
     project_policy.prepare_node(value)
     assert value["max_iterations"] == 6
     assert value["timeout_seconds"] == 120
+    assert value["result_schema"] is caller_schema
+    value["task_id"] = "data"
     from app.agent.workflow.coordinator import WorkflowNodeSpec
 
-    value["task_id"] = "data"
     retry = WorkflowNodeSpec.from_mapping(value).expanded_budget(3)
     assert retry.max_iterations == 6
     assert retry.timeout_seconds == 120
-    assert value["result_schema"]["x-evidence-references"]
-    for patch in ({"scope": {}}, {"deliverables": ["a", "b", "c", "d"]}, {"required_evidence": "anything"}):
-        invalid = node()
-        invalid["task_contract"].update(patch)
-        with pytest.raises(ValueError):
-            project_policy.prepare_node(invalid)
     definition = {"budget": {"max_nodes": 100, "max_retries": 100, "timeout_seconds": 9999}}
     assert project_policy.apply_workflow_limits("manager", definition, 8) == 3
     assert definition["budget"] == {"max_nodes": 12, "max_retries": 3, "max_extensions": 2, "timeout_seconds": 900}
 
 
-def test_findings_must_reference_unique_locatable_evidence(policy):
+def test_project_counter_evidence_is_an_explicit_opt_in_schema(monkeypatch):
+    config = configuration()
+    config["agent_workflow_modes"]["internal_data"]["require_counter_evidence"] = True
+    monkeypatch.setattr(project_policy, "active_backend", lambda: BackendManifest.model_validate(config))
     value = node()
     project_policy.prepare_node(value)
-    result = {"status": "completed", "findings": [{"statement": "failure", "evidence_ids": ["e1"]}],
-              "evidence": [{"id": "e1", "source": "work orders", "locator": "orders.csv row 2"}],
-              "uncertainties": [], "data_gaps": []}
-    schema = value["result_schema"]
+    result = {
+        "findings": [{
+            "statement": "failure",
+            "evidence_ids": ["e1"],
+            "counter_evidence": [],
+            "alternative_explanations": [],
+        }],
+        "evidence": [{"id": "e1", "source": "work orders", "locator": "orders.csv row 2"}],
+    }
+    assert validate_result_schema(result, value["result_schema"]) == []
+
+
+def test_evidence_reference_validation_remains_available_to_explicit_schemas():
+    schema = {"type": "object", "x-evidence-references": True}
+    result = {"findings": [{"statement": "failure", "evidence_ids": ["e1"]}],
+              "evidence": [{"id": "e1", "source": "work orders", "locator": "orders.csv row 2"}]}
     assert validate_result_schema(result, schema) == []
     for mutate in (
         lambda r: r["findings"][0].update(evidence_ids=["invented"]),

@@ -19,7 +19,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from app.agent.workflow.protocol import validate_result_schema
-from app.agent.workflow.resource_contract import validate_deliverable_entries
+from app.agent.workflow.deliverable_validation import validate_deliverable_entries
 from app.tools.base.tool_interface import ToolCategory
 
 
@@ -69,8 +69,7 @@ class SubmitResultTool:
             "提交本任务的结构化结果信封。完成分析后必须调用本工具交付；"
             "未调用本工具直接结束视为未完成交付。"
             "提交时会即时校验：信封字段须满足结果协议，deliverables[].path "
-            "必须指向本轮实际保存的真实文件（禁止占位路径），声明 fields 时"
-            "仅限 csv/json 且字段须与文件实际内容一致，不符合会被打回并附具体违规项。"
+            "必须指向本轮实际保存的真实文件（禁止占位路径），不符合会被打回并附具体违规项。"
         )
         self.category = ToolCategory.PLANNING
         self.requires_context = False

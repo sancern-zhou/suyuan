@@ -19,26 +19,11 @@ from app.agent.workflow import route_decisions
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.delegation import delegation_error
 from app.agent.workflow.quota_resume import schedule_quota_resume
-from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
 logger = structlog.get_logger(__name__)
 
-# 资源契约只暴露交接时可机械核对的约束：kind/format/fields（后缀、CSV 表头、小型 JSON 键）。
-# granularity/time_range/units/scope 没有元数据写入通道，声明必然在交接校验时失败——
-# 解析期会直接拒绝（resource_contract._CONSTRAINTS_WITHOUT_PRODUCER），这里从生成端就不暴露。
-# format 必须是具体文件格式，"file" 是 kind 的语义。
-RESOURCE_CONTRACT_PROPERTIES = {
-    "kind": {"type": "string", "enum": ["file", "data"], "description": "file=落盘文件，data=结构化数据文件"},
-    "format": {"type": "string", "description": "具体文件格式（csv/json/xlsx/qmd 等），禁止填 file"},
-    "fields": {"type": "array", "items": {"type": "string"}, "description": "必须包含的字段名，按 CSV 表头/JSON 键核对"},
-    "required": {"type": "boolean", "description": "默认 true；false 表示不兼容时允许缺少此资源，但仍明确交付缺口。"},
-}
-
-# 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
-EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis", "expert_component"})
-MAX_EXPERT_NODE_DELIVERABLES = 3
 # 报告父 Agent 只允许层级化问数与领域专家节点，禁止子节点越权成稿或再次编排；
 # 综合问数 query_monitoring 不再兜底：层级不明确由报告 Agent 先向用户确认。
 REPORT_NODE_ALLOWED_MODES = frozenset({
@@ -119,28 +104,26 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     + _orchestration_skill_hint()
     + "**硬约束**：固定问数节点由运行时控制为最多 20 轮（可收紧，低于 8 的值抬到 8），失败项最多补查一次；"
     "任务书写清时间范围、区域与指标口径即可，不要教写 SQL。"
-    "专家节点 task_contract.deliverables 最多 3 项，超过必须拆成多个并行节点。"
+    "一个专家节点只回答一个独立问题，多个问题拆成多个并行节点。"
     "专家分析类节点 timeout 下限 900s（跨节点数据分析实测 8–12 分钟），声明更小值也会被抬到 900s。"
     "节点视图 published_charts 列出子代理已产出并发布到本会话的图表（resource_id/label/path）："
     "聊天答复中用 [[chart:<resource_id>]] 引用即可渲染；成稿作为 create_report_package 的 image assets。"
-    "报告需要的分析图表必须在对应子节点的 goal/task_contract 中要求随节点产出，"
+    "报告需要的分析图表必须在对应子节点的 goal 中要求随节点产出，"
     "禁止 DAG 完成后由父 Agent 重新绘制分析图表。"
     "报告 DAG 禁止综合问数（query / query_monitoring）与综合 expert 子节点；"
     "监测历史按层级拆 query_monitoring_station（站点）或 query_monitoring_city（城市），层级不明确先向用户确认口径。"
     "DAG 禁止 query、expert、report 主模式子节点；当前父 Agent 是唯一整合与成稿者。\n"
-    "专家子节点（expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
-    "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
-    "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）。"
-    "需要落盘文件的节点在 result_schema 中声明 deliverables 数组（{path,format,fields}：子 Agent 提交时回填真实路径，"
-    "运行时按实际文件核对存在性/格式/字段，不符会被退回修复轮重交）；口径与单位写进 goal 和字段 description（给子 Agent 读的人话）。"
+    "goal 必须完整描述本节点的问题、范围和预期交付；需要结构化字段时按节点提供 result_schema，"
+    "无需固定任务书或统一的结果字段。子 Agent 可在结果中用可选 data_gaps 声明真实证据缺口。"
+    "需要落盘文件的节点在 result_schema 中声明 deliverables 数组（{path}：子 Agent 提交时回填真实路径，"
+    "运行时只核对文件真实存在，路径无效会被退回修复轮重交）；口径与单位写进 goal 和字段 description。"
     "首试给紧凑预算：重试自动续用子会话，迭代与超时各放宽 50%（迭代封顶 120、超时封顶 1 小时），"
     "因此首试预算不足不会直接失败。"
     "条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果的点分路径）、op、value；"
     "支持 all/any/not 组合；条件为假会跳过该分支，缺少比较证据会报告失败，不猜测真假。"
     "辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，"
     "收到 partial 时按 delivery.gaps 交付已有成果并说明缺口，不能把缺失数据当作零或默认重新取数。\n"
-    "资源契约（input_contracts/output_contract）只声明 kind/format/fields，format 用具体文件格式（csv/json），禁 'file'；"
-    "粒度、时间范围、单位不声明为契约。跨节点只传结论与文件路径，不内联大数据。\n"
+    "跨节点只传结论与真实文件路径，不内联大数据；文件格式由实际产物决定，不用于推断证据完整性。\n"
     "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单，"
     "findings 中的数值可直接引用；各节点完整结果已落盘并在 full_results.path，"
     "assistant 通过 read_session_resource / manage_assistant_runs 读取，其他有文件权限的模式用 read_file 一次整读。"
@@ -278,7 +261,11 @@ def format_upstream_summaries(dependency_results: Mapping[str, Any]) -> str:
                 if isinstance(item, Mapping)
             ],
             "uncertainties": [str(item) for item in envelope.get("uncertainties") or []],
-            "data_gaps": [str(item) for item in envelope.get("data_gaps") or []],
+            "data_gaps": [str(item) for item in (
+                ((envelope.get("outputs") or {}).get("data_gaps") or [])
+                if isinstance(envelope.get("outputs"), Mapping)
+                else (envelope.get("data_gaps") or [])
+            )],
         })
     if not summaries:
         return ""
@@ -416,7 +403,11 @@ def compact_parent_node_result(
                 str(item) for item in (envelope.get("uncertainties") or [])[:10]
             ],
             "data_gaps": [
-                str(item) for item in (envelope.get("data_gaps") or [])[:10]
+                str(item) for item in (
+                    ((envelope.get("outputs") or {}).get("data_gaps") or [])
+                    if isinstance(envelope.get("outputs"), Mapping)
+                    else (envelope.get("data_gaps") or [])
+                )[:10]
             ],
             "artifacts": artifacts_view,
         },
@@ -510,8 +501,6 @@ class RunAgentWorkflowTool(LLMTool):
                                                     "any": {"type": "array", "items": {"type": "object"}}, "not": {"type": "object"},
                                                 },
                                             },
-                                            "input_contracts": {"type": "array", "items": {"type": "object", "properties": {**RESOURCE_CONTRACT_PROPERTIES, "source_task_id": {"type": "string"}}, "required": ["source_task_id"]}},
-                                            "output_contract": {"type": "object", "properties": RESOURCE_CONTRACT_PROPERTIES},
                                             "task_id": {"type": "string"},
                                             "target_mode": {
                                                 "type": "string",
@@ -672,6 +661,8 @@ class RunAgentWorkflowTool(LLMTool):
             def normalize(node: Mapping[str, Any]) -> Dict[str, Any]:
                 spec = WorkflowNodeSpec.from_mapping(node)
                 normalized = {**dict(node), **spec.payload, "task_id": spec.task_id}
+                normalized.pop("input_contracts", None)
+                normalized.pop("output_contract", None)
                 # Flatten worker payloads before enforcing policy; a stale nested
                 # schema must not take precedence over the validated definition.
                 normalized.pop("payload", None)
@@ -700,9 +691,6 @@ class RunAgentWorkflowTool(LLMTool):
                     except (TypeError, ValueError):
                         configured = _QUERY_NODE_MIN_ITERATIONS
                     node["max_iterations"] = max(configured, _QUERY_NODE_MIN_ITERATIONS)
-                granularity_error = self._validate_expert_node_granularity(node)
-                if granularity_error:
-                    return self._failure(granularity_error)
             # 报告编排只暴露领域取数与专家节点，禁止综合模式或产出型模式越权。
             runtime_mode = str(
                 getattr(context, "runtime_mode", None)
@@ -767,16 +755,6 @@ class RunAgentWorkflowTool(LLMTool):
             parent_session_id = getattr(context, "session_id", None)
             cache_id = cache_namespace(str(parent_session_id or uuid.uuid4().hex), workflow_id_str)
             completed_results = {} if snapshot else select_reusable_nodes(cache_id, nodes, validate_signatures=True)
-            for cached_node in nodes:
-                task_id = str(cached_node.get("task_id") or "")
-                sources = list(cached_node.get("dependencies") or []) if cached_node.get("input_contracts") else []
-                if cached_node.get("output_contract") is not None:
-                    sources.append(task_id)
-                # A cached descriptor cannot prove that a catalog entry is
-                # still active. These nodes must perform a fresh import/check.
-                if any(handle.get("handle_type") == "session_resource" for source in sources
-                       for handle in collect_result_handles(str(source), completed_results.get(str(source)))):
-                    completed_results.pop(task_id, None)
             if completed_results:
                 logger.info(
                     "workflow_cache_nodes_reused",
@@ -806,8 +784,6 @@ class RunAgentWorkflowTool(LLMTool):
                 input_gaps = coordinator.node_input_gaps.get(node.task_id)
                 if input_gaps:
                     context_text += "\n## 上游证据缺口\n" + json.dumps(input_gaps, ensure_ascii=False) + "\n仅基于成功上游交付带限制的结论；缺失数据不是零，不重新查询缺失来源。\n"
-                if node.input_contracts or node.output_contract is not None:
-                    context_text += "\n## 资源契约\n" + json.dumps({"inputs": list(node.input_contracts), "output": node.output_contract}, ensure_ascii=False) + "\n单位、粒度、范围等必须来自真实数据元信息；不要按预期契约伪造元数据。\n"
                 # 重试续用上次的子会话：失败原因与已交付进度写入上下文
                 retry_session_id = None
                 if retry_context:
@@ -869,7 +845,6 @@ class RunAgentWorkflowTool(LLMTool):
                     # 节点执行不记顶层路由审计（见 _record_route_decision）。
                     _workflow_node=True,
                     _upstream_handles=upstream_handles,
-                    **({"_input_contracts": list(node.input_contracts)} if node.input_contracts else {}),
                     _on_session_started=lambda child_session_id: coordinator.bind_node_session(
                         node.task_id, child_session_id
                     ),
@@ -880,13 +855,6 @@ class RunAgentWorkflowTool(LLMTool):
                     # 前端实时可见，节点失败后随 salvage 保留。
                     _finding_observer=coordinator.record_finding,
                 )
-                violations = (result.get("data") or {}).get("resource_contract_violations") if isinstance(result, Mapping) else None
-                if violations:
-                    raise ResourceContractError(violations)
-                warnings = (result.get("data") or {}).get("resource_contract_warnings") if isinstance(result, Mapping) else None
-                if warnings:
-                    current_warnings = coordinator.node_contract_errors.setdefault(node.task_id, [])
-                    current_warnings.extend(item for item in warnings if item not in current_warnings)
                 return result
 
             coordinator = WorkflowCoordinator(
@@ -1002,7 +970,6 @@ class RunAgentWorkflowTool(LLMTool):
                 "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
                 "node_decisions": snapshot.get("node_decisions", {}),
                 "node_input_gaps": snapshot.get("node_input_gaps", {}),
-                "node_contract_errors": snapshot.get("node_contract_errors", {}),
                 "node_results": node_views,
                 "node_errors": snapshot["node_errors"],
                 "node_lineage": snapshot["node_lineage"],
@@ -1155,50 +1122,6 @@ class RunAgentWorkflowTool(LLMTool):
 
         return CallSubAgentTool()
 
-    @staticmethod
-    def _validate_expert_node_granularity(node: Mapping[str, Any]) -> Optional[str]:
-        """Enforce one-question-per-expert-node with a bounded deliverables list.
-
-        提示词约束已被证实不足以阻止集中分配（实测单节点被塞 4-5 个分析问题，
-        研判拖到 25+ 轮）：报告 DAG 内的专家节点必须携带 task_contract.deliverables
-        （1~MAX_EXPERT_NODE_DELIVERABLES 项），缺失即整单拒绝并指导拆分。
-        """
-        mode = str(node.get("target_mode") or "")
-        if mode not in EXPERT_NODE_MODES:
-            return None
-        task_id = str(node.get("task_id") or "<unknown>")
-        contract = node.get("task_contract")
-        if not isinstance(contract, Mapping):
-            return (
-                f"专家节点 {task_id} 缺少 task_contract：每个专家节点必须且只能回答一个分析问题，"
-                f"请在 task_contract 中给出 protocol_version=workflow.v1、question 和 "
-                f"deliverables（1~{MAX_EXPERT_NODE_DELIVERABLES} 项）；"
-                f"若有多个独立分析问题，必须拆成多个并行 {mode} 节点。"
-            )
-        deliverables = contract.get("deliverables")
-        if deliverables is None:
-            return (
-                f"专家节点 {task_id} 的 task_contract 缺少 deliverables："
-                f"必须列出 1~{MAX_EXPERT_NODE_DELIVERABLES} 项交付物以界定该节点回答的单一分析问题；"
-                "多个独立问题请拆成多个并行节点。"
-            )
-        if not isinstance(deliverables, list):
-            return (
-                f"节点 {task_id} 的 task_contract.deliverables 必须是数组；"
-                "每个专家节点只允许描述一个分析问题。"
-            )
-        if len(deliverables) == 0:
-            return (
-                f"节点 {task_id} 的 task_contract.deliverables 为空："
-                f"至少给出 1 项交付物；多个独立问题请拆成多个并行 {mode} 节点。"
-            )
-        if len(deliverables) > MAX_EXPERT_NODE_DELIVERABLES:
-            return (
-                f"节点 {task_id} 包含 {len(deliverables)} 项交付物，"
-                f"超过专家节点上限 {MAX_EXPERT_NODE_DELIVERABLES}；请按独立分析问题拆成多个并行"
-                f" {mode} 节点，并用 dependencies 表达真正的先后关系。"
-            )
-        return None
 
     @staticmethod
     def _persist_parent_snapshot(context: Optional[Any], snapshot: Mapping[str, Any]) -> None:

@@ -690,15 +690,12 @@ class ScheduledTaskExecutor:
 
             if get_mode_workflow(manual_mode) is None:
                 return None
-            from copy import deepcopy
-
-            from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
             from app.tools.agent_tools.submit_result_tool import SubmitResultTool
 
             registry = getattr(getattr(agent, "executor", None), "tool_registry", None)
             if not isinstance(registry, dict) or "submit_result" in registry:
                 return registry.get("submit_result") if isinstance(registry, dict) else None
-            submit_tool = SubmitResultTool(deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA))
+            submit_tool = SubmitResultTool({"type": "object", "additionalProperties": True})
             registry["submit_result"] = submit_tool
             return submit_tool
         except Exception as exc:

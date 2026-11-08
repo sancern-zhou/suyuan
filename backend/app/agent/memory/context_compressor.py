@@ -187,7 +187,8 @@ Older history to compress:
                 else {}
             )
             findings = envelope.get("findings") or structured.get("findings") or []
-            data_gaps = envelope.get("data_gaps") or structured.get("data_gaps") or []
+            outputs = envelope.get("outputs") if isinstance(envelope.get("outputs"), dict) else {}
+            data_gaps = outputs.get("data_gaps") or envelope.get("data_gaps") or structured.get("data_gaps") or []
             file_paths = (
                 view.get("file_paths")
                 or (view.get("data", {}) or {}).get("file_paths")
