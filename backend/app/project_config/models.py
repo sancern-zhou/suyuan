@@ -107,7 +107,6 @@ class WorkflowModeManifest(StrictModel):
     outputs: str = Field(min_length=1)
     max_iterations: int = Field(default=12, ge=1, le=120)
     timeout_seconds: int = Field(default=240, ge=1, le=3600)
-    max_deliverables: int = Field(default=3, ge=1, le=5)
     require_counter_evidence: bool = False
 
 

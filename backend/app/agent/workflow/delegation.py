@@ -77,8 +77,8 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
             "\n\n## 项目内部工作流\n"
             "简单问题直接完成；只有独立问题、上下文隔离或明确依赖值得委派时才使用 DAG。"
             "同源同口径批量取数，已有资源优先复用；按独立问题拆分，不按城市或日期机械拆分。"
-            "一个分析节点回答一个问题，任务契约写明 question、scope、required_evidence、"
-            "deliverables、protocol_version=workflow.v1；结论、证据、缺口和所需图表一起交付。"
+            "一个分析节点回答一个问题，goal 写明问题、范围和预期交付；"
+            "需要结构化字段时按节点传 result_schema，结论、证据、缺口和所需图表一起交付。"
             "依赖使用 dependencies；已知分支使用 when；结束后仅对影响结论的缺口追加 extension，"
             "附 expected_revision、reason、nodes，复用已有成果，不固定增加全面复核节点。"
             "关键证据失败限制结论范围，缺失不等于零；父模式负责用户交互、整合及正式报告。"
@@ -109,13 +109,13 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
         "已知条件用 when 控制分支，条件未满足的任务不启动；条件引用直接上游的结构化结果。"
         "辅助节点可设 required=false；下游显式 dependency_policy=allow_partial 才能消费部分成功结果。"
         "收到 partial 时按 delivery.gaps 交付已有成果并说明限制；关键证据失败不能形成完整结论。"
-        "输入资源用 input_contracts 校验 kind、format（具体文件格式）与字段；口径、粒度、时间范围写进 goal 与 result_schema 字段描述，产物文件由子 Agent 在交付信封 deliverables 里回填真实路径。"
-        "资源缺失或不兼容先说明缺口、决定是否补图，不让下游默认重新取数。\n"
+        "上游文件按真实内容读取，格式不用于推断证据完整性；口径、粒度、时间范围写进 goal 与 result_schema 字段描述，"
+        "产物文件由子 Agent 在交付信封 deliverables 里回填真实路径。证据不足由子 Agent 声明，父 Agent 决定是否补图。\n"
     )
     if mode == "expert":
         return common + (
             "气象与输送研判使用 expert_meteorology，常规监测数据分析使用 expert_analysis；"
-            "一个专家节点回答一个问题，填写 task_contract 和 result_schema，交付结论、证据与缺口。"
+            "一个专家节点回答一个问题，goal 写明问题与范围，按节点需要填写 result_schema，交付结论、证据与缺口。"
             "取数节点与分析节点用 dependencies 连接；跨领域归因和专业结论由专家父 Agent 整合。"
             "已有数据直接复用，当前精简专家不覆盖的组分或源解析任务由父 Agent 的专业工具完成。"
         )

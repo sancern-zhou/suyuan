@@ -503,7 +503,7 @@ def test_coordinator_require_lineage_contract_failure_fails_node():
 def test_coordinator_lineage_bookkeeping_anomaly_keeps_node_result(monkeypatch):
     """血缘簿异常不判死节点：降级为 journal 警告，结果与血缘保留。
 
-    血缘是记账簿，下游资源由 resource_contract 凭实际文件核验；
+    血缘是记账簿，下游通过真实资源目录读取文件；
     记账异常不该废掉刚跑完的节点（对齐缓存复用路径的警告语义）。
     """
     import app.agent.workflow.coordinator as coordinator_module

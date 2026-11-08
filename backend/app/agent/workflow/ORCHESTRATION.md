@@ -1,5 +1,16 @@
 # 有界增量编排
 
+## 2026-11-08 交付验收简化定案
+
+本次简化取代此前尚未实施的 `resource_incompatible → delivery.warnings` 分流方案。参考 ZCode dynamic-workflow 的职责边界：调度器负责结构化结果与真实产物交接，业务完整性由调用方和父 Agent 判断，不由文件后缀推断。
+
+已删除 DAG 的 input/output resource contracts、资源格式与字段校验、二次导入校验、`node_contract_errors`、通用机械 delivery checklist、固定 task_contract 五必填任务书和共享专家五字段结果 schema。契约对缓存、下游缺口与 workflow 终态的贡献全部移除。
+
+唯一保留的验收路径是：节点 goal 描述独立问题、范围和预期交付；调用方按需传 `result_schema`，`submit_result` 校验并在子会话内修复；`deliverables` 只核验真实 `{path}`。子 Agent 可用可选 `data_gaps` 自报业务证据不足，父 Agent 决定补图、补查或带限制交付。项目需要反证、替代解释或证据定位时，以显式项目 schema 表达，共享调度器不再统一覆盖业务结构。
+
+workflow 的 succeeded/partial/failed 只由真实节点执行状态决定。历史 resource contract 字段恢复时忽略，旧缓存采用新签名自然失效。设计背景与验证重点见 `workflow-partial-format-mismatch-20261108.md` 的最终说明；该历史文档保留事故分析，不再提供待实施的格式分流方案。
+
+
 普通同源、同粒度查询优先直接批量完成。DAG 用于有明确依赖、专业分工或上下文隔离收益的任务；子 Agent 保持精简，不再次委派。
 
 父 Agent 查看一轮结果的 `data_gaps` 后，可以在同一父会话、同一模式下追加任务：
@@ -79,29 +90,16 @@
 | partial | true | true | false |
 | failed / cancelled | false | false | false |
 
-partial 表示已有可交付成果，避免被通用工具错误处理误判为整次调用失败；不代表任务全部完成。`delivery` 给出可用节点、失败/阻断/可选资源缺口、跳过节点、剩余可重试节点与建议行动。下游收到缺口上下文，必须说明结论限制，不得把缺失数值当作零。没有任何成功成果、关键节点失败或总预算耗尽时仍返回 failed。
+partial 表示已有可交付成果，避免被通用工具错误处理误判为整次调用失败；不代表任务全部完成。它只由真实 failed/blocked 节点产生，不由文件格式或子 Agent 的可选 `data_gaps` 产生。`delivery` 给出可用节点、失败/阻断节点、跳过节点、剩余可重试节点与建议行动。下游收到缺口上下文，必须说明结论限制，不得把缺失数值当作零。没有任何成功成果、关键节点失败或总预算耗尽时仍返回 failed。
 
 前端显示“部分完成”和证据缺口；恢复按钮受剩余尝试及累计预算限制。后台 worker、Redis 终态和 SSE 同样支持 partial。父 Agent 可以交付带限制的结论，也可以在同一父会话追加补充任务。当前只支持这些父 Agent 决策与交互，不包含运行中等待用户选择的 interrupt/resume 输入协议。
 
-## 输入与输出资源契约
+## 资源交接与提交验收
 
-input_contracts 按直接依赖来源约束资源；output_contract 约束节点交付。契约只声明交接时可机械核对的约束（kind/format/fields）：format 必须是具体文件格式（csv/json/xlsx/qmd），"file" 是 kind 的语义；粒度、时间范围、单位与口径没有元数据写入通道，解析期直接拒绝声明——把它们写进节点 goal 与 result_schema 字段描述（模型可读），文件类要求用 result_schema 的 deliverables 数组承载。每份契约必须由同一个资源满足，不能把不同文件的字段拼成虚构的完整数据集。例如：
+DAG 不提供 input/output 资源契约，不从文件格式、后缀或字段声明推断业务证据是否完整。节点用 goal 描述问题、范围和预期交付；需要特定结构化字段时，调用方按节点提供可选 `result_schema`。子 Agent 可在结果中声明 `data_gaps`，父 Agent 负责判断其业务影响。
 
-```json
-{
-  "input_contracts": [{
-    "source_task_id": "air",
-    "kind": "data",
-    "format": "csv",
-    "fields": ["time", "pm25"]
-  }]
-}
-```
+依赖节点的真实文件与目录资源经 `resource_handoff.py` 登记、授权到下游会话，子 Agent 按实际内容读取。失效的目录资源不会通过旧文件路径复活。跨节点只传结论、资源引用和文件路径，不内联大数据。
 
-文件存在性、格式和字段尽可能从实际文件确认：CSV 头最多读 64KiB；JSON 最多解析 2MiB，支持记录列表和 records/rows/data 包装。其他格式及大型 JSON 的字段依赖目录元数据，兼容现有查询和 Python 产物的 `metadata.data_shape.columns`。没有可信元数据时，显式要求的约束不能视为满足。
+子 Agent 在交付信封的可选 `deliverables` 数组回填真实产出文件（`{path}`）。提交时只机械核验路径可解析且文件真实存在；违规进入结构化交付的校验错误，由既有修复轮退回子会话修正。`result_schema` 的类型、required、enum 及调用方显式声明的证据引用约束仍生效。
 
-子 Agent 在交付信封的 deliverables 数组回填真实产出文件（{path, format, fields}），提交时逐项机械核验：文件存在、后缀与 format 一致、fields 被文件实际包含（CSV 表头/小型 JSON 键）；违规进结构化交付的校验错误，由修复轮在原子会话内退回重交。核验通过的路径并入节点结果的 file_paths，下游 input_contracts（kind/format/fields）凭后缀与字段推断自然满足。
-
-调度前先校验句柄与文件；下游资源导入后再根据真实目录校验，失效资源不能以请求句柄冒充导入成功。元数据和上游来源信息在导入及父节点资源发布时保留。必需契约失败不会启动下游模型或自动同条件重试，违反项写入 node_contract_errors；契约 required=false 时允许继续但必须报告缺口，最终为 partial。
-
-缓存签名包含路由及资源契约。无效资源会使缓存及依赖它的缓存失效；涉及会话目录契约的节点不能单凭缓存描述符证明目录仍有效，需要重新执行核验/导入。已经完成的检查点成果仍按增量编排规则保留。旧定义未使用这些新字段时，原定义指纹保持兼容。
+缓存签名包含任务内容、路由和调用方的结果 schema。缓存仍须通过依赖闭包、结果 hash 与时效检查。历史 resource contract 字段在恢复时忽略，不再影响执行、缺口或终态。

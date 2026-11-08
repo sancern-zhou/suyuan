@@ -12,7 +12,6 @@ from app.agent.workflow.resource_handoff import (
 )
 from app.tools.agent_tools import call_sub_agent as call_sub_agent_module
 from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
-from app.agent.workflow.resource_contract import assert_resource_contracts
 
 
 @pytest.mark.asyncio
@@ -55,7 +54,7 @@ async def test_dependency_resource_is_registered_in_downstream_session(tmp_path)
     assert await service.get_resource(
         "downstream-session", imported[0]["resource_id"]
     ) is not None
-    assert_resource_contracts([{"source_task_id": "query", "fields": ["value"], "units": {"value": "ug/m3"}}], imported)
+    assert imported[0]["metadata"]["data_contract"] == {"fields": ["value"], "units": {"value": "ug/m3"}}
 
 
 @pytest.mark.asyncio
