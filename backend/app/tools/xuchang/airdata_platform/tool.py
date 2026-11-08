@@ -616,7 +616,11 @@ class AirDataCalcReportSummaryTool(LLMTool):
                     },
                     "year": {
                         "type": "integer",
-                        "description": "对比年份，取该年同月同日区间作为同比对比期",
+                        "description": (
+                            "对比年份，取该年同月同日区间作为同比对比期；"
+                            "同比报错“需要指定对比年份所采用的数据源yearInputTableName”时，"
+                            "用 year_input_table_name 显式指定对比期数据源后重试"
+                        ),
                     },
                     "area_type": {
                         "type": "integer",
@@ -672,6 +676,29 @@ class AirDataCalcReportSummaryTool(LLMTool):
                             "传入后跳过默认的同比剥离与字段投影，原样返回平台结果"
                         ),
                     },
+                    "is_same_as_time_ranges": {
+                        "type": "boolean",
+                        "description": (
+                            "对比期是否使用与当期相同的时间范围；不传由平台按 year 同月同日推断。"
+                            "对比期与当期时间范围不同（自定义对比窗口）时必须传 false"
+                        ),
+                    },
+                    "year_input_table_name": {
+                        "type": "string",
+                        "description": (
+                            "同比对比期数据源表名（dat 风格视图，可带 DataCrawler. 前缀）。"
+                            "对比期与当期不共用同一 timeRange/数据源时必须指定，"
+                            "否则平台报“对比年份不使用相同的timeRange则需要指定对比年份所采用的数据源”"
+                            "（典型：跨规划期分段对比，当期 pantype155 而 year=2025 需给 pantype145 表）"
+                        ),
+                    },
+                    "year_input_db_source": {
+                        "type": "string",
+                        "description": (
+                            "同比对比期数据源所属库（main/DataCrawler/publish），默认随 input_table_name "
+                            "的库；仅 year_input_table_name 指定的表在另一个库时才需要传"
+                        ),
+                    },
                 },
                 "required": [
                     "start_time",
@@ -689,7 +716,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
             description="Calc air quality report summary with YoY comparison via AirDataPlatform",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.2.0",
+            version="1.3.0",
             requires_context=True,
         )
 
@@ -735,6 +762,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
             ns_type=int(ns_type) if ns_type else 2,
             region_area=region_area,
             region_area_name=region_area_name,
+            is_same_as_time_ranges=True,
         )
         if not compare_rows:
             return None
@@ -779,6 +807,9 @@ class AirDataCalcReportSummaryTool(LLMTool):
         need_keys: list[str] | None = None,
         include_compare: bool = False,
         is_rank: bool = False,
+        is_same_as_time_ranges: bool | None = None,
+        year_input_table_name: str = "",
+        year_input_db_source: str = "",
         **kwargs,
     ) -> dict[str, Any]:
         logger.info(
@@ -792,6 +823,9 @@ class AirDataCalcReportSummaryTool(LLMTool):
             include_compare=include_compare,
             is_rank=is_rank,
             need_keys=need_keys,
+            is_same_as_time_ranges=is_same_as_time_ranges,
+            year_input_table_name=year_input_table_name,
+            year_input_db_source=year_input_db_source,
         )
         try:
             client = get_airdata_platform_client()
@@ -808,6 +842,9 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 region_area_name=region_area_name,
                 need_keys=need_keys,
                 is_rank=bool(is_rank),
+                is_same_as_time_ranges=is_same_as_time_ranges,
+                year_input_table_name=year_input_table_name or None,
+                year_input_db_source=year_input_db_source or None,
             )
             metadata = {
                 "tool_name": self.name,
@@ -820,6 +857,10 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 "compare_year": year,
                 "is_rank": bool(is_rank),
             }
+            if is_same_as_time_ranges is not None:
+                metadata["is_same_as_time_ranges"] = bool(is_same_as_time_ranges)
+            if year_input_table_name:
+                metadata["year_input_table_name"] = year_input_table_name
 
             if not data:
                 return {

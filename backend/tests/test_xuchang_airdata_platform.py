@@ -241,6 +241,48 @@ async def test_report_summary_tool_does_not_block_event_loop(monkeypatch):
     assert result["success"] is True
 
 
+async def test_report_summary_tool_passes_year_source_params(captured):
+    captured["response"] = _envelope([{"PM2_5_Curr": "42"}])
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2026-11-01",
+        end_time="2026-11-07",
+        input_table_name="view_dat_city_day_substitutionback_pantype155",
+        year=2025,
+        area_type=2,
+        report_time_type=8,
+        is_same_as_time_ranges=False,
+        year_input_table_name="view_dat_city_day_substitutionback_pantype145",
+    )
+
+    assert result["success"] is True
+    payload = captured["payload"]
+    assert payload["isSameAsTimeRanges"] is False
+    assert payload["yearInputTableName"] == "DataCrawler.view_dat_city_day_substitutionback_pantype145"
+    assert payload["yearInputDataDBSource"] == "DataCrawler"
+    assert result["metadata"]["year_input_table_name"] == (
+        "view_dat_city_day_substitutionback_pantype145"
+    )
+    assert result["metadata"]["is_same_as_time_ranges"] is False
+
+
+async def test_report_summary_tool_omits_year_source_params_by_default(captured):
+    captured["response"] = _envelope([{"PM2_5_Curr": "42"}])
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2026-11-01",
+        end_time="2026-11-07",
+        input_table_name="view_dat_city_day_substitutionback_pantype155",
+        year=2026,
+        area_type=2,
+        report_time_type=8,
+    )
+
+    assert result["success"] is True
+    payload = captured["payload"]
+    assert "isSameAsTimeRanges" not in payload
+    assert "yearInputTableName" not in payload
+    assert "yearInputTableName" not in result["metadata"]
+
+
 def test_business_error_raises_with_platform_message(captured):
     captured["response"] = {
         "success": False,
