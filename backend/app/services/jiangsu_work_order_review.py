@@ -183,7 +183,9 @@ def save_evidence(package: dict[str, Any]) -> dict[str, Any]:
     package = dict(package)
     package["working_order_code"] = code
     package["schema_version"] = SCHEMA
-    package["sources"] = _normalise_sources(package.get("sources"))
+    supplied_sources = package.get("sources") or {}
+    minute_source_supplied = "station_5minute" in supplied_sources
+    package["sources"] = _normalise_sources(supplied_sources)
     package.setdefault("collected_at", _now())
     package.setdefault("operations", [])
     with _store_lock():
@@ -192,6 +194,10 @@ def save_evidence(package: dict[str, Any]) -> dict[str, Any]:
         previous_package = _read_package(previous) if previous else {}
         # 重新采集保留既有 AI/人工状态与操作记录（存于上一个证据包），只刷新证据数据。
         if previous_package:
+            # 小时补查工具不采集分钟源；未提供与明确采集失败是不同状态。
+            previous_minute = (previous_package.get("sources") or {}).get("station_5minute")
+            if not minute_source_supplied and previous_minute is not None:
+                package["sources"]["station_5minute"] = previous_minute
             for key in ("judgment", "operations"):
                 if previous_package.get(key) is not None:
                     package[key] = previous_package[key]

@@ -237,6 +237,22 @@ def test_update_evidence_source_preserves_all_review_metadata(isolated_registry)
     assert get_order_source(code, "station_5minute")["data"]["rows"][0]["no"] == "401(PS)"
 
 
+def test_hourly_evidence_refresh_does_not_remove_existing_minute_source(isolated_registry):
+    from app.services.jiangsu_work_order_review import update_evidence_source
+
+    code = "FA5MIN-REFRESH"
+    save_evidence(_sample_package(code))
+    minute = {"status": "partial", "record_count": 1, "data": {"rows": [{"no": "401(PS)"}]}}
+    update_evidence_source(code, "station_5minute", minute)
+    save_evidence(_sample_package(code))
+    assert get_order_source(code, "station_5minute")["data"] == minute["data"]
+    failed = _sample_package(code)
+    failed["sources"]["station_5minute"] = {"status": "failed", "record_count": 0, "data": {"rows": []}}
+    save_evidence(failed)
+    assert get_order(code)["index"]["sources"]["station_5minute"]["status"] == "failed"
+    assert get_order_source(code, "station_5minute")["data"]["rows"] == []
+
+
 def test_record_operation_feedback_keeps_status(isolated_registry):
     save_evidence(_sample_package())
     record_operation("FA260914178938611578927", "feedback", "建议复核采样流量", {"username": "ops"})
