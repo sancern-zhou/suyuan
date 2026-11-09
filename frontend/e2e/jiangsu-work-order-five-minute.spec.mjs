@@ -131,6 +131,36 @@ test('minute card shows real coverage, QC diamonds, raw flags and window control
   expect(errors).toEqual([])
 })
 
+test('failed collections keep their warning visible even with no plottable observations', async ({ page }) => {
+  const minute = { source:'station_5minute', data: {
+    points_by_pollutant: {}, rows: [], available_pollutants: [],
+    coverage: { query_start:entry.window_start, query_end:entry.window_end,
+      saved_record_count:0, platform_record_count:0, failed_chunk_count:2,
+      warning:'2 个5分钟数据分片查询失败，当前曲线不覆盖完整取证窗口。' },
+  } }
+  const errors = await openWorkbench(page, minute)
+  const card = page.locator('#wor-section-station_5minute')
+  await expect(card.getByRole('alert')).toContainText('2 个5分钟数据分片查询失败')
+  await expect(card.getByText('已保存的原始记录无可绘制数值；可展开原始数据表核对缺失值和标识。')).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('raw missing observations and their flags remain viewable without numeric curves', async ({ page }) => {
+  const minute = { source:'station_5minute', data: {
+    points_by_pollutant:{}, available_pollutants:['NO'],
+    coverage: { ...source.data.coverage, actual_start:'2026-11-07 08:10:00', actual_end:'2026-11-07 08:15:00' },
+    rows:[{ timePoint:'2026-11-07 08:10:00', NO:'--(PS)' }, { timePoint:'2026-11-07 08:15:00', NO:'-999（PZ）' }],
+  } }
+  const errors = await openWorkbench(page, minute)
+  const card = page.locator('#wor-section-station_5minute')
+  await card.getByRole('button', { name:'展开原始数据表', exact:true }).click()
+  await expect(card.getByRole('cell', { name:'--(PS)', exact:true })).toBeVisible()
+  await expect(card.getByRole('cell', { name:'-999（PZ）', exact:true })).toBeVisible()
+  await card.getByRole('checkbox', { name:'仅看质控标识' }).check()
+  await expect(card.getByRole('row')).toHaveCount(3)
+  expect(errors).toEqual([])
+})
+
 test('old packages expose an explicit empty minute card without requesting a nonexistent source', async ({ page }) => {
   const requested = []
   page.on('request', request => { if (request.url().includes('/sources/station_5minute')) requested.push(request.url()) })
