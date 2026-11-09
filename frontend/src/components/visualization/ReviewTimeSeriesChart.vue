@@ -21,8 +21,13 @@
       ref="chartRef"
       class="chart-surface"
       :style="{ height: `${height}px` }"
+      role="img"
+      :aria-label="title || '监测数据时序图'"
     ></div>
     <div v-else class="chart-empty">无可绘制曲线</div>
+    <div v-if="pointFlags.length" class="qc-flag-legend" aria-label="分钟质控标识说明">
+      <span v-for="item in pointFlags" :key="item.flag"><i>◆</i>{{ item.flag }} {{ item.label }}</span>
+    </div>
   </article>
 </template>
 
@@ -36,9 +41,10 @@ import {
   MarkAreaComponent,
   TooltipComponent
 } from 'echarts/components'
-import { LineChart } from 'echarts/charts'
+import { LineChart, ScatterChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import { areaPollutant, finiteObservation, hexWithAlpha, normalizeReviewPoints } from './reviewTimeSeriesData.js'
+import { fiveMinuteFlagLabel } from './reviewFiveMinuteData.js'
 import { CHART_TEXT_1 } from '../../services/chart/chartColors'
 echarts.use([
   DataZoomComponent,
@@ -47,6 +53,7 @@ echarts.use([
   MarkAreaComponent,
   TooltipComponent,
   LineChart,
+  ScatterChart,
   CanvasRenderer
 ])
 
@@ -57,7 +64,9 @@ const props = defineProps({
   granularity: { type: String, default: '' },
   height: { type: Number, default: 260 },
   series: { type: Array, default: () => [] },
-  markAreas: { type: Array, default: () => [] }
+  markAreas: { type: Array, default: () => [] },
+  initialWindow: { type: Array, default: null },
+  sourceLabel: { type: String, default: '' }
 })
 
 const chartRef = ref(null)
@@ -98,17 +107,24 @@ const numberText = value => {
 const normalizedSeries = computed(() => props.series
   .map((item, index) => {
     const points = normalizeReviewPoints(item?.points, props.granularity)
+    const pointByTime = new Map((item?.points || []).map(point => [parseTimeValue(point.time), point]))
     return {
       name: item?.name || `序列 ${index + 1}`,
       color: item?.color || colors[index % colors.length],
       unit: item?.unit || '',
       axis: item?.axis === 'right' ? 'right' : 'left',
-      points
+      points: points.map(point => ({ value: point, flag: pointByTime.get(point[0])?.flag || '' })),
     }
   })
   .filter(item => item.points.length))
 
-const totalPoints = computed(() => normalizedSeries.value.reduce((sum, item) => sum + item.points.filter(point => point[1] !== null).length, 0))
+const pointFlags = computed(() => {
+  if (props.granularity !== '5min') return []
+  const flags = new Set(props.series.flatMap(item => (item.points || []).map(point => point.flag).filter(Boolean)))
+  return [...flags].map(flag => ({ flag, label: fiveMinuteFlagLabel(flag) }))
+})
+
+const totalPoints = computed(() => normalizedSeries.value.reduce((sum, item) => sum + item.points.filter(point => point.value[1] !== null).length, 0))
 const hasData = computed(() => totalPoints.value > 0)
 const summaryText = computed(() => hasData.value ? `${normalizedSeries.value.length} 组 / ${totalPoints.value} 点` : '0 点')
 const hasRightAxis = computed(() => normalizedSeries.value.some(item => item.axis === 'right'))
@@ -166,37 +182,50 @@ const normalizedMarkAreas = computed(() => (Array.isArray(props.markAreas) ? pro
   })
   .filter(Boolean))
 
+const escapeTooltip = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[character]))
+
 const tooltipFormatter = params => {
   const rows = Array.isArray(params) ? params : [params]
   const timestamp = rows[0]?.value?.[0]
-  const title = timestamp ? formatTime(timestamp) : ''
+  const title = timestamp ? formatFullTime(timestamp) : ''
   const lines = rows
-    .filter(item => Array.isArray(item?.value))
+    .filter(item => item?.seriesType !== 'scatter' && Array.isArray(item?.value))
     .map(item => {
       const unit = seriesUnitMap.value[item.seriesName] || props.unit
-      return `${item.marker}${item.seriesName}：${numberText(item.value[1])}${unit ? ` ${unit}` : ''}`
+      const flag = item.data?.flag
+      const flagText = flag ? `；标识：${escapeTooltip(flag)}（${fiveMinuteFlagLabel(flag)}）` : ''
+      return `${item.marker}${escapeTooltip(item.seriesName)}：${numberText(item.value[1])}${unit ? ` ${escapeTooltip(unit)}` : ''}${flagText}`
     })
+  if (props.sourceLabel) lines.push(`数据类型：${escapeTooltip(props.sourceLabel)}`)
   const activeAreas = Number.isFinite(timestamp)
     ? normalizedMarkAreas.value.filter(area => timestamp >= area.start && timestamp <= area.end)
     : []
   for (const area of activeAreas) {
-    lines.push(`剔除候选：${area.name}（${area.rangeText}）`)
+    lines.push(`剔除候选：${escapeTooltip(area.name)}（${area.rangeText}）`)
   }
   return [title, ...lines].filter(Boolean).join('<br/>')
 }
 
-const chartOption = computed(() => ({
+const chartOption = computed(() => {
+  const window = Array.isArray(props.initialWindow) ? props.initialWindow : []
+  const hasWindow = window.length === 2 && window.every(value => Number.isFinite(value))
+  const zoomStart = hasWindow ? window[0] : null
+  const zoomEnd = hasWindow ? window[1] : null
+  return {
   animationDuration: 260,
   color: normalizedSeries.value.map(item => item.color),
   tooltip: {
     trigger: 'axis',
     confine: true,
-    backgroundColor: 'rgba(255, 255, 255, 0)',
+    backgroundColor: 'rgba(255, 255, 255, .96)',
     borderColor: 'rgba(17, 24, 39, .24)',
     textStyle: { color: CHART_TEXT_1, fontSize: 11 },
     formatter: tooltipFormatter
   },
   legend: {
+    data: normalizedSeries.value.map(item => item.name),
     type: 'scroll',
     top: 8,
     left: 8,
@@ -208,6 +237,8 @@ const chartOption = computed(() => ({
   grid: { top: 54, right: hasRightAxis.value ? 60 : 24, bottom: 58, left: 64, containLabel: true },
   xAxis: {
     type: 'time',
+    min: zoomStart,
+    max: zoomEnd,
     boundaryGap: false,
     axisLine: { lineStyle: { color: 'rgba(17, 24, 39, .24)' } },
     axisTick: { show: false },
@@ -225,20 +256,22 @@ const chartOption = computed(() => ({
       fillerColor: 'rgba(17, 24, 39, .08)',
       handleStyle: { color: CHART_TEXT_1 },
       textStyle: { color: CHART_TEXT_1, fontSize: 10 },
-      filterMode: 'none'
+      filterMode: 'none',
+      ...(hasWindow ? { startValue: zoomStart, endValue: zoomEnd } : {})
     }
   ],
-  series: normalizedSeries.value.map((item, index) => ({
-    name: item.name,
-    type: 'line',
-    smooth: 0.18,
-    yAxisIndex: item.axis === 'right' ? 1 : 0,
-    showSymbol: item.points.length <= 48,
-    symbolSize: 4,
-    connectNulls: false,
-    lineStyle: { width: index === 0 ? 2.4 : 1.8 },
-    emphasis: { focus: 'series' },
-    data: item.points,
+  series: [
+    ...normalizedSeries.value.map((item, index) => ({
+      name: item.name,
+      type: 'line',
+      smooth: props.granularity === '5min' ? false : 0.18,
+      yAxisIndex: item.axis === 'right' ? 1 : 0,
+      showSymbol: item.points.length <= 48,
+      symbolSize: 4,
+      connectNulls: false,
+      lineStyle: { width: index === 0 ? 2.4 : 1.8 },
+      emphasis: { focus: 'series' },
+      data: item.points,
     markArea: index === 0 && normalizedMarkAreas.value.length
       ? {
           silent: true,
@@ -252,8 +285,22 @@ const chartOption = computed(() => ({
           ])
         }
       : undefined
-  }))
-}))
+    })),
+    ...normalizedSeries.value.filter(item => props.granularity === '5min' && item.points.some(point => point.flag)).map(item => ({
+      name: item.name,
+      type: 'scatter',
+      yAxisIndex: item.axis === 'right' ? 1 : 0,
+      symbol: 'diamond',
+      symbolSize: 11,
+      itemStyle: { color: item.color, borderColor: '#ffffff', borderWidth: 1.5 },
+      data: item.points.filter(point => point.flag),
+      tooltip: { show: false },
+      silent: true,
+      z: 5,
+    }))
+  ]
+  }
+})
 
 const renderChart = () => {
   if (!chartRef.value || !hasData.value) return
@@ -261,21 +308,33 @@ const renderChart = () => {
   chart.setOption(chartOption.value, true)
 }
 
+const resizeChart = () => chart?.resize()
+const observeChart = element => {
+  resizeObserver?.disconnect()
+  if (element && typeof ResizeObserver !== 'undefined') {
+    resizeObserver ||= new ResizeObserver(resizeChart)
+    resizeObserver.observe(element)
+  }
+}
+
 watch(chartOption, () => nextTick(renderChart), { deep: true })
+watch(chartRef, (element, previous) => {
+  if (element === previous) return
+  observeChart(element)
+  chart?.dispose()
+  chart = null
+  if (element) nextTick(renderChart)
+})
 
 onMounted(() => {
   renderChart()
-  if (chartRef.value && typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(() => chart?.resize())
-    resizeObserver.observe(chartRef.value)
-  } else {
-    window.addEventListener('resize', renderChart)
-  }
+  observeChart(chartRef.value)
+  window.addEventListener('resize', resizeChart)
 })
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
-  window.removeEventListener('resize', renderChart)
+  window.removeEventListener('resize', resizeChart)
   chart?.dispose()
 })
 </script>
@@ -294,6 +353,9 @@ onBeforeUnmount(() => {
 .mark-area-pill em { min-width: 0; color: var(--text-1); font-style: normal; overflow-wrap: anywhere; }
 .chart-surface { width: 100%; min-height: 220px; border: 1px solid rgba(17, 24, 39, .12); border-radius: 4px; background: transparent; }
 .chart-empty { padding: 42px 10px; border: 1px dashed rgba(17, 24, 39, .2); border-radius: 4px; color: var(--text-1); text-align: center; font-size: 12px; }
+.qc-flag-legend { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-1); font-size: 11px; }
+.qc-flag-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.qc-flag-legend i { color: var(--color-primary); font-style: normal; }
 @media (max-width: 720px) {
   .chart-head { align-items: stretch; flex-direction: column; gap: 6px; }
   .chart-head em { flex: initial; }

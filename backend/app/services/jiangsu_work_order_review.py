@@ -32,7 +32,7 @@ _NO_EXCLUSION_DECLARATION_RE = re.compile(
     r"无异常数据剔除|无数据剔除|无需(?:数据)?剔除|不需要剔除|不用剔除|无剔除"
 )
 
-_SOURCE_ORDER = ("work_order", "station_hour", "band", "weather", "alarms", "env_power", "qc")
+_SOURCE_ORDER = ("work_order", "station_hour", "station_5minute", "band", "weather", "alarms", "env_power", "qc")
 
 _DECISION_STATUS = {
     "pass": "待归档",
@@ -222,6 +222,19 @@ def _persist_package_update(code: str, mutate) -> dict[str, Any]:
         store["orders"][code] = new_entry
         _save_store(store)
         return new_entry
+
+
+def update_evidence_source(code: str, name: str, source: dict[str, Any]) -> dict[str, Any]:
+    """只升级一个证据分文件，保留当前研判、人工状态和其余来源。"""
+    if not SOURCE_NAME_PATTERN.match(str(name or "")):
+        raise ValueError("无效的证据来源名称")
+    if not isinstance(source, dict):
+        raise ValueError("证据来源必须为对象")
+
+    def mutate(package: dict[str, Any]) -> None:
+        package.setdefault("sources", {})[name] = source
+
+    return _persist_package_update(str(code or "").strip(), mutate)
 
 
 def attach_judgment(code: str, review: dict[str, Any]) -> dict[str, Any]:

@@ -20,11 +20,12 @@ POLLUTANT_ROW_KEYS: dict[str, tuple[str, ...]] = {
     "SO2": ("SO2", "sO2"),
     "NO": ("NO", "no"),
     "NO2": ("NO2", "nO2"),
+    "NOX": ("NOX", "NOx", "nOx", "nox"),
     "CO": ("CO", "co"),
     "O3": ("O3", "o3"),
 }
 POLLUTANT_UNITS: dict[str, str] = {"PM10": "μg/m³", "PM2.5": "μg/m³", "SO2": "μg/m³",
-                                   "NO": "μg/m³", "NO2": "μg/m³", "CO": "mg/m³", "O3": "μg/m³"}
+                                   "NO": "μg/m³", "NO2": "μg/m³", "NOX": "μg/m³", "CO": "mg/m³", "O3": "μg/m³"}
 # 时序图同站互证污染物配对：目标 → 同站最有诊断意义的互证项（同站联看互证，非跨站对照），
 # 无自然配对则不画互证线。
 # 颗粒物互为配对以暴露倒挂（PM2.5>PM10 指向走纸/采样异常）；NO/NO2 同出 NOx 分析仪；

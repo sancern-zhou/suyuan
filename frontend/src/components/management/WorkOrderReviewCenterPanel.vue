@@ -297,6 +297,55 @@
                 <p v-if="!pollutantCharts.length" class="source-empty">该来源暂无小时数据。</p>
               </template>
 
+              <template v-else-if="source.key === 'station_5minute'">
+                <p class="five-minute-note">仅用于异常、处置和恢复核验，不作为分钟级剔除依据；小时有效性及区间请对照上方小时曲线。</p>
+                <template v-if="fiveMinuteCoverage.query_start || fiveMinuteData.rows?.length || fiveMinuteCoverage.warning">
+                  <div class="five-minute-coverage" :class="{ warning: fiveMinuteCoverage.warning }">
+                    <strong>实际入包 {{ fiveMinuteCoverage.saved_record_count || 0 }}/{{ fiveMinuteCoverage.platform_record_count || 0 }} 条</strong>
+                    <span>覆盖 {{ formatTime(fiveMinuteCoverage.actual_start) }} — {{ formatTime(fiveMinuteCoverage.actual_end) }}</span>
+                    <small>查询窗口 {{ formatTime(fiveMinuteCoverage.query_start) }} — {{ formatTime(fiveMinuteCoverage.query_end) }} · {{ fiveMinuteCoverage.data_type_label || '原始监测' }}</small>
+                    <p v-if="fiveMinuteCoverage.warning" role="alert">{{ fiveMinuteCoverage.warning }}</p>
+                  </div>
+                  <div class="five-minute-controls">
+                    <div class="five-minute-window-options" role="group" aria-label="分钟图时间窗口">
+                      <button v-for="option in fiveMinuteWindowOptions" :key="option.key" type="button"
+                        :class="{ active: fiveMinuteMode === option.key }" :aria-pressed="fiveMinuteMode === option.key"
+                        @click="fiveMinuteMode = option.key">{{ option.label }}</button>
+                    </div>
+                    <label class="five-minute-flag-filter"><input v-model="fiveMinuteFlaggedOnly" type="checkbox" />仅看质控标识</label>
+                  </div>
+                  <div v-if="fiveMinuteOptions.length > 1" class="pollutant-switch" role="group" aria-label="分钟图污染物切换">
+                    <button v-for="option in fiveMinuteOptions" :key="option.code" type="button"
+                      :class="{ active: fiveMinuteActiveGroup === option.code }" :aria-pressed="fiveMinuteActiveGroup === option.code"
+                      @click="fiveMinutePollutant = option.code"><i class="switch-swatch" :style="{ background: option.color }"></i>{{ option.code }}</button>
+                  </div>
+                  <p v-if="!fiveMinuteHasData" class="source-empty">已保存的原始记录无可绘制数值；可展开原始数据表核对缺失值和标识。</p>
+                  <ReviewTimeSeriesChart
+                    title="5分钟原始监测曲线"
+                    :series="fiveMinuteSeries"
+                    :initial-window="fiveMinuteVisibleWindow"
+                    :unit="fiveMinuteUnit"
+                    :source-label="fiveMinuteCoverage.data_type_label || '原始监测'"
+                    granularity="5min"
+                    :height="320"
+                  />
+                  <div class="five-minute-actions">
+                    <button type="button" class="link-btn" @click="scrollToSection('station_hour')">查看对应小时曲线</button>
+                    <button type="button" class="link-btn" @click="toggleSourceRows('station_5minute')">
+                      {{ expandedSourceKeys.includes('station_5minute') ? '收起原始数据表' : '展开原始数据表' }}
+                    </button>
+                  </div>
+                  <p v-if="fiveMinuteFlaggedOnly && !fiveMinuteSeries.some(series => series.points.some(point => point.flag))" class="source-empty">当前污染物未记录质控标识，可取消筛选查看全部原始值。</p>
+                  <div v-if="expandedSourceKeys.includes('station_5minute')" class="table-scroll five-minute-table">
+                    <table class="evidence-table">
+                      <thead><tr><th>时间</th><th v-for="code in fiveMinuteActiveMembers" :key="code">{{ code }} 原始值（标识）</th></tr></thead>
+                      <tbody><tr v-for="row in fiveMinuteRows" :key="row.time"><td>{{ formatTime(row.time) }}</td><td v-for="code in fiveMinuteActiveMembers" :key="code">{{ row.values[code] ?? '—' }}</td></tr></tbody>
+                    </table>
+                  </div>
+                </template>
+                <p v-else class="source-empty">该审核包暂无可展示的5分钟原始监测数据。</p>
+              </template>
+
               <template v-else-if="source.key === 'band'">
                 <!-- 同城对比曲线（最低/中位/最高）已叠加在上方小时时序图上与站内序列同图对照，
                      本区块不再重复画图，只保留范围说明与数据表入口。 -->
@@ -451,6 +500,12 @@ import {
   switcherPollutantGroups,
 } from '@/components/visualization/reviewTimeSeriesData.js'
 import {
+  buildFiveMinuteSeries,
+  fiveMinuteColors,
+  fiveMinuteTableRows,
+  fiveMinuteWindow,
+} from '@/components/visualization/reviewFiveMinuteData.js'
+import {
   getWorkOrderReview,
   getWorkOrderReviewSource,
   fetchWorkOrderReviewAttachmentUrl,
@@ -489,6 +544,7 @@ const emit = defineEmits(['close'])
 const SECTION_LABELS = {
   work_order: '工单信息',
   station_hour: '污染物小时时序',
+  station_5minute: '5分钟原始监测',
   band: '同城对比带',
   weather: '气象时序',
   alarms: '站房设备告警',
@@ -552,16 +608,17 @@ function tableColumns(key, rows) {
 const evidenceSections = computed(() => {
   const sources = index.value.sources || {}
   return Object.keys(SECTION_LABELS)
-    .filter(key => sources[key])
+    .filter(key => sources[key] || key === 'station_5minute')
     .map(key => {
+      const source = sources[key] || { status: 'skipped', summary: '历史审核包未保存5分钟证据源' }
       const rows = tableRows(key)
       return {
         key,
         label: SECTION_LABELS[key],
-        status: sources[key].status || 'skipped',
-        recordCount: sources[key].record_count,
-        summary: sources[key].summary || '',
-        truncatedNote: sources[key].truncated ? '索引未含全部行，完整数据在分文件中' : '',
+        status: source.status || 'skipped',
+        recordCount: source.record_count,
+        summary: source.summary || '',
+        truncatedNote: source.truncated ? '索引未含全部行，完整数据在分文件中' : '',
         rows,
         columns: tableColumns(key, rows),
       }
@@ -584,6 +641,53 @@ const hourlyChartBundle = computed(() => buildPollutantCharts({
 }))
 const pollutantCharts = computed(() => hourlyChartBundle.value.charts)
 const pollutantColorMap = computed(() => hourlyChartBundle.value.colorMap)
+
+const fiveMinuteData = computed(() => sourceCache.value.station_5minute?.data || {})
+const fiveMinuteCoverage = computed(() => fiveMinuteData.value.coverage || {})
+const fiveMinuteHasData = computed(() => Object.keys(fiveMinuteData.value.points_by_pollutant || {}).length > 0)
+const fiveMinuteColorMap = computed(() => fiveMinuteColors(fiveMinuteData.value, pollutantColorMap.value))
+const fiveMinuteMode = ref('handling')
+const fiveMinutePollutant = ref('')
+const fiveMinuteFlaggedOnly = ref(false)
+const fiveMinuteWindowOptions = [
+  { key: 'handling', label: '处置与质控窗口' },
+  { key: 'day', label: '故障当日' },
+  { key: 'full', label: '完整取证窗口' },
+]
+const fiveMinuteGroups = computed(() => {
+  const codes = fiveMinuteData.value.available_pollutants || Object.keys(fiveMinuteData.value.points_by_pollutant || {})
+  const target = String(entry.value.pollutant || '').toUpperCase()
+  return switcherPollutantGroups(codes).map(group => ({
+    members: group.members,
+    code: group.members.join('/'),
+    color: fiveMinuteColorMap.value[group.members[0]],
+    target: group.members.includes(target),
+  })).sort((left, right) => Number(right.target) - Number(left.target))
+})
+const fiveMinuteOptions = computed(() => fiveMinuteGroups.value)
+const fiveMinuteActiveGroup = computed(() => {
+  const selected = fiveMinuteGroups.value.find(group => group.code === fiveMinutePollutant.value)
+  return (selected || fiveMinuteGroups.value[0])?.code || ''
+})
+const fiveMinuteChartBundle = computed(() => buildFiveMinuteSeries(fiveMinuteData.value, {
+  selected: fiveMinuteActiveGroup.value,
+  target: entry.value.pollutant,
+  colorMap: fiveMinuteColorMap.value,
+  mode: fiveMinuteMode.value,
+  flaggedOnly: fiveMinuteFlaggedOnly.value,
+}))
+const fiveMinuteActiveMembers = computed(() => fiveMinuteChartBundle.value.group?.members
+  || fiveMinuteGroups.value.find(group => group.code === fiveMinuteActiveGroup.value)?.members || [])
+const fiveMinuteSeries = computed(() => fiveMinuteChartBundle.value.series)
+const fiveMinuteVisibleWindow = computed(() => fiveMinuteChartBundle.value.window)
+const fiveMinuteUnit = computed(() => {
+  const units = new Set(fiveMinuteSeries.value.map(item => item.unit))
+  return units.size === 1 ? [...units][0] : ''
+})
+const fiveMinuteRows = computed(() => fiveMinuteTableRows(fiveMinuteData.value, fiveMinuteActiveMembers.value, {
+  flaggedOnly: fiveMinuteFlaggedOnly.value,
+  window: fiveMinuteWindow(fiveMinuteData.value, fiveMinuteMode.value),
+}))
 
 // 同城对比带：取证侧只存聚合行（本站 target + 同城最低/中位/最高）。聚合行叠加在小时时序图上
 // 与站内序列同图对照；同区只有 1 个省控对比站时最低/中位/最高三值相同，合并为一条"同城对比站"线。
@@ -885,7 +989,7 @@ const envEmptyHint = computed(() => {
 function narrativeTarget(title) {
   if (/结论/.test(title)) return 'station_hour' // 数据处置/剔除区间标注在时序图上
   if (/处置|处理|附件|流程/.test(title)) return 'work_order'
-  if (/恢复/.test(title)) return 'station_hour'
+  if (/恢复|分钟|突变|恒值|断点/.test(title)) return 'station_5minute'
   if (/质控|复测|校准|零跨|跨度/.test(title)) return 'qc'
   if (/站点|设备|工单|概况/.test(title)) return 'work_order'
   if (/事实|异常|数据/.test(title)) return 'station_hour'
@@ -906,11 +1010,11 @@ const workbenchSections = computed(() => {
       ? [{ key: 'narrative', label: '事件脉络', state: 'ok' }]
       : []),
     ...Object.keys(SECTION_LABELS)
-      .filter(key => sources[key])
+      .filter(key => sources[key] || key === 'station_5minute')
       .map(key => ({
         key,
         label: SECTION_LABELS[key],
-        state: sources[key].status === 'success' ? 'ok' : (sources[key].status === 'skipped' ? 'empty' : 'warn'),
+        state: sources[key]?.status === 'success' ? 'ok' : (!sources[key] || sources[key].status === 'skipped' ? 'empty' : 'warn'),
       })),
     { key: 'operations', label: '操作记录', state: operations.value.length ? 'ok' : 'empty' },
   ]
@@ -1177,12 +1281,15 @@ async function openDetail(code) {
   expandedQcKeys.value = []
   expandedSourceKeys.value = []
   weatherPollutant.value = ''
+  fiveMinuteMode.value = 'handling'
+  fiveMinutePollutant.value = ''
+  fiveMinuteFlaggedOnly.value = false
   activeSectionKey.value = 'judgment'
   actionError.value = ''
   detailLoading.value = true
   try {
     detail.value = await getWorkOrderReview(code)
-    await Promise.all(Object.keys(SECTION_LABELS).map(name => loadSource(code, name)))
+    await Promise.all(Object.keys(SECTION_LABELS).filter(name => detail.value.index?.sources?.[name]).map(name => loadSource(code, name)))
     await loadAttachmentUrls(code)
   } catch (error) {
     detail.value = null
@@ -1892,6 +1999,23 @@ loadOrders()
 .source-meta.st-empty { color: var(--color-danger); }
 .source-meta.st-partial,
 .source-meta.st-unavailable { color: var(--color-warning-text); }
+
+.five-minute-note { margin: 0; color: var(--text-3); font-size: var(--text-size-xs); }
+.five-minute-coverage { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-1); border-radius: var(--radius-sm); font-size: var(--text-size-xs); }
+.five-minute-coverage strong { color: var(--color-success); font-weight: var(--font-weight-medium); }
+.five-minute-coverage small { color: var(--text-3); }
+.five-minute-coverage.warning { border-color: var(--color-warning, #d7a84e); background: var(--color-warning-bg); }
+.five-minute-coverage.warning strong { color: var(--color-warning-text); }
+.five-minute-coverage p { flex-basis: 100%; margin: 0; color: var(--color-warning-text); line-height: 1.6; }
+.five-minute-controls { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); }
+.five-minute-window-options { display: flex; flex-wrap: wrap; gap: 4px; }
+.five-minute-window-options button { padding: 4px 8px; border: 1px solid var(--border-2); border-radius: var(--radius-sm); background: transparent; color: var(--text-2); font: inherit; font-size: var(--text-size-xs); cursor: pointer; }
+.five-minute-window-options button.active { border-color: var(--color-primary); background: var(--color-primary-bg); color: var(--color-primary); }
+.five-minute-flag-filter { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); font-size: var(--text-size-xs); cursor: pointer; }
+.five-minute-flag-filter input { accent-color: var(--color-primary); }
+.five-minute-actions { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.five-minute-table { max-height: 360px; overflow: auto; }
+.five-minute-table td:first-child { white-space: nowrap; }
 
 .source-summary {
   margin: 0;

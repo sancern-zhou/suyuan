@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ _VALUE_WITH_FLAG = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[（(]([^)）]{1,12})[)�
 _MAX_TABLE_ROWS = 200
 _MAX_ALARM_ROWS = 50
 
-_SOURCE_ORDER = ("work_order", "station_hour", "band", "weather", "alarms", "env_power", "qc")
+_SOURCE_ORDER = ("work_order", "station_hour", "station_5minute", "band", "weather", "alarms", "env_power", "qc")
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -156,6 +157,110 @@ def _station_hour_source(pack: dict[str, Any], pollutant: str,
     summary = (f"本站 {pollutant} 逐时浓度（含审核标识解析与 {comparison} 同站互证序列）"
                if comparison else f"本站 {pollutant} 逐时浓度（含审核标识解析）")
     return {"status": "success", "record_count": len(points), "summary": summary, "data": data}
+
+
+def _five_minute_anchor_times(pack: dict[str, Any]) -> list[str]:
+    """处置前后两小时，并纳入临近首检与复测，避免纳入前日例行质控。"""
+    def parse(value: Any) -> datetime | None:
+        try:
+            return datetime.fromisoformat(str(value or "").replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return None
+
+    window = pack.get("evidence_time_window") if isinstance(pack.get("evidence_time_window"), dict) else {}
+    anchor = None
+    for key in ("processing_end_anchor", "fault_start_anchor"):
+        item = window.get(key)
+        if isinstance(item, dict):
+            anchor = parse(item.get("time"))
+        if anchor is not None:
+            break
+    if anchor is None:
+        return []
+    start, end = anchor - timedelta(hours=2), anchor + timedelta(hours=2)
+    selection_end = end
+    quality = pack.get("quality_control") if isinstance(pack.get("quality_control"), dict) else {}
+    history = quality.get("history") if isinstance(quality.get("history"), dict) else {}
+    for task in _tool_payload_rows(history):
+        if not isinstance(task, dict):
+            continue
+        task_start = parse(task.get("rStart") or task.get("rStartStr"))
+        task_end = parse(task.get("endTime") or task.get("endTimeStr"))
+        if task_start is not None and anchor - timedelta(hours=3) <= task_start <= selection_end:
+            start = min(start, task_start - timedelta(minutes=15))
+            if task_end is not None and task_end >= task_start:
+                end = max(end, task_end + timedelta(minutes=15))
+    return [value.isoformat(sep=" ", timespec="seconds") for value in (start, end)]
+
+
+def _station_5minute_source(pack: dict[str, Any]) -> dict[str, Any]:
+    """分钟原始宽表及图表序列；平台返回数与实际入包数必须分别呈现。"""
+    monitoring = pack.get("monitoring") if isinstance(pack.get("monitoring"), dict) else {}
+    payload = monitoring.get("station_5minute_raw")
+    if not isinstance(payload, dict):
+        return {"status": "skipped", "record_count": 0, "summary": "事件包未含5分钟原始监测数据",
+                "data": {"points_by_pollutant": {}, "rows": []}}
+    rows = _tool_payload_rows(payload)
+    points_by_pollutant = {
+        name: _points_from_rows(rows, name, keep_flags=True)
+        for name in POLLUTANT_ROW_KEYS
+    }
+    points_by_pollutant = {name: points for name, points in points_by_pollutant.items() if points}
+    times = sorted(str(row.get("timePoint") or row.get("time") or "").strip()
+                   for row in rows if isinstance(row, dict))
+    times = [value for value in times if value]
+    window = pack.get("evidence_time_window") if isinstance(pack.get("evidence_time_window"), dict) else {}
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    query_window = metadata.get("time_range")
+    if not isinstance(query_window, (list, tuple)):
+        query_window = [window.get("start"), window.get("end")]
+    platform_count = int(payload.get("record_count") or metadata.get("raw_record_count") or len(rows))
+    saved_count = len(rows)
+    missing_count = max(0, platform_count - saved_count)
+    failed_chunks = int(metadata.get("failed_chunk_count") or 0)
+    status = "partial" if missing_count or failed_chunks or payload.get("status") == "partial" else str(
+        payload.get("status") or ("success" if rows else "empty")
+    )
+    coverage = {
+        "query_start": query_window[0] if len(query_window) > 0 else None,
+        "query_end": query_window[1] if len(query_window) > 1 else None,
+        "actual_start": times[0] if times else None,
+        "actual_end": times[-1] if times else None,
+        "platform_record_count": platform_count,
+        "saved_record_count": saved_count,
+        "missing_record_count": missing_count,
+        "failed_chunk_count": failed_chunks,
+        "data_type": payload.get("data_type"),
+        "data_type_label": "原始实况（工况）" if payload.get("data_type") == 0 else None,
+        "fault_time": (window.get("fault_start_anchor") or {}).get("time") or window.get("lifecycle_start"),
+        "default_anchor": window.get("processing_end_anchor") or window.get("fault_start_anchor"),
+        "default_window": _five_minute_anchor_times(pack),
+    }
+    warnings = []
+    if missing_count:
+        warnings.append(
+            f"平台返回 {platform_count} 条，实际入包 {saved_count} 条，"
+            f"尾部 {missing_count} 条未入包；实际覆盖截至 {times[-1] if times else '—'}。"
+        )
+    if failed_chunks:
+        warnings.append(f"{failed_chunks} 个5分钟数据分片查询失败，当前曲线不覆盖完整取证窗口。")
+    coverage["warning"] = " ".join(warnings)
+    summary = f"5分钟原始监测（实际入包 {saved_count}/{platform_count} 条，仅用于异常、处置与恢复核验）"
+    return {
+        "status": status if rows or payload.get("success") is not False else "failed",
+        "record_count": saved_count,
+        "summary": summary,
+        "data": {
+            "points_by_pollutant": points_by_pollutant,
+            "available_pollutants": [name for name, keys in POLLUTANT_ROW_KEYS.items() if any(
+                isinstance(row, dict) and any(row.get(key) not in (None, "") for key in keys)
+                for row in rows
+            )],
+            "units": POLLUTANT_UNITS,
+            "rows": rows,
+            "coverage": coverage,
+        },
+    }
 
 
 def _band_source(pack: dict[str, Any], pollutant: str, station_code: str,
@@ -327,6 +432,7 @@ def build_workbench_package(pack: dict[str, Any], *,
     sources = {
         "work_order": _work_order_source(pack),
         "station_hour": _station_hour_source(pack, pollutant, pollutants),
+        "station_5minute": _station_5minute_source(pack),
         "band": _band_source(pack, pollutant, str(station.get("station_code") or ""), event_dir),
         "weather": _weather_source(pack),
         "alarms": _alarms_source(pack),

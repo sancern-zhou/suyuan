@@ -133,6 +133,110 @@ def test_build_workbench_package_keeps_all_detected_pollutants():
     assert single["sources"]["station_hour"]["data"]["pollutants"] == ["PM10"]
 
 
+def test_build_workbench_package_keeps_five_minute_flags_and_coverage():
+    from app.services.jiangsu_work_order_review_ingest import build_workbench_package
+
+    pack = {
+        "work_order_code": "FA5MIN",
+        "pollutants_detected_from_text": ["NO", "NO2"],
+        "station": {"station_name": "兴化人武部", "station_code": "3098A"},
+        "evidence_time_window": {
+            "start": "2026-11-06 00:00:00", "end": "2026-11-07 23:59:59",
+            "fault_start_anchor": {"time": "2026-11-07 10:41:30"},
+            "processing_end_anchor": {"time": "2026-11-07 11:03:40"},
+        },
+        "quality_control": {"history": {"data": [
+            {"rStart": "2026-11-07 08:04:56", "endTime": "2026-11-07 08:18:29"},
+            {"rStart": "2026-11-07 10:46:36", "endTime": "2026-11-07 11:01:08"},
+        ]}},
+        "monitoring": {"station_5minute_raw": {
+            "success": True, "status": "success", "data_type": 0,
+            "record_count": 576, "returned_records": 500,
+            "metadata": {"time_range": ["2026-11-06 00:00:00", "2026-11-07 23:59:59"],
+                         "failed_chunk_count": 0},
+            "data": [
+                {"timePoint": "2026-11-07T08:10:00", "no": "401(PS)", "nO2": "-2(PS)",
+                 "nOx": "630(PS)", "pM2_5": "14", "pM10": "34", "co": "0.645"},
+                {"timePoint": "2026-11-07T10:45:00", "no": "428(PZ)", "nO2": "12(PZ)"},
+                {"timePoint": "2026-11-07T17:35:00", "no": "2", "nO2": "11"},
+            ],
+        }},
+    }
+    package = build_workbench_package(pack)
+    source = package["sources"]["station_5minute"]
+    assert source["status"] == "partial"
+    assert source["record_count"] == 3
+    points = source["data"]["points_by_pollutant"]
+    assert points["NO"][0] == {"time": "2026-11-07T08:10:00", "value": 401, "flag": "PS"}
+    assert points["PM2.5"][0]["value"] == 14
+    assert points["PM10"][0]["value"] == 34
+    assert points["NOX"][0]["value"] == 630
+    assert source["data"]["units"]["CO"] == "mg/m³"
+    assert source["data"]["rows"][0]["no"] == "401(PS)"
+    coverage = source["data"]["coverage"]
+    assert coverage["platform_record_count"] == 576
+    assert coverage["saved_record_count"] == 3
+    assert coverage["missing_record_count"] == 573
+    assert coverage["actual_end"] == "2026-11-07T17:35:00"
+    assert coverage["query_end"] == "2026-11-07 23:59:59"
+    assert coverage["default_window"] == ["2026-11-07 07:49:56", "2026-11-07 13:03:40"]
+    assert "尾部 573 条未入包" in coverage["warning"]
+
+
+def test_build_workbench_package_five_minute_missing_and_failed_are_explicit():
+    from app.services.jiangsu_work_order_review_ingest import build_workbench_package
+
+    missing = build_workbench_package({"work_order_code": "FA-NONE", "monitoring": {}})
+    assert missing["sources"]["station_5minute"]["status"] == "skipped"
+    failed = build_workbench_package({
+        "work_order_code": "FA-FAIL",
+        "monitoring": {"station_5minute_raw": {
+            "success": False, "status": "failed", "record_count": 0, "data": [],
+            "metadata": {"failed_chunk_count": 2},
+        }},
+    })
+    source = failed["sources"]["station_5minute"]
+    assert source["status"] == "failed"
+    assert source["data"]["coverage"]["failed_chunk_count"] == 2
+    assert source["data"]["points_by_pollutant"] == {}
+
+
+def test_five_minute_window_is_independent_of_quality_control_order():
+    from app.services.jiangsu_work_order_review_ingest import _five_minute_anchor_times
+
+    tasks = [
+        {"rStart": "2026-11-07 12:50:00", "endTime": "2026-11-07 13:20:00"},
+        {"rStart": "2026-11-07 13:30:00", "endTime": "2026-11-07 14:00:00"},
+        {"rStart": "2026-11-07 14:10:00", "endTime": "2026-11-07 14:40:00"},
+    ]
+    pack = {"evidence_time_window": {"processing_end_anchor": {"time": "2026-11-07 11:00:00"}},
+            "quality_control": {"history": {"data": tasks}}}
+    forward = _five_minute_anchor_times(pack)
+    pack["quality_control"]["history"]["data"] = list(reversed(tasks))
+    assert _five_minute_anchor_times(pack) == forward
+    assert forward == ["2026-11-07 09:00:00", "2026-11-07 13:35:00"]
+
+
+def test_update_evidence_source_preserves_all_review_metadata(isolated_registry):
+    from app.services.jiangsu_work_order_review import update_evidence_source
+
+    code = "FA5MIN-UPGRADE"
+    save_evidence(_sample_package(code))
+    attach_judgment(code, {"review_id": "review_keep", "version": 2,
+                           "submission": {"decision": "reject", "comment": "保留人工结论",
+                                          "data_impact": [{"pollutant": "PM10", "decision": "exclude",
+                                                           "start": "2026-09-13 20:00:00", "end": "2026-09-13 21:00:00"}]}})
+    record_operation(code, "archive", "已人工确认", {"username": "ops"})
+    before = get_order(code)
+    update_evidence_source(code, "station_5minute", {"status": "partial", "record_count": 1,
+                                                     "data": {"rows": [{"no": "401(PS)"}]}})
+    after = get_order(code)
+    assert after["entry"]["status"] == before["entry"]["status"]
+    for field in ("judgment", "operations", "mark_areas", "window"):
+        assert after["index"][field] == before["index"][field]
+    assert get_order_source(code, "station_5minute")["data"]["rows"][0]["no"] == "401(PS)"
+
+
 def test_record_operation_feedback_keeps_status(isolated_registry):
     save_evidence(_sample_package())
     record_operation("FA260914178938611578927", "feedback", "建议复核采样流量", {"username": "ops"})
