@@ -2359,5 +2359,16 @@
     }
   },
   "retry_attempts": 3,
-  "retry_backoff_seconds": 0.5
+  "retry_backoff_seconds": 0.5,
+  "muted_stations": [
+    {
+      "code": "1422A",
+      "name": "海珠湖",
+      "reason": "停机维护",
+      "start": "2026-11-06T00:00:00+08:00"
+    }
+  ],
+  "issue_anchor_date": "2026-11-09",
+  "issue_anchor_number": 313,
+  "issue_anchor_total": 1076
 }

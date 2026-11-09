@@ -686,7 +686,11 @@ class QuartoReportRenderer:
         if not has_placeholder_reference_doc and not structure_changed and not quotes_changed:
             return qmd_path
 
-        temp_qmd = report_dir / f"report_docx_render_{uuid.uuid4().hex}.qmd"
+        # Quarto 把 HTML 伴随资源写在 <输入文件名>_files/libs/ 下（语法高亮 css
+        # 文件名固定 63 字符）。临时名必须短，否则本机 LongPathsEnabled=0 时
+        # 超过 MAX_PATH(260)，渲染成功后的 finally 清理 rmtree 会以 WinError 3
+        # 失败并顶替渲染结果。stem ≤ 12 保证最深资源路径留有约 40 字符余量。
+        temp_qmd = report_dir / f"dx{uuid.uuid4().hex[:8]}.qmd"
         temp_qmd.write_text(sanitized, encoding="utf-8")
         return temp_qmd
 

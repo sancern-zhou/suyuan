@@ -6,7 +6,7 @@ import { steerAssistantRun } from '@/services/assistantApi.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
-import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreModePolicy.js'
+import { resolveRestoredAgentMode, resolveRestoredNativeMode } from '@/components/agentPlatform/restoreModePolicy.js'
 import { restoreSession } from '@/api/session'
 
 export function resolveDirectThroughRun(state, agentMode) {
@@ -100,6 +100,9 @@ export function useConversationActions(store, { getState = null, preserveCurrent
       store.switchMode(restoredMode)
       store.reset()
       store.setSessionId(sessionId, restoredMode)
+      // 原生运行时模式与视图模式分开记录：custom 等非 UI 模式的会话
+      // 在当前视图里续聊时，请求仍按原生模式发给后端。
+      store.currentState.sessionNativeMode = resolveRestoredNativeMode(sessionData)
       store.currentState.conversationAccess = {
         source: sessionData.source || 'web',
         read_only_on_web: sessionData.read_only_on_web === true

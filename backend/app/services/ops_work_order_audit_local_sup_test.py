@@ -72,3 +72,41 @@ def test_sup_header_map_covers_audit_flow_fields():
     ]:
         assert _SUP_FORM_UPPER_MAP.get(low) == upper
     assert SUP_RF_COMMON_TABLE == "SUP_RF_COMMON"
+
+
+def test_discover_sup_mart_form_tables_puts_common_first():
+    """动态发现把 sup_rf_common 排最前，其余按名排序。"""
+
+    class _Cur:
+        def __init__(self):
+            self._rows = [("sup_rf_zerospancalibration",), ("sup_rf_common",), ("sup_rf_nh3calibration",)]
+
+        def execute(self, *args, **kwargs):
+            return None
+
+        def fetchall(self):
+            return self._rows
+
+    from app.services.ops_work_order_audit_local import discover_sup_mart_form_tables
+
+    tables = discover_sup_mart_form_tables(_Cur())
+    assert tables[0] == "sup_rf_common"
+    assert set(tables) == {"sup_rf_common", "sup_rf_zerospancalibration", "sup_rf_nh3calibration"}
+
+
+def test_discover_sup_mart_form_tables_falls_back_on_error():
+    """发现失败时退回兜底清单，不阻断审核。"""
+
+    class _BrokenCur:
+        def execute(self, *args, **kwargs):
+            raise RuntimeError("permission denied")
+
+        def fetchall(self):
+            return []
+
+    from app.services.ops_work_order_audit_local import (
+        SUP_MART_FORM_TABLES_FALLBACK,
+        discover_sup_mart_form_tables,
+    )
+
+    assert discover_sup_mart_form_tables(_BrokenCur()) == SUP_MART_FORM_TABLES_FALLBACK

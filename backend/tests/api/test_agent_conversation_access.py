@@ -14,6 +14,7 @@ from app.api.agent import (
     analyze_stream,
     cancel_analysis,
     persist_new_web_session,
+    resolve_custom_session_tool_names,
     steer_analysis,
 )
 
@@ -208,6 +209,146 @@ async def test_scheduled_conversation_rejects_missing_tools_metadata(monkeypatch
 
     assert exc.value.status_code == 409
     assert exc.value.detail == "scheduled_context_incomplete"
+
+
+@pytest.mark.asyncio
+async def test_custom_session_continuation_realigns_mode_and_tools(monkeypatch):
+    session = Session(
+        session_id="scheduled-custom-session",
+        query="original task",
+        metadata={
+            "mode": "custom",
+            "scheduled_task_context": {"task_id": "task-1", "execution_id": "exec-1"},
+            "scheduled_task_tools": [],
+            "scheduled_task_custom_tools": ["read_file", "create_report_package"],
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.agent.get_session_manager", lambda: LookupSessionManager(session)
+    )
+    custom_agent = object()
+    custom_calls = []
+
+    def fake_custom_agent(tool_names):
+        custom_calls.append(list(tool_names))
+        return custom_agent
+
+    monkeypatch.setattr("app.api.agent.get_custom_continuation_agent", fake_custom_agent)
+
+    response = await analyze_stream(
+        AgentAnalyzeRequest(
+            query="生成报告", session_id="scheduled-custom-session",
+            skill_ids=[], context_refs=[],
+        ),
+        EmptyRequest(),
+        user=ordinary_user,
+        catalog=WritableCatalog(),
+    )
+
+    assert isinstance(response, EventSourceResponse)
+    assert custom_calls == [["read_file", "create_report_package"]]
+
+
+@pytest.mark.asyncio
+async def test_custom_session_continuation_requires_resolvable_tools(monkeypatch):
+    session = Session(
+        session_id="scheduled-custom-session",
+        query="original task",
+        metadata={
+            "mode": "custom",
+            "scheduled_task_context": {"task_id": "task-1", "execution_id": "exec-1"},
+            "scheduled_task_tools": [],
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.agent.get_session_manager", lambda: LookupSessionManager(session)
+    )
+    monkeypatch.setattr(
+        "app.api.agent.resolve_custom_session_tool_names", lambda metadata: None
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await analyze_stream(
+            AgentAnalyzeRequest(
+                query="生成报告", session_id="scheduled-custom-session",
+                skill_ids=[], context_refs=[],
+            ),
+            EmptyRequest(),
+            user=ordinary_user,
+            catalog=WritableCatalog(),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "scheduled_custom_tools_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_explicit_custom_mode_requires_custom_session(monkeypatch):
+    session = Session(
+        session_id="assistant-session",
+        query="original task",
+        metadata={"mode": "assistant"},
+    )
+    monkeypatch.setattr(
+        "app.api.agent.get_session_manager", lambda: LookupSessionManager(session)
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await analyze_stream(
+            AgentAnalyzeRequest(
+                query="follow up", session_id="assistant-session", mode="custom",
+                skill_ids=[], context_refs=[],
+            ),
+            EmptyRequest(),
+            user=ordinary_user,
+            catalog=WritableCatalog(),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "custom_mode_requires_custom_session"
+
+
+def test_resolve_custom_tool_names_prefers_persisted_set():
+    metadata = {"scheduled_task_custom_tools": ["read_file", "write_file", "read_file"]}
+    assert resolve_custom_session_tool_names(metadata) == ["read_file", "write_file"]
+
+
+def test_resolve_custom_tool_names_falls_back_to_task_definition(monkeypatch):
+    class FakeTask:
+        execution_mode = "custom"
+        tool_names = ["ops_audit_fetch_dataset", "create_report_package"]
+
+    class FakeStorage:
+        def __init__(self):
+            pass
+
+        def get(self, task_id):
+            assert task_id == "task-1"
+            return FakeTask()
+
+    monkeypatch.setattr("app.scheduled_tasks.storage.TaskStorage", FakeStorage)
+    metadata = {"scheduled_task_id": "task-1"}
+
+    assert resolve_custom_session_tool_names(metadata) == [
+        "ops_audit_fetch_dataset", "create_report_package"
+    ]
+
+
+def test_resolve_custom_tool_names_unresolved_for_non_custom_task(monkeypatch):
+    class FakeTask:
+        execution_mode = "assistant"
+        tool_names = ["read_file"]
+
+    class FakeStorage:
+        def __init__(self):
+            pass
+
+        def get(self, task_id):
+            return FakeTask()
+
+    monkeypatch.setattr("app.scheduled_tasks.storage.TaskStorage", FakeStorage)
+    assert resolve_custom_session_tool_names({"scheduled_task_id": "task-1"}) is None
+    assert resolve_custom_session_tool_names({}) is None
 
 
 @pytest.mark.asyncio

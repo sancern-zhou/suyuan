@@ -52,6 +52,28 @@ def test_401_auth_failure_triggers_fallback():
     assert should_fallback(failure) is True
 
 
+def test_event_loop_mismatch_is_local_runtime_and_does_not_cooldown_provider():
+    """进程内多事件循环误用 asyncio 原语是本地故障：切换候选但不惩罚远端 provider。"""
+    from app.services import llm_failover
+
+    failure = classify_llm_failure(
+        RuntimeError(
+            "<asyncio.locks.Condition object at 0x0000028A81A056D0 [unlocked]> "
+            "is bound to a different event loop"
+        )
+    )
+
+    assert failure.reason == "local_runtime"
+    assert should_fallback(failure) is True
+
+    llm_failover._cooldowns.pop("scnet", None)
+    try:
+        llm_failover.mark_provider_cooldown("scnet", failure)
+        assert llm_failover.get_cooldown_failure("scnet") is None
+    finally:
+        llm_failover._cooldowns.pop("scnet", None)
+
+
 @pytest.mark.asyncio
 async def test_planner_retries_bailian_media_fetch_failure_with_base64(tmp_path):
     image_path = tmp_path / "sample.png"

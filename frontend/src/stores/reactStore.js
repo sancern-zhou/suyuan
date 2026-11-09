@@ -326,6 +326,8 @@ const findLatestDrawioBoardResultFromMessages = (messages = []) => {
 const createEmptyModeState = () => ({
   // 基础状态
   sessionId: null,
+  // 会话的原生运行时模式（如定时任务 custom 会话），与 UI 视图模式分离
+  sessionNativeMode: null,
   conversationAccess: {
     source: 'web',
     read_only_on_web: false
@@ -794,6 +796,7 @@ export const useReactStore = defineStore('react', {
 
       const stateToSave = {
         sessionId: modeState.sessionId,
+        sessionNativeMode: modeState.sessionNativeMode || null,
         workspace: modeState.workspace,
         pendingInteraction: modeState.pendingInteraction,
         isAnalyzing: modeState.isAnalyzing,
@@ -2759,6 +2762,13 @@ export const useReactStore = defineStore('react', {
         }
       }
 
+      // 原生运行时模式优先：定时任务 custom 等会话的原生模式不在 UI 模式表里，
+      // 续聊时请求按原生模式发出（视图停在当前模式只影响界面呈现）。
+      // board/ppt 保留显式请求，因为工作台晋升会合法接管会话运行时。
+      const requestMode = sessionState.sessionNativeMode === 'custom' && !['board', 'ppt'].includes(actualMode)
+        ? 'custom'
+        : actualMode
+
       const hasStructuredSelection = skillIds.length > 0 || contextRefs.length > 0
 
       if (!query.trim() && !hasStructuredSelection) {
@@ -2766,7 +2776,7 @@ export const useReactStore = defineStore('react', {
       }
 
       if (sessionState.isAnalyzing) {
-        if (actualMode === 'assistant' && !hasStructuredSelection && sessionState.sessionId) {
+        if (requestMode === 'assistant' && !hasStructuredSelection && sessionState.sessionId) {
           await this.steerActiveAnalysis(query, sessionState)
           if (typeof onAccepted === 'function') onAccepted()
           return
@@ -2934,7 +2944,7 @@ export const useReactStore = defineStore('react', {
           gridResolution: gridResolution,  // 网格分辨率选项
           isInterruption: isInterruption,  // ✅ 传递中断标志
           previousPausedRunId: sessionState.pendingPausedRunId,
-          agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
+          agentMode: requestMode,  // ✅ 原生 custom 会话按原生模式请求，其余用视图模式
           knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
           modelTier,
           skillIds,

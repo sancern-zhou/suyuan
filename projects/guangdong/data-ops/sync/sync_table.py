@@ -64,9 +64,17 @@ def load_config() -> dict:
     # 同步量控制（2026-10-24 业务约定）：大数据量、定期更新的工单表只回填今年窗口，
     # 偏静态维表全量。窗口支持 {year_start} 占位符，运行时解析为当前年份，
     # 每年 1 月自动滚动，无需改配置；仅影响首拉与 --full 重拉，增量按水位持续推进。
+    year = str(dt.date.today().year)
     since = cfg.get("full_load_since")
     if isinstance(since, str) and "{year_start}" in since:
-        cfg["full_load_since"] = since.replace("{year_start}", str(dt.date.today().year))
+        cfg["full_load_since"] = since.replace("{year_start}", year)
+    # always_where 同样支持 {year_start}：活跃单兜底也要受年度窗口约束，
+    # 否则历史僵尸单会被每轮拉进 ODS 改变下游口径。
+    for spec in cfg.get("tables", {}).values():
+        if isinstance(spec, dict):
+            always = spec.get("always_where")
+            if isinstance(always, str) and "{year_start}" in always:
+                spec["always_where"] = always.replace("{year_start}", year)
     return cfg
 
 

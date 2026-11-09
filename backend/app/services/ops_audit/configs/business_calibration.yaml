@@ -21,7 +21,6 @@ scoring:
   common_pattern_min_affected_orders: 20
   common_pattern_order_ratio: 0.25
   common_pattern_eligible_rules:
-    - RF_REQUIRED_FIELD_LOW_VALUE
     - RF_ENV_TEMP_HUMIDITY_EMPTY
     - RF_PERSONNEL_VEHICLE_FORMAT_LOW_VALUE
     - RF_PM_TAPE_USAGE_INVALID

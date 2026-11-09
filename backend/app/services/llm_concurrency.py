@@ -18,6 +18,8 @@
 
 作用域决策：per 进程治理（与被替换的 per-process 信号量语义一致：3 个 web
 worker + 1 个 worker 各自治理本进程流量）。跨进程 Redis 全局治理留待后续。
+同一进程内可能存在多个事件循环（主循环 + run_db 同步桥线程池的私有循环）：
+AIMD 状态全进程共享，唤醒原语（Condition）按事件循环隔离。
 状态机保持纯函数（一律收 now 参数、不读时钟），便于确定性测试。
 
 用法（调用方无需关心结算）::
@@ -31,7 +33,9 @@ worker + 1 个 worker 各自治理本进程流量）。跨进程 Redis 全局治
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
+import weakref
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Optional
 
@@ -173,7 +177,22 @@ class ConcurrencyController:
 class _Bucket:
     def __init__(self, controller: ConcurrencyController) -> None:
         self.controller = controller
-        self.condition = asyncio.Condition()
+        # asyncio 原语绑定首次使用它的事件循环。worker 进程里 LLM 调用可能来自
+        # 多个循环（主循环 + run_db 同步桥线程池的私有循环），同一个 Condition
+        # 跨循环使用会抛 "is bound to a different event loop"。因此每个循环
+        # 持有自己的唤醒用 Condition（弱引用，随所属循环消亡回收）；AIMD 状态
+        # 仍按 provider/model 全进程共享。
+        self.conditions: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Condition]" = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def condition_for_current_loop(self) -> asyncio.Condition:
+        loop = asyncio.get_running_loop()
+        condition = self.conditions.get(loop)
+        if condition is None:
+            condition = asyncio.Condition()
+            self.conditions[loop] = condition
+        return condition
 
 
 class _RequestSlot:
@@ -220,8 +239,11 @@ class _RequestSlot:
                 controller.ended()
                 if policy.action == STOP_QUOTA:
                     await self._record_quota_signal()
-        async with self.bucket.condition:
-            self.bucket.condition.notify_all()
+        # 只唤醒当前循环的等待者；其他循环的等待者靠 request_slot 里的
+        # 1s 兜底轮询醒来（Condition 不能跨循环 notify）。
+        condition = self.bucket.condition_for_current_loop()
+        async with condition:
+            condition.notify_all()
         if event:
             logger.info(
                 "llm_bucket_concurrency_event",
@@ -247,6 +269,9 @@ class LlmConcurrencyGovernor:
     def __init__(self, default_concurrency: int = 2) -> None:
         self.default_concurrency = max(FLOOR, int(default_concurrency))
         self._buckets: Dict[str, _Bucket] = {}
+        # 各循环在自己的线程上跑，admit 检查与 in_flight 自增需要跨线程原子，
+        # 否则两个循环可能同时通过 can_admit 短暂超发。锁内无 IO，微秒级持有。
+        self._admit_lock = threading.Lock()
 
     def bucket_key(self, provider: Optional[str], model: Optional[str]) -> str:
         return f"{provider or 'default'}/{model or 'default'}"
@@ -273,23 +298,26 @@ class LlmConcurrencyGovernor:
             bucket = _Bucket(ConcurrencyController(self.default_concurrency))
             self._buckets[key] = bucket
         controller = bucket.controller
-        async with bucket.condition:
+        condition = bucket.condition_for_current_loop()
+        async with condition:
             controller.waiters += 1
             try:
                 epoch: Optional[int] = None
                 while epoch is None:
                     now = time.monotonic()
-                    controller.observe(now)
-                    if controller.can_admit(now):
-                        epoch = controller.admitted(now)
-                        break
+                    with self._admit_lock:
+                        controller.observe(now)
+                        if controller.can_admit(now):
+                            epoch = controller.admitted(now)
+                            break
                     # 冷却到期或 cap 变化时被 notify；兜底 1s 轮询防漏唤醒
+                    # （跨循环的 settle 只能靠它唤醒，Condition 不能跨循环 notify）
                     if controller.cooldown_until > now:
                         timeout = max(0.05, min(1.0, controller.cooldown_until - now))
                     else:
                         timeout = 1.0
                     try:
-                        await asyncio.wait_for(bucket.condition.wait(), timeout=timeout)
+                        await asyncio.wait_for(condition.wait(), timeout=timeout)
                     except asyncio.TimeoutError:
                         pass
             finally:

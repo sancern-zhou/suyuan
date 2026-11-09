@@ -12,7 +12,6 @@ EXCLUDED_REPORT_RULE_IDS = {
     "RF_AUDITOR_EMPTY",
     "RF_RANGE_UNIT_MISMATCH",
     "RF_REVIEW_EMPTY",
-    "RF_REQUIRED_FIELD_LOW_VALUE",
 }
 
 ABNORMAL_FACT_COMPONENTS = {"value_abnormal", "value_missing", "abnormal_fact", "data_suspect"}

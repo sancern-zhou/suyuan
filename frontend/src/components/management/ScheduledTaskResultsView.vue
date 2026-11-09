@@ -39,6 +39,17 @@
         </button>
       </div>
 
+      <div v-if="runningExecutions.length" class="running-banner" role="status">
+        <span class="running-dot" aria-hidden="true"></span>
+        <template v-if="runningExecutions.length === 1">
+          {{ triggerLabel(runningExecutions[0].trigger_type) }}的执行正在运行（开始于
+          {{ formatRunningTime(runningExecutions[0].started_at) }}），完成后结果将出现在下方列表
+        </template>
+        <template v-else>
+          {{ runningExecutions.length }} 轮执行正在运行，完成后结果将出现在下方列表
+        </template>
+      </div>
+
       <div v-if="loading" class="state">正在加载执行结果...</div>
       <div v-else-if="results.length === 0" class="state">暂无符合条件的执行结果</div>
 
@@ -181,7 +192,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { gatewayUrl } from '@/auth/http.js'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import { executionStatusMeta } from './scheduledTaskActions.js'
@@ -221,7 +232,10 @@ const formatsLoading = ref(false)
 const downloadMenuVisible = ref(false)
 const broadcastVisible = ref(false)
 const broadcastRecord = ref(null)
+const runningExecutions = ref([])
+let runningPollTimer = null
 let requestToken = 0
+const RUNNING_POLL_INTERVAL_MS = 10000
 
 const isWorkflowTask = computed(() => props.task?.execution_mode === 'workflow')
 const stationOptions = computed(() => stations.value)
@@ -267,6 +281,53 @@ const formatRowTime = (record) => {
   if (!date || Number.isNaN(date.getTime())) return '—'
   const pad = part => String(part).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const formatRunningTime = (value) => {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return '—'
+  const pad = part => String(part).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const triggerLabel = (value) => (
+  { manual: '手动触发', event: '事件触发', scheduled: '调度触发' }[value] || '系统'
+)
+
+const stopRunningPoll = () => {
+  if (runningPollTimer) {
+    clearInterval(runningPollTimer)
+    runningPollTimer = null
+  }
+}
+
+const loadRunningExecutions = async () => {
+  const taskId = props.task?.task_id
+  if (!taskId) {
+    runningExecutions.value = []
+    stopRunningPoll()
+    return
+  }
+  try {
+    const data = await store.fetchTaskExecutions(taskId, { page: 1, pageSize: 10 })
+    const executions = (data.executions || []).filter(item => item?.status === 'running')
+    const hadRunning = runningExecutions.value.length > 0
+    runningExecutions.value = executions
+    if (executions.length) {
+      if (!runningPollTimer) {
+        runningPollTimer = setInterval(() => { loadRunningExecutions() }, RUNNING_POLL_INTERVAL_MS)
+      }
+    } else {
+      stopRunningPoll()
+      // 当次执行已出终态：结果行随终态一起落库，这里刷新列表与筛选项
+      if (hadRunning) {
+        reload()
+        loadFacets()
+      }
+    }
+  } catch (failure) {
+    console.error('[ScheduledTaskResultsView] Failed to load running executions:', failure)
+  }
 }
 
 async function loadFormats(record) {
@@ -413,9 +474,14 @@ watch(() => props.task?.task_id, () => {
   filters.stationId = ''
   filters.pollutant = ''
   pagination.value = { page: 1, pageSize: props.pageSize, total: 0, totalPages: 0 }
+  stopRunningPoll()
+  runningExecutions.value = []
   loadFacets()
   load(1)
+  loadRunningExecutions()
 }, { immediate: true })
+
+onUnmounted(stopRunningPoll)
 
 defineExpose({ reload })
 </script>
@@ -430,6 +496,9 @@ defineExpose({ reload })
 .toolbar-btn.primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .toolbar-btn:disabled { opacity: .55; cursor: not-allowed; }
 .results-body { min-width: 0; }
+.running-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--color-primary); border-radius: 8px; background: var(--color-primary-bg); color: var(--color-primary); font-size: 12px; }
+.running-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary); animation: running-pulse 1.2s ease-in-out infinite; }
+@keyframes running-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 .record-table-wrap { min-width: 0; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-container); overflow-x: auto; }
 .record-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .record-table th { padding: 8px 10px; text-align: left; background: var(--bg-muted); color: var(--text-2); font-weight: 600; white-space: nowrap; }

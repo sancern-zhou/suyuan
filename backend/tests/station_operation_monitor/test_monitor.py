@@ -103,8 +103,8 @@ def test_only_gaps_over_four_hours_are_recorded(tmp_path):
     # 4-hour gap stays below the threshold; 5-hour gap becomes an incident.
     entries=report(store,end)['entries']
     assert [e['code'] for e in entries]==['B'] and entries[0]['affected_hours']==5
-    assert entries[0]['evidence_kind'].startswith('连续小时数据缺失超过4小时')
-    assert any('连续缺数超过4小时' in item for item in report(store,end)['limitations'])
+    assert entries[0]['evidence_kind'].startswith('连续小时整站无数据超过4小时')
+    assert any('整站小时数据连续缺失超过4小时' in item for item in report(store,end)['limitations'])
 
 
 class FakeSource:
@@ -140,7 +140,7 @@ def test_arrival_grace_and_future_window_rejected(tmp_path):
         generate_report(config(),now=BASE,root=tmp_path,refresh=False)
 
 
-def test_partial_return_does_not_recover_missing_parameters(tmp_path):
+def test_partial_parameter_return_counts_as_upload_resumed(tmp_path):
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
     absent={('B',h) for h in hours(BASE,BASE+timedelta(hours=5))}
@@ -150,7 +150,9 @@ def test_partial_return_does_not_recover_missing_parameters(tmp_path):
         if record['code']=='B':record['co']='—'
     ingest(store,BASE,end,partial,observed=end+timedelta(minutes=40))
     entry=report(store,end)['entries'][0]
-    assert not entry['recovered'] and entry['backfill_status']=='待回补'
+    # Any valid upload after the outage closes it; single-parameter gaps never
+    # block recovery or backfill.
+    assert entry['recovered'] and entry['backfill_status']=='已回补'
 
 
 def test_malformed_response_not_persisted_as_station_outage(tmp_path):
@@ -292,7 +294,7 @@ def test_pending_rechecks_only_ongoing_offline_spans(tmp_path):
     assert local_time(intervals[0]['end'])==local_time(BASE+timedelta(hours=24))
 
 
-def test_multi_hour_partial_parameter_gap_is_tracked_and_backfilled(tmp_path):
+def test_single_parameter_gap_is_not_an_offline_incident(tmp_path):
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
     records=rows(BASE,end)
@@ -300,12 +302,9 @@ def test_multi_hour_partial_parameter_gap_is_tracked_and_backfilled(tmp_path):
         if record['timePoint'] in set(hours(BASE,BASE+timedelta(hours=5))):
             record['o3']='—'
     ingest(store,BASE,end,records)
-    entry=report(store,end)['entries'][0]
-    assert entry['affected_hours']==5 and entry['backfill_status']=='待回补'
-    assert entry['missing_parameters']==['o3']
-    ingest(store,BASE,end,rows(BASE,end),observed=end+timedelta(minutes=31))
-    entry=report(store,end)['entries'][0]
-    assert entry['affected_hours']==5 and entry['backfill_status']=='已回补'
+    # A station uploading the other parameters is not offline no matter how
+    # long one parameter stays empty; the gap stays in raw evidence only.
+    assert report(store,end)['entries']==[]
 
 
 def test_separate_long_gaps_remain_separate_events(tmp_path):
@@ -316,17 +315,17 @@ def test_separate_long_gaps_remain_separate_events(tmp_path):
     assert [e['affected_hours'] for e in report(store,end)['entries']]==[5,5]
 
 
-def test_partial_missing_at_cutoff_does_not_claim_recovery(tmp_path):
+def test_single_parameter_gap_at_cutoff_does_not_block_recovery(tmp_path):
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
-    records=rows(BASE,end)
-    cutoff_hours=set(hours(end-timedelta(hours=5),end))
+    absent={('A',h) for h in hours(BASE,BASE+timedelta(hours=5))}
+    records=[r for r in rows(BASE,end) if (r['code'],r['timePoint']) not in absent]
     for record in records:
-        if record['code']=='A' and record['timePoint'] in cutoff_hours:
+        if record['code']=='A' and record['timePoint'] in hours(end-timedelta(hours=2),end):
             record['o3']='—'
     ingest(store,BASE,end,records)
     entry=report(store,end)['entries'][0]
-    assert not entry['recovered'] and entry['missing_parameters']==['o3']
+    assert entry['recovered'] and entry['missing_parameters']==['co','nO2','o3','pM10','pM2_5','sO2']
 
 
 @pytest.mark.asyncio
@@ -520,14 +519,14 @@ def test_overview_uses_exact_template_wording(kinds, expected):
     assert '运行正常' not in overview_summary(data)
 
 
-def test_fixed_note_is_11pt_in_first_page_footer_only(tmp_path):
+def test_page_numbering_survives_first_page_note(tmp_path):
     from docx import Document
-    from docx.shared import Pt
     from docx.oxml import OxmlElement
-    from app.services.station_operation_monitor.word import FIRST_PAGE_NOTE, write_word, validate_template_format
+    from app.services.station_operation_monitor.word import FIRST_PAGE_NOTE, write_word
     source=_daily_template(tmp_path)
     template=Document(source)
-    page_field=OxmlElement('w:fldSimple');page_field.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}instr','PAGE')
+    page_field=OxmlElement('w:fldSimple')
+    page_field.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}instr','PAGE')
     template.sections[0].footer.paragraphs[0]._p.append(page_field)
     template.save(source)
     data=dict(window_end='2026-10-20T10:00:00+08:00', station_counts={'国控':122,'省控':163}, entries=[])
@@ -536,16 +535,29 @@ def test_fixed_note_is_11pt_in_first_page_footer_only(tmp_path):
     document=Document(output)
     section=document.sections[0]
     assert section.different_first_page_header_footer
-    note=next(p for p in section.first_page_footer.paragraphs if p.text==FIRST_PAGE_NOTE)
-    assert all(r.font.size==Pt(11) for r in note.runs)
+    # First-page footer mirrors the numbered footer; the note is not duplicated there.
     assert 'PAGE' in section.first_page_footer._element.xml
     assert 'PAGE' in section.footer._element.xml
-    assert FIRST_PAGE_NOTE not in '\n'.join(p.text for p in section.footer.paragraphs)
-    assert FIRST_PAGE_NOTE not in '\n'.join(p.text for p in document.paragraphs)
-    note.runs[0].font.size=Pt(12)
-    document.save(output)
-    with pytest.raises(ValueError, match='first_page_note'):
-        validate_template_format(source,output,data=data)
+    footers=[p.text for s in document.sections
+             for p in list(s.footer.paragraphs)+list(s.first_page_footer.paragraphs)]
+    assert all(FIRST_PAGE_NOTE not in text for text in footers)
+
+
+def test_issue_label_increments_one_per_day():
+    from app.services.station_operation_monitor.word import issue_label
+    from app.services.station_operation_monitor.core import local_time
+    cfg={'issue_anchor_date':'2026-11-09','issue_anchor_number':313,'issue_anchor_total':1076}
+    assert issue_label(cfg, local_time('2026-11-09T10:00:00'))=='2026年第313期，总第1076期'
+    assert issue_label(cfg, local_time('2026-11-10T10:00:00'))=='2026年第314期，总第1077期'
+    assert issue_label(cfg, local_time('2026-12-01T10:00:00'))=='2026年第335期，总第1098期'
+    assert issue_label({}, local_time('2026-11-09T10:00:00'))=='2026年期号待确认'
+
+
+def test_issue_serial_keeps_running_across_year_boundary():
+    from app.services.station_operation_monitor.word import issue_label
+    from app.services.station_operation_monitor.core import local_time
+    cfg={'issue_anchor_date':'2026-12-30','issue_anchor_number':364,'issue_anchor_total':1127}
+    assert issue_label(cfg, local_time('2027-01-01T10:00:00'))=='2027年第366期，总第1129期'
 
 
 @pytest.mark.asyncio
@@ -708,3 +720,65 @@ def test_failed_slice_is_retried_once_within_same_run(tmp_path):
     assert result['success'], result['failed_slices']
     assert result['failed_slices'] == []
     assert result['successful_slices'] >= 1
+
+
+def test_muted_station_events_are_suppressed(tmp_path):
+    from app.services.station_operation_monitor.runtime import _drop_muted_entries
+    entries=[{'code':'1422A','offline_start':BASE.isoformat(),
+              'offline_end':(BASE+timedelta(hours=6)).isoformat()},
+             {'code':'B','offline_start':BASE.isoformat(),
+              'offline_end':(BASE+timedelta(hours=6)).isoformat()}]
+    muted=[{'code':'1422A','reason':'停机维护','start':BASE.isoformat()}]
+    kept=_drop_muted_entries(entries, muted, BASE+timedelta(days=1))
+    assert [e['code'] for e in kept]==['B']
+
+
+def test_mute_window_does_not_hide_later_unrelated_outage(tmp_path):
+    from app.services.station_operation_monitor.runtime import _drop_muted_entries
+    later_start=BASE+timedelta(days=3)
+    entries=[{'code':'1422A','offline_start':later_start.isoformat(),
+              'offline_end':(later_start+timedelta(hours=6)).isoformat()}]
+    muted=[{'code':'1422A','reason':'停机维护',
+            'start':BASE.isoformat(),'end':(BASE+timedelta(days=1)).isoformat()}]
+    kept=_drop_muted_entries(entries, muted, later_start+timedelta(days=1))
+    assert len(kept)==1
+
+
+def test_handover_note_is_native_footnote_not_page_footer():
+    """The note lives in footnotes.xml so Word draws the rule above it itself."""
+    from pathlib import Path
+    from docx import Document
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.oxml import parse_xml
+    from app.services.station_operation_monitor.word import FIRST_PAGE_NOTE, _footnote_texts
+    template = Path('backend_data_registry_guangdong/station_operation_monitor/template.docx')
+    if not template.is_file():
+        pytest.skip('production template not present in this environment')
+    document = Document(str(template))
+    assert _footnote_texts(document) == [FIRST_PAGE_NOTE]
+    rel = next(r for r in document.part.rels.values() if r.reltype == RT.FOOTNOTES)
+    root = parse_xml(rel.target_part.blob)
+    w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+    # Word's own separator footnote supplies the horizontal rule above the note.
+    assert any(f.get(f'{w}type') == 'separator' for f in root.findall(f'{w}footnote'))
+    # The note must not also be injected into the page footer.
+    footers = [p.text for s in document.sections
+               for p in list(s.footer.paragraphs) + list(s.first_page_footer.paragraphs)]
+    assert all(FIRST_PAGE_NOTE not in text for text in footers)
+
+
+def test_provincial_heading_keeps_footnote_anchor():
+    """Rewriting the heading must not drop Word's footnote reference run."""
+    from pathlib import Path
+    from docx import Document
+    from app.services.station_operation_monitor.word import replace_text_keeping_footnote
+    template = Path('backend_data_registry_guangdong/station_operation_monitor/template.docx')
+    if not template.is_file():
+        pytest.skip('production template not present in this environment')
+    document = Document(str(template))
+    heading = next(p for p in document.paragraphs if p.text.startswith('省控站点（'))
+    replace_text_keeping_footnote(heading, '省控站点（163个）：')
+    assert 'footnoteReference' in heading._p.xml
+    assert heading.text == '省控站点（163个）：'
+    # The reference stays right after the number, before the closing bracket.
+    assert heading._p.xml.index('footnoteReference') < heading._p.xml.index('）：')

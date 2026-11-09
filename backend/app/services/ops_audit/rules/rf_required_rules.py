@@ -16,6 +16,13 @@ from app.services.ops_audit.rules.base import add_issue
 LOW_VALUE_REMARKS = load_low_value_remarks()
 RF_FIELD_PROFILES = load_rf_field_profiles()
 
+# 组分站表单（sup_rf_common 及 sup_rf_* 专用分表）的列语义按 ruleitemtag 在
+# sup_form_profiles.yaml 里单独建档，不走主网字段档案。主网温湿度字段清单里的
+# 通用列名（temperature/humidity）在 sup_rf_pm1monitorinspection 等分表上恰好
+# 同名但恒为空列（源库全量 NULL），按主网口径判定会产生 100% 命中的结构性误报，
+# 因此主网温湿度规则跳过 SUP_ 前缀表。
+SUP_FORM_TABLE_PREFIX = "SUP_"
+
 
 def check_rf_required_fields(
     order: dict[str, Any],
@@ -25,7 +32,6 @@ def check_rf_required_fields(
     """Check RF form required fields for empty or low-value content.
 
     This rule identifies:
-    - RF_REQUIRED_FIELD_LOW_VALUE: Key fields (personnel, vehicle, remarks) are empty or contain low-value content like "/", "-", "正常", "无"
     - RF_ENV_TEMP_HUMIDITY_EMPTY: Indoor temperature and humidity fields are empty
 
     The rule is configurable via rf_field_profiles.yaml and business_calibration.yaml.
@@ -36,69 +42,9 @@ def check_rf_required_fields(
         if form.get("_query_error"):
             continue
 
-        _check_low_value_fields(order, table, form, issues)
         _check_inspection_person_vehicle(order, table, form, issues)
         _check_pm_tape_usage(order, table, form, issues)
         _check_env_temp_humidity(order, table, form, issues, has_order_env_temp_humidity)
-
-
-def _check_low_value_fields(
-    order: dict[str, Any],
-    table: str,
-    form: dict[str, Any],
-    issues: list[Issue],
-) -> None:
-    """Check for low-value content in key fields."""
-
-    low_value_groups = RF_FIELD_PROFILES.get("low_value_field_groups", {})
-    if not low_value_groups:
-        return
-
-    empty_fields = []
-    low_value_fields = []
-
-    for group_name, field_candidates in low_value_groups.items():
-        if table == "RF_TW_CleanCuttingHead" and group_name == "备注":
-            continue
-        for field in field_candidates:
-            if field not in form:
-                continue
-
-            value = form.get(field)
-            if value is None or str(value).strip() == "":
-                empty_fields.append(f"{group_name}.{field}")
-                continue
-
-            value_str = str(value).strip()
-            if value_str in LOW_VALUE_REMARKS:
-                low_value_fields.append(f"{group_name}.{field}={value_str}")
-
-    if not (empty_fields or low_value_fields):
-        return
-
-    evidence = {
-        "working_order_code": order.get("WORKINGORDERCODE"),
-        "rf_table": table,
-        "empty_fields": empty_fields,
-        "low_value_fields": low_value_fields,
-        "sample_form_data": {k: v for k, v in list(form.items())[:10] if v is not None},
-    }
-
-    message_parts = []
-    if empty_fields:
-        message_parts.append(f"字段为空: {', '.join(empty_fields[:3])}")
-    if low_value_fields:
-        message_parts.append(f"低价值填报: {', '.join(low_value_fields[:3])}")
-
-    add_issue(
-        issues,
-        "RF_REQUIRED_FIELD_LOW_VALUE",
-        "表单完整性",
-        "中",
-        f"rf.{table}.required_fields",
-        f"RF表单关键字段{'; '.join(message_parts)}",
-        json.dumps(evidence, ensure_ascii=False, default=str),
-    )
 
 
 def _check_inspection_person_vehicle(
@@ -256,6 +202,8 @@ def _check_env_temp_humidity(
 ) -> None:
     """Check for missing indoor temperature and humidity fields."""
 
+    if table.startswith(SUP_FORM_TABLE_PREFIX):
+        return
     if has_order_env_temp_humidity:
         return
     if table == "RF_HY_VISIBILITYCALI" and _form_indicates_not_applicable_device(form):
@@ -340,8 +288,8 @@ def _remark_candidates(form: dict[str, Any]) -> dict[str, Any]:
 def _has_complete_env_temp_humidity(forms: list[tuple[str, dict[str, Any]]]) -> bool:
     temp_fields = RF_FIELD_PROFILES.get("temperature_fields", [])
     humidity_fields = RF_FIELD_PROFILES.get("humidity_fields", [])
-    for _table, form in forms:
-        if form.get("_query_error"):
+    for table, form in forms:
+        if form.get("_query_error") or table.startswith(SUP_FORM_TABLE_PREFIX):
             continue
         has_temp = any(
             actual_field and _has_meaningful_env_value(value)

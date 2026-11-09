@@ -30,6 +30,18 @@ class ScheduledTaskConversationPersistence:
         return str(selected or task.execution_mode)
 
     @classmethod
+    def _custom_tool_names(cls, task: ScheduledTask, execution: TaskExecution) -> list[str]:
+        """Full fixed tool set of a custom run, for conversation continuation.
+
+        ``scheduled_task_tools`` only carries tools that need re-registration on
+        any scheduled session; custom sessions additionally need the whole
+        registry so the chat endpoint can rebuild the fixed-tool agent.
+        """
+        if cls._session_mode(task, execution) != "custom":
+            return []
+        return list(dict.fromkeys(task.tool_names or []))
+
+    @classmethod
     def _scheduled_task_context(cls, task: ScheduledTask, execution: TaskExecution) -> dict:
         attributes = execution.event_attributes or {}
         return {
@@ -75,6 +87,7 @@ class ScheduledTaskConversationPersistence:
             "scheduled_task_name": task.name,
             "scheduled_task_context": self._scheduled_task_context(task, execution),
             "scheduled_task_tools": ["submit_task_review"] if "submit_task_review" in (task.tool_names or []) else [],
+            "scheduled_task_custom_tools": self._custom_tool_names(task, execution),
         })
 
         existing = await self.session_manager.load_session(session.session_id)
@@ -229,6 +242,7 @@ class ScheduledTaskConversationPersistence:
                 "scheduled_task_name": task.name,
                 "scheduled_task_context": self._scheduled_task_context(task, execution),
                 "scheduled_task_tools": ["submit_task_review"] if "submit_task_review" in (task.tool_names or []) else [],
+                "scheduled_task_custom_tools": self._custom_tool_names(task, execution),
             },
         )
         replace_transcript = getattr(

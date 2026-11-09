@@ -5,12 +5,6 @@ rules:
     default_severity: 高
     scope: Check/Month/working_order_details.CheckOrder
     rationale: 月度动态校准维护工单的检查处理步骤，应根据流程开始与结束时间持续超过5分钟；间隔小于或等于5分钟属于异常。
-  - rule_id: RF_REQUIRED_FIELD_LOW_VALUE
-    name: RF 表单关键字段为空或低价值
-    category: 表单完整性
-    default_severity: 中
-    scope: RF_*
-    rationale: 人员、车辆、备注等关键字段不能为空或仅填写 /、正常、无等低信息内容。
   - rule_id: RF_AUDITOR_EMPTY
     name: RF 表单审批人为空
     category: 表单完整性

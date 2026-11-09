@@ -98,14 +98,6 @@ RULE_CATALOG = [
         "rationale": "当前作为提示项，需确认审批字段是否实际启用。",
     },
     {
-        "rule_id": "RF_REQUIRED_FIELD_LOW_VALUE",
-        "name": "RF 表单关键字段为空或低价值",
-        "category": "表单完整性",
-        "default_severity": "中",
-        "scope": "RF_*",
-        "rationale": "人员、车辆、备注等关键字段不能为空或仅填写 /、正常、无等低信息内容。",
-    },
-    {
         "rule_id": "RF_ENV_TEMP_HUMIDITY_EMPTY",
         "name": "RF 表单室内温湿度未填",
         "category": "表单完整性",

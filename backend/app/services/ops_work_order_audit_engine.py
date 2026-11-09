@@ -84,7 +84,10 @@ from app.services.ops_audit.rules.sup_watermark_rules import (  # noqa: E402
 )
 from app.services.ops_audit.rules.rf_unit_rules import check_rf_unit_values  # noqa: E402
 from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values  # noqa: E402
-from app.services.ops_audit.rules.form_presence_rules import check_form_data_missing  # noqa: E402
+from app.services.ops_audit.rules.form_presence_rules import (  # noqa: E402
+    FORM_COMPLETED_STATUSES,
+    check_form_data_missing,
+)
 from app.services.ops_audit.rules.work_order_duration_rules import check_monthly_dynamic_calibration_duration  # noqa: E402
 from app.services.ops_audit.scoring import (  # noqa: E402
     COMMON_PATTERN_ELIGIBLE_RULES,
@@ -1418,20 +1421,6 @@ def check_form_range_profile(
 def check_form_common_fields(table: str, form: dict[str, Any], issues: list[Issue]) -> None:
     prefix = table
 
-    low_value_field_groups = RF_FIELD_PROFILES.get("low_value_field_groups", {})
-    for label, fields in low_value_field_groups.items():
-        field, value = first_present(form, fields)
-        if field and not has_meaningful_text(value):
-            add_issue(
-                issues,
-                "RF_REQUIRED_FIELD_LOW_VALUE",
-                "表单完整性",
-                "中",
-                f"{prefix}.{field}",
-                f"RF 表单{label}字段为空或信息量低",
-                str(value),
-            )
-
     temperature_field, temperature = first_present(
         form,
         RF_FIELD_PROFILES.get("temperature_fields", []),
@@ -2048,6 +2037,7 @@ def audit_dataset(
                 "station_name": station_meta.get("station_name"),
                 "operation_unit": station_meta.get("operation_unit"),
                 "order_type": order.get("DDWORKINGORDERTYPE"),
+                "order_status": order.get("DDWORKINGORDERSTATUS"),
                 "create_type": order.get("DDORDERCREATETYPE"),
                 "maintenance_type": order.get("MAINTENANCETYPE"),
                 "create_time": order.get("CREATETIME"),
@@ -2126,7 +2116,15 @@ def audit_dataset(
         for issue in record.get("candidate_issues", []):
             candidate_issue_counter[issue["rule_id"]] += 1
 
-    no_form_data_records = [record for record in records if not record.get("rf_tables")]
+    # 无表单统计只覆盖已闭环工单：未闭环（Doing/Wait）本就允许表单尚未提交，
+    # 计入会把正常在办工单放大成"数据缺口"（与 FORM_DATA_MISSING 规则口径对齐）。
+    no_form_data_records = [
+        record
+        for record in records
+        if not record.get("rf_tables")
+        and str(record.get("order_status") or "").strip().lower()
+        in FORM_COMPLETED_STATUSES
+    ]
     return {
         "audit_info": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2320,7 +2318,6 @@ def build_semantic_candidates(audit: dict[str, Any]) -> dict[str, Any]:
     semantic_rule_ids = {
         "RF_TW_REMARK_LOW_VALUE",
         "RF_Q_PENDING_NO_REMARK",
-        "RF_REQUIRED_FIELD_LOW_VALUE",
         "RF_ENV_TEMP_HUMIDITY_EMPTY",
         "RF_CHECK_TIME_OUTSIDE_RANGE",
         "RF_ABNORMAL_VALUE_NO_REMARK",

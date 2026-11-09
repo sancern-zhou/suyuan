@@ -25,6 +25,7 @@ WriteFile 工具 - 完整对标 Claude Code 官方实现
 - Claude Code: src/tools/FileWriteTool/FileWriteTool.ts
 - Claude Code: src/tools/FileWriteTool/utils.ts
 """
+import asyncio
 import difflib
 import platform
 from pathlib import Path
@@ -492,7 +493,9 @@ format:
                 f"{'创建' if is_new_file else '覆写'}成功：{resolved_path.name}，"
                 f"{line_count} 行，{file_size} 字节"
             )
-            preview_refresh = refresh_preview_for_managed_document_path(resolved_path)
+            preview_refresh = await asyncio.to_thread(
+                refresh_preview_for_managed_document_path, resolved_path
+            )
             if preview_refresh:
                 result_data.update(preview_refresh)
                 refresh_state = (

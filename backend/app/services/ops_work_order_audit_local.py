@@ -137,16 +137,53 @@ def is_sup_station_request(order_types: list[str] | None) -> bool:
     return bool(values) and set(values) <= set(SUP_AUDIT_ORDER_TYPES)
 
 
-# 组分站表单载体（本地 mart 表名，小写）：sup_rf_common 通用宽表 + Sup_RF_* 专用分表。
+# 组分站表单载体：sup_rf_common 通用宽表 + 全部 sup_rf_* 专用分表。
 # 源库按 RULEITEMTAG 把多数组分站表单写在专用分表（2026-10-26 复盘：周窗口 21 单中
 # 17 单的表单只在分表），仅读宽表会把整单判成"无表单数据"。
-SUP_MART_FORM_TABLES: tuple[str, ...] = (
+#
+# 2026-11-09：原先硬编码 5 张表，组分网另有 68 张分表同步进了 guangdong_ods 却没
+# 建模进 mart，导致窗口内 119 单被判"无表单"。现改为运行时按 mart 实际存在的
+# sup_rf_% 表动态发现——新增分表只需跑 sync/gen_passthrough_models.py + dbt build，
+# 审核侧无需改代码。
+SUP_MART_FORM_TABLE_PREFIX = "sup_rf_"
+# 兜底清单：动态发现失败（如在非 mart 环境跑单测）时仍保证核心载体可用。
+SUP_MART_FORM_TABLES_FALLBACK: tuple[str, ...] = (
     "sup_rf_common",
     "sup_rf_pm1monitorinspection",
     "sup_rf_deviceflowcheck",
     "sup_rf_monitorinspection",
     "sup_rf_ambienttemperature",
 )
+
+
+def discover_sup_mart_form_tables(cur) -> tuple[str, ...]:
+    """按 mart 实际存在的 sup_rf_% 表动态发现组分站表单载体。
+
+    只选带 workingordercode 列的表——审核取数按工单号过滤，缺该列的表查询必然报错。
+    sup_rf_common 固定排在最前（它是主载体，其余为专用分表）。
+    """
+    try:
+        cur.execute(
+            """select t.table_name
+                 from information_schema.tables t
+                where t.table_schema = %s
+                  and t.table_name like %s
+                  and exists (
+                        select 1 from information_schema.columns c
+                         where c.table_schema = t.table_schema
+                           and c.table_name = t.table_name
+                           and c.column_name = 'workingordercode'
+                  )
+                order by t.table_name""",
+            (_MART_SCHEMA, f"{SUP_MART_FORM_TABLE_PREFIX}%"),
+        )
+        found = [row[0] for row in cur.fetchall()]
+    except Exception as exc:  # 动态发现失败不阻断审核，退回兜底清单
+        logger.warning("ops_audit_sup_form_tables_discovery_failed", error=str(exc))
+        return SUP_MART_FORM_TABLES_FALLBACK
+    if not found:
+        return SUP_MART_FORM_TABLES_FALLBACK
+    return tuple(sorted(found, key=lambda name: (name != "sup_rf_common", name)))
 
 
 def _uppercase_sup_form_row(record: dict[str, Any]) -> dict[str, Any]:
@@ -388,7 +425,7 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
             if sup_mode:
                 # 组分站：表单体分布在 sup_rf_common 通用宽表与 Sup_RF_* 专用分表，
                 # 按工单号整取，头信息列大写化后以各表大写名进入 rf_forms 供通用规则消费。
-                for local_table in SUP_MART_FORM_TABLES:
+                for local_table in discover_sup_mart_form_tables(cur):
                     table_key = local_table.upper()
                     try:
                         if not _table_exists(cur, local_table):

@@ -12,6 +12,7 @@ import pytest
 
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.sup_form_rules import (
+    ABNORMAL_RULE_ID,
     DATE_RULE_ID,
     FORMULA_RULE_ID,
     RANGE_RULE_ID,
@@ -894,3 +895,333 @@ def test_vocs_scene_temp_over_range_with_remark_downgrades():
     assert matched[0].severity == "中"
     evidence = json.loads(matched[0].evidence)
     assert evidence["with_remark"] is True
+
+
+# ---------------------------------------------------------------------------
+# Sup_RF_NH3Calibration（2026-11-09 建档）：数值区间规则
+# 数据形态为"数值+单位"混填，需确认解析后按文档标称区间判定。
+# ---------------------------------------------------------------------------
+
+
+def _run_nh3(form, order=None):
+    issues: list[Issue] = []
+    check_sup_form_rules(
+        order or {"WORKINGORDERCODE": "CH_NH3", "CREATETIME": "2026-09-04 10:00:00"},
+        [("SUP_RF_NH3CALIBRATION", form)],
+        issues,
+        [],
+        [],
+    )
+    return issues
+
+
+def test_nh3_calibration_in_range_values_pass():
+    """带单位的合规值（0.730 / 326.3℃ / 774.5℃ / 88.9mmhg）不应命中。"""
+
+    issues = _run_nh3(
+        {
+            "RULEITEMTAG": "Sup_RF_NH3Calibration",
+            "WORKINGORDERCODE": "CH_NH3",
+            "CHECKDATE": "2026-10-20",
+            "string1": "0.730",
+            "string6": "326.3℃",
+            "string7": "774.5℃",
+            "string8": "88.9mmhg",
+        }
+    )
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_nh3_calibration_out_of_range_hits():
+    """整行错位的真实错误（温度填进流量列、转化炉填反应室温度）应命中。"""
+
+    issues = _run_nh3(
+        {
+            "RULEITEMTAG": "Sup_RF_NH3Calibration",
+            "WORKINGORDERCODE": "CH_NH3",
+            "CHECKDATE": "2026-10-31",
+            "string1": "0.730",
+            "string6": "95.4",
+            "string7": "325.8",
+            "string8": "780.2",
+        }
+    )
+    hits = [i for i in issues if i.rule_id == RANGE_RULE_ID]
+    assert len(hits) == 1
+    labels = {
+        v["label"]
+        for v in json.loads(hits[0].evidence)["violations"]
+    }
+    assert labels == {"反应室温度", "转化炉温度", "反应室压力"}
+
+
+def test_nh3_calibration_cx_variant_reuses_profile():
+    """CX 变体共用同一张分表与同一套题目项列，档案合并复用。"""
+
+    issues = _run_nh3(
+        {
+            "RULEITEMTAG": "Sup_RF_NH3CalibrationCX",
+            "WORKINGORDERCODE": "CH_NH3CX",
+            "CHECKDATE": "2026-10-20",
+            "string6": "95.4",
+        }
+    )
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID]
+
+
+def test_daily_inspection_has_no_numeric_range_rule():
+    """日巡检的温度/压力列是站内自设值与 MPa/psi 混填，不得落数值区间规则
+    （2026-11-09 全量 531 行实证：按 400℃ 判会误报 8.7%）。"""
+
+    issues = _run_nh3(
+        {
+            "RULEITEMTAG": "Sup_RF_DailyInspection",
+            "WORKINGORDERCODE": "CH_DAILY",
+            "CHECKDATE": "2026-10-20",
+            "string1": "431",     # 站内自设温度，不是异常
+            "string2": "58psi",   # 与 MPa 混填
+            "string3": "0.4",
+        }
+    )
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+# ---------------------------------------------------------------------------
+# Sup_RF_GACWeekMaintain（2026-11-09 建档）：品牌分档区间
+# 同一题号在不同色谱柱规格下量程不同，只能按 devicebrand 反推档位。
+# ---------------------------------------------------------------------------
+
+
+def _run_gac(form, brand):
+    issues: list[Issue] = []
+    payload = {"RULEITEMTAG": "Sup_RF_GACWeekMaintain", "WORKINGORDERCODE": "CH_GAC",
+               "CREATETIME": "2026-10-20 10:00:00", "DEVICEBRAND": brand}
+    payload.update(form)
+    check_sup_form_rules(
+        {"WORKINGORDERCODE": "CH_GAC"},
+        [("SUP_RF_GACWEEKMAINTAIN", payload)],
+        issues,
+        [],
+        [],
+    )
+    return issues
+
+
+def test_gac_pengyuchangya_2mm_column_flow_passes():
+    """2mm 柱口径（0.30/0.25 ml/min、抑制器 23/11 mA）在 Pengyuchangya 下不应命中。"""
+
+    issues = _run_gac(
+        {"anioncolumnresult": "0.30", "cationcolumnresult": "0.25",
+         "anionsuppressorresult": "23", "cationsuppressorresult": "11"},
+        "Pengyuchangya",
+    )
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_gac_th_4mm_column_flow_passes():
+    """4mm 柱口径（0.70/0.60、抑制器 30/25）在 TH 下不应命中。"""
+
+    issues = _run_gac(
+        {"anioncolumnresult": "0.70", "cationcolumnresult": "0.60",
+         "anionsuppressorresult": "30", "cationsuppressorresult": "25"},
+        "TH",
+    )
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_gac_brand_mismatch_value_hits():
+    """Pengyuchangya 站点填了 4mm 口径的柱流量应命中（档位用错）。"""
+
+    issues = _run_gac({"anioncolumnresult": "0.70", "cationcolumnresult": "0.25"}, "Pengyuchangya")
+    hits = [i for i in issues if i.rule_id == RANGE_RULE_ID]
+    assert len(hits) == 1
+    violations = json.loads(hits[0].evidence)["violations"]
+    assert violations[0]["column"] == "anioncolumnresult"
+    assert violations[0]["brand"] == "Pengyuchangya"
+    assert violations[0]["min"] == 0.2 and violations[0]["max"] == 0.35
+
+
+def test_gac_unknown_brand_skips_range_check():
+    """品牌未命中分档时跳过判定，不得用错误档位产生误报。"""
+
+    issues = _run_gac({"anioncolumnresult": "99", "cationcolumnresult": "99"}, "UnknownBrand")
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+# ---------------------------------------------------------------------------
+# Sup_RF_PM1MonitorInspection_*（2026-11-09 建档）
+# 关键：标志位方向为 0=是/正常、1=否/异常（Vue 映射确认），
+# 且仅在异常项未填 otherremarks 时报问题。
+# ---------------------------------------------------------------------------
+
+
+def _run_pm1(tag, form):
+    issues: list[Issue] = []
+    payload = {"RULEITEMTAG": tag, "WORKINGORDERCODE": "CH_PM1",
+               "CREATETIME": "2026-10-20 10:00:00"}
+    payload.update(form)
+    check_sup_form_rules({"WORKINGORDERCODE": "CH_PM1"},
+                         [("SUP_RF_PM1MONITORINSPECTION", payload)], issues, [], [])
+    return issues
+
+
+def test_pm1_week_all_yes_passes():
+    """三项全 0（是/正常）且无备注，不应命中。"""
+
+    issues = _run_pm1("Sup_RF_PM1MonitorInspection_Week", {
+        "dtisitcalibrated": 0, "ipisitcalibrated": 0, "papertapeisitcalibrated": 0,
+        "otherremarks": "",
+    })
+    assert issues == []
+
+
+def test_pm1_week_abnormal_with_remark_passes():
+    """任一项为 1（否/异常）但填了 otherremarks，视为已说明，不报。"""
+
+    issues = _run_pm1("Sup_RF_PM1MonitorInspection_Week", {
+        "dtisitcalibrated": 0, "ipisitcalibrated": 1, "papertapeisitcalibrated": 0,
+        "otherremarks": "仪器故障停运，已报备",
+    })
+    assert issues == []
+
+
+def test_pm1_week_abnormal_without_remark_hits():
+    """任一项为 1 且无备注，应判异常未说明。"""
+
+    issues = _run_pm1("Sup_RF_PM1MonitorInspection_Week", {
+        "dtisitcalibrated": 0, "ipisitcalibrated": 1, "papertapeisitcalibrated": 0,
+        "otherremarks": "",
+    })
+    hits = [i for i in issues if i.rule_id == ABNORMAL_RULE_ID]
+    assert len(hits) == 1
+    items = json.loads(hits[0].evidence)["items"]
+    assert items[0]["column"] == "ipisitcalibrated"
+    assert items[0]["label"] == "仪器参数"
+
+
+def test_pm1_month_merror_out_of_5pct_hits():
+    """校准膜测定误差超 ±5% 应命中（文档红字阈值）。"""
+
+    issues = _run_pm1("Sup_RF_PM1MonitorInspection_Month", {"merror": "7.2%"})
+    hits = [i for i in issues if i.rule_id == RANGE_RULE_ID]
+    assert len(hits) == 1
+    assert json.loads(hits[0].evidence)["violations"][0]["value"] == 7.2
+
+
+def test_pm1_month_merror_in_range_passes():
+    """全量 610 行无越界，正常值不得命中。"""
+
+    issues = _run_pm1("Sup_RF_PM1MonitorInspection_Month", {"merror": "0.9%"})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_pm1_halfyear_has_no_abnormal_rule():
+    """半年检标志位方向与周检不同（leakwhether 87% 为 1），未确认前不得落异常规则。"""
+
+    issues = _run_pm1("Sup_RF_PM1MonitorInspection_HalfYear", {
+        "externalisitclean": 1, "insideisitclean": 1, "leakwhether": 0,
+        "otherremarks": "",
+    })
+    assert [i for i in issues if i.rule_id == ABNORMAL_RULE_ID] == []
+
+
+# ---------------------------------------------------------------------------
+# 收益摸底批次（2026-11-09）：SpeedMeterMaintain / CO2Inspection /
+# EquipmentStatus / URGWeekMaintain
+# ---------------------------------------------------------------------------
+
+
+def _run_tag(tag, table, form, order=None):
+    issues: list[Issue] = []
+    payload = {"RULEITEMTAG": tag, "WORKINGORDERCODE": "CH_SCAN",
+               "CREATETIME": "2026-10-20 10:00:00"}
+    payload.update(form)
+    check_sup_form_rules(order or {"WORKINGORDERCODE": "CH_SCAN"},
+                         [(table, payload)], issues, [], [])
+    return issues
+
+
+def test_speedmeter_abnormal_without_remark_hits():
+    """isitnormal=1（不正常）且配对备注与全局备注均空，应命中。"""
+
+    issues = _run_tag("Sup_RF_SpeedMeterMaintain", "SUP_RF_SPEEDMETERMAINTAIN",
+                      {"dctisitnormal": 1, "dctremarks": "", "remarks": ""})
+    hits = [i for i in issues if i.rule_id == ABNORMAL_RULE_ID]
+    assert len(hits) == 1
+    assert json.loads(hits[0].evidence)["items"][0]["label"] == "DCT 部件"
+
+
+def test_speedmeter_abnormal_with_paired_remark_passes():
+    """配对备注列有值即豁免。"""
+
+    issues = _run_tag("Sup_RF_SpeedMeterMaintain", "SUP_RF_SPEEDMETERMAINTAIN",
+                      {"dctisitnormal": 1, "dctremarks": "已更换，运行正常", "remarks": ""})
+    assert [i for i in issues if i.rule_id == ABNORMAL_RULE_ID] == []
+
+
+def test_speedmeter_abnormal_with_global_remark_passes():
+    """全局 remarks 列有值也应豁免（挪机/停运类说明）。"""
+
+    issues = _run_tag("Sup_RF_SpeedMeterMaintain", "SUP_RF_SPEEDMETERMAINTAIN",
+                      {"dctisitnormal": 1, "dctremarks": "", "remarks": "挪机安装调试中"})
+    assert [i for i in issues if i.rule_id == ABNORMAL_RULE_ID] == []
+
+
+def test_speedmeter_all_normal_passes():
+    issues = _run_tag("Sup_RF_SpeedMeterMaintain", "SUP_RF_SPEEDMETERMAINTAIN",
+                      {c: 0 for c in ("nstisitnormal", "acstisitnormal", "dctisitnormal")})
+    assert [i for i in issues if i.rule_id == ABNORMAL_RULE_ID] == []
+
+
+def test_co2_inspection_ranges_pass_on_typical_values():
+    """实测分布（气压 731~776 / 流量 0.99~1.1 / 内温 33~36）不得命中。"""
+
+    issues = _run_tag("Sup_RF_CO2Inspection", "SUP_RF_CO2INSPECTION",
+                      {"string3": "749.5", "string4": "1.018L/min", "string5": "34.4"})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_co2_inspection_out_of_range_hits():
+    issues = _run_tag("Sup_RF_CO2Inspection", "SUP_RF_CO2INSPECTION",
+                      {"string5": "50.0"})
+    hits = [i for i in issues if i.rule_id == RANGE_RULE_ID]
+    assert len(hits) == 1
+    assert json.loads(hits[0].evidence)["violations"][0]["column"] == "string5"
+
+
+def test_equipment_status_tih200_out_of_range_hits():
+    """TiH200（Etraninc）蠕动泵流量越界应命中。"""
+
+    issues = _run_tag("Sup_RF_EquipmentStatus", "SUP_RF_EQUIPMENTSTATUS",
+                      {"DEVICEBRAND": "Etraninc", "DEVICEMODEL": "TiH200",
+                       "string4": "0.50", "string5": "0.6"})
+    hits = [i for i in issues if i.rule_id == RANGE_RULE_ID]
+    assert len(hits) == 1
+    violations = json.loads(hits[0].evidence)["violations"]
+    assert violations[0]["column"] == "string5"
+    assert violations[0]["brand"] == "Etraninc"
+
+
+def test_equipment_status_sdl_skipped_without_range():
+    """SDL（Model4050）的 string4 是另一道题（电压），无档位不得按流量区间判定。"""
+
+    issues = _run_tag("Sup_RF_EquipmentStatus", "SUP_RF_EQUIPMENTSTATUS",
+                      {"DEVICEBRAND": "SDL", "DEVICEMODEL": "Model4050",
+                       "string4": "640v", "string5": "1.0"})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_urg_cation_pressure_in_range_passes():
+    """URG9000D 阳离子柱压实测 1519~1840 psi，不得命中。"""
+
+    issues = _run_tag("Sup_RF_URGWeekMaintain", "SUP_RF_URGWEEKMAINTAIN",
+                      {"cationpressureresult": "1840"})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_urg_water_peak_not_profiled_yet():
+    """水峰 0.25/0.38 双稳态聚集待业务确认，不得落区间规则。"""
+
+    issues = _run_tag("Sup_RF_URGWeekMaintain", "SUP_RF_URGWEEKMAINTAIN",
+                      {"anionicwaterpeak1": "0.38"})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []

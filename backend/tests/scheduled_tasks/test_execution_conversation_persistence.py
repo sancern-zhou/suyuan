@@ -170,6 +170,48 @@ async def test_event_agent_mode_survives_conversation_persistence():
 
 
 @pytest.mark.asyncio
+async def test_custom_task_persists_full_tool_set_for_continuation():
+    manager = FakeSessionManager()
+    persistence = ScheduledTaskConversationPersistence(
+        session_manager=manager,
+        catalog=FakeCatalog(),
+    )
+    custom_task = ScheduledTask(
+        task_id="task-custom",
+        name="工单审核",
+        description="审核工单",
+        execution_mode="custom",
+        tool_names=["ops_audit_fetch_dataset", "read_file", "create_report_package"],
+        schedule_type="once",
+        run_at="2026-11-09T10:00:00",
+        owner_user_id="owner-1",
+        owner_username="alice",
+        owner_display_name="Alice",
+        prompt="执行",
+    )
+    execution = TaskExecution(
+        execution_id="exec-custom-1",
+        task_id="task-custom",
+        task_name="工单审核",
+        session_id="scheduled-custom-session",
+        status="running",
+        total_steps=1,
+    )
+
+    await persistence.persist_agent_session(
+        agent=FakeAgent(),
+        task=custom_task,
+        execution=execution,
+        display_history=[{"type": "user", "content": "执行"}],
+    )
+
+    assert manager.existing.metadata["mode"] == "custom"
+    assert manager.existing.metadata["scheduled_task_custom_tools"] == [
+        "ops_audit_fetch_dataset", "read_file", "create_report_package"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_publication_failure_keeps_verified_session_for_reconciliation():
     class FailingCatalog(FakeCatalog):
         async def register_identity(self, **kwargs):

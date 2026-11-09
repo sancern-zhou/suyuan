@@ -32,6 +32,18 @@ stages:
     - ATTACHMENT_XLS_READ_FAILED_DIAGNOSTIC
     - RF_RANGE_UNIT_MISMATCH
     - SUP_ATTACHMENT_WATERMARK_READ_FAILED
+    # 品牌正常范围未配置：监测联网侧权威阈值源 BSD_INSBRANDINFO（2026-11-09 核查，
+    # 543 行）亦未配置 LD（力合）、峰悦奥瑞、福瞳、怡特等在网品牌，业务上确无配置，
+    # 持续输出"待配置提醒"只会淹没真实问题。规则仍发射并保留在诊断统计中
+    # （catalog/evidence 早已声明 report_classification=technical_diagnostic），
+    # 待业务供数或 BSD_INSBRANDINFO 同步接入后再评估升档。
+    - RF_RANGE_BRAND_PROFILE_UNCOVERED
+    # 取数/建模覆盖缺口护栏：已闭环工单在 mart 数据集里取不到表单时触发，
+    # 说明的是数据管道覆盖问题（ODS 有表未进 mart、或表单表未纳入取数），
+    # 不是被审工单的业务缺陷。归为技术诊断后仍可见于本轮诊断统计，
+    # 但不进入正式报告问题清单，避免覆盖缺口淹没真实业务问题
+    # （2026-11-09 组分站误报复盘：一个窗口内 26 条命中，仅 1 条是真正的完成单无留痕）。
+    - FORM_DATA_MISSING
   future_ocr:
     - ATTACHMENT_CERT_INCOMPLETE
     - ATTACHMENT_CURVE_MISSING

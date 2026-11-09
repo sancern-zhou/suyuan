@@ -11,19 +11,47 @@ from docx.table import _Row
 
 from app.utils.path_config import resolve_agent_path
 from docx.shared import Pt
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from .core import local_time
 
 
-FIRST_PAGE_NOTE = ('1 东莞市的南城元岭站、莞城梨川站与东城主山站，在“十四五”期间均为国控站点。'
+FIRST_PAGE_NOTE = ('东莞市的南城元岭站、莞城梨川站与东城主山站，在“十四五”期间均为国控站点。'
                    '根据《“十五五”国家城市环境空气质量监测点位设置方案》，该三个站点已完成交接，'
                    '数据传输正常，现纳入省控站点监控。')
 
 
+def _footnote_texts(document):
+    """Text of every real footnote, i.e. excluding Word's separator entries."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.oxml import parse_xml
+    for rel in document.part.rels.values():
+        if rel.reltype == RT.FOOTNOTES:
+            root = parse_xml(rel.target_part.blob)
+            break
+    else:
+        return []
+    w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+    texts = []
+    for footnote in root.findall(f'{w}footnote'):
+        if footnote.get(f'{w}type'):
+            continue
+        for para in footnote.findall(f'{w}p'):
+            text = ''.join(node.text or '' for node in para.iter(f'{w}t')).strip()
+            if text:
+                texts.append(text)
+    return texts
+
+
 def apply_first_page_note(document):
-    """Approved fixed first-page footer; normal page numbering remains intact."""
+    """Approved fixed first-page footer; normal page numbering remains intact.
+
+    The handover note itself is a native Word footnote anchored to the
+    "省控站点（163个）" heading in the template, so Word draws its own rule
+    above it. Nothing is added to the page footer here.
+    """
     section = document.sections[0]
     primary_footer = section.footer
     primary_header = section.header
@@ -35,19 +63,25 @@ def apply_first_page_note(document):
             target._element.remove(child)
         for child in source._element:
             target._element.append(deepcopy(child))
-    footer = section.first_page_footer
-    note = footer.paragraphs[0].insert_paragraph_before(FIRST_PAGE_NOTE)
-    note.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    layout = note.paragraph_format
-    layout.left_indent = layout.right_indent = layout.first_line_indent = Pt(0)
-    layout.space_before = Pt(0)
-    layout.space_after = Pt(6)
-    layout.line_spacing = Pt(14)
-    layout.keep_together = True
-    for run in note.runs:
-        run.font.name = '仿宋_GB2312'
-        run.font.size = Pt(11)
-        run._r.get_or_add_rPr().rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
+
+
+def issue_label(config, end):
+    """Issue line for the masthead: one issue per report day, totals increment daily.
+
+    An anchor (date + issue number + cumulative total) pins the sequence; every
+    later report day adds one. Reports before the anchor count backwards so the
+    phrasing stays truthful instead of guessing forward.
+    """
+    anchor_date = config.get('issue_anchor_date')
+    anchor_number = config.get('issue_anchor_number')
+    anchor_total = config.get('issue_anchor_total')
+    if not (anchor_date and anchor_number and anchor_total):
+        return config.get('report_issue', f'{end.year}年期号待确认')
+    from datetime import date as _date
+    start = _date.fromisoformat(str(anchor_date))
+    delta = (end.date() - start).days
+    return (f"{end.year}年第{int(anchor_number) + delta}期，"
+            f"总第{int(anchor_total) + delta}期")
 
 
 def stamp(value):
@@ -124,6 +158,39 @@ def write_word(data, config, path):
         document.add_paragraph(limitation)
     document.save(path)
     return path
+
+
+def replace_text_keeping_footnote(paragraph, text):
+    """Replace text but keep the native footnote anchor already in the paragraph.
+
+    Word renders a footnote only where its w:footnoteReference run sits, so the
+    heading carrying the handover note is rewritten around that run: the leading
+    text goes before it, the trailing punctuation after it.
+    """
+    runs = list(paragraph.runs)
+    index = next((i for i, r in enumerate(runs) if 'footnoteReference' in r._r.xml), None)
+    if index is None:
+        replace_text(paragraph, text)
+        return
+    prefix = ''.join(r.text for r in runs[:index])
+    suffix = ''.join(r.text for r in runs[index + 1:])
+    head = text[:-len(suffix)] if suffix and text.endswith(suffix) else text
+    template_props = deepcopy(runs[0]._r.rPr) if runs[0]._r.rPr is not None else None
+    for child in list(paragraph._p):
+        if child.tag != qn('w:pPr'):
+            paragraph._p.remove(child)
+    if head:
+        _append_run(paragraph, head, template_props)
+    paragraph._p.append(deepcopy(runs[index]._r))
+    if suffix and head is not text:
+        _append_run(paragraph, suffix, template_props)
+
+
+def _append_run(paragraph, text, properties):
+    run = paragraph.add_run(text)
+    if properties is not None:
+        run._r.insert(0, deepcopy(properties))
+    return run
 
 
 def replace_text(paragraph, text):
@@ -225,11 +292,13 @@ def write_template_word(data, config, path):
     end = local_time(data['window_end'])
     replace_text(paragraphs[2], f'（{end.year}年{end.month}月{end.day}日）')
     replace_text(paragraphs[3], config.get('organization', '广东省生态环境监测中心') +
-                 '       ' + config.get('report_issue', f'{end.year}年期号待确认'))
+                 '       ' + issue_label(config, end))
     counts = data['station_counts']
     replace_text(paragraphs[5], overview_summary(data))
     replace_text(paragraphs[6], f"国控站点（{counts['国控']}个）：")
-    replace_text(paragraphs[10], f"省控站点（{counts['省控']}个）：")
+    # The provincial heading carries the handover-note footnote, so rewrite it
+    # around that anchor instead of clearing the paragraph.
+    replace_text_keeping_footnote(paragraphs[10], f"省控站点（{counts['省控']}个）：")
     prototype = deepcopy(paragraphs[8]._p)
     for i in (8, 9):
         paragraphs[i]._p.getparent().remove(paragraphs[i]._p)
@@ -291,11 +360,14 @@ def validate_template_format(template_path, output_path, *, data=None):
         and a.first_page_header._element.xml == b.first_page_header._element.xml
         and a.first_page_footer._element.xml == b.first_page_footer._element.xml
         for a, b in zip(template.sections, output.sections))
-    note_paragraphs = [p for p in output.sections[0].first_page_footer.paragraphs if p.text == FIRST_PAGE_NOTE]
-    checks['first_page_note'] = (output.sections[0].different_first_page_header_footer
-        and len(note_paragraphs) == 1 and bool(note_paragraphs[0].runs)
-        and all(r.font.size == Pt(11) for r in note_paragraphs[0].runs)
-        and not any(FIRST_PAGE_NOTE in p.text for section in output.sections for p in section.footer.paragraphs)
+    # The handover note is a native footnote in the template; Word draws its rule.
+    # Validate that the footnote survives verbatim (a template without footnotes
+    # is allowed, the production template always carries the approved note).
+    template_notes = _footnote_texts(template)
+    checks['first_page_note'] = (
+        _footnote_texts(output) == template_notes
+        and template_notes in ([], [FIRST_PAGE_NOTE])
+        and output.sections[0].different_first_page_header_footer
         and not any(section.different_first_page_header_footer for section in output.sections[1:]))
     checks['titles'] = len(output.paragraphs) >= 5 and all(
         template.paragraphs[i]._p.xml == output.paragraphs[i]._p.xml for i in (0, 1))

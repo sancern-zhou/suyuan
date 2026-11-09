@@ -32,7 +32,8 @@ def test_rf_field_profiles_are_config_driven():
     assert "CHECKTIME" in profiles["check_time_fields"]
     assert "STARTTIME" in profiles["start_time_fields"]
     assert "ENDTIME" in profiles["end_time_fields"]
-    assert "人员" in profiles["low_value_field_groups"]
+    # low_value_field_groups 已随 RF_REQUIRED_FIELD_LOW_VALUE 下线一并移除。
+    assert "low_value_field_groups" not in profiles
 
 
 def test_attachment_requirements_are_config_driven():

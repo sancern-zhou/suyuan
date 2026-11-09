@@ -225,7 +225,7 @@ def test_build_semantic_review_tasks_excludes_deterministic_high_severity_rules(
                         "assessment": "deterministic_issue",
                     },
                     {
-                        "rule_id": "RF_REQUIRED_FIELD_LOW_VALUE",
+                        "rule_id": "RF_MULTIPOINT_RANGE_INVALID",
                         "severity": "中",
                         "assessment": "candidate_issue",
                     },

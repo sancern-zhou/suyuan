@@ -135,7 +135,24 @@ def test_render_docx_removes_temporary_qmd_when_reference_doc_setup_fails(
     with pytest.raises(RuntimeError, match="reference doc setup failed"):
         renderer.render_docx("air_report")
 
-    assert list(report_dir.glob("report_docx_render*.qmd")) == []
+    assert sorted(path.name for path in report_dir.glob("*.qmd")) == ["report.qmd"]
+
+
+def test_prepare_docx_qmd_temp_name_is_short_for_quarto_companion_assets(tmp_path):
+    report_root = tmp_path / "reports"
+    report_dir = _write_report(
+        report_root,
+        "exec_gd_sup_station_work_order_audit_20261109_145035_00ccc896",
+        '观察一：榆林"量大价低"\n',
+    )
+    renderer = QuartoReportRenderer(report_root=report_root)
+
+    prepared = renderer._prepare_docx_qmd(report_dir, report_dir / "report.qmd")
+
+    # Quarto 伴随目录为 <stem>_files/libs/quarto-html/quarto-syntax-highlighting-<32hex>.css
+    # （目录+文件名固定约 80 字符）；部署机 LongPathsEnabled=0，临时名超长会让
+    # MAX_PATH(260) 内的清理 rmtree 以 WinError 3 失败。
+    assert len(prepared.stem) <= 12
 
 
 def test_preview_renders_normalized_package_qmd_without_source_overwrite(tmp_path):

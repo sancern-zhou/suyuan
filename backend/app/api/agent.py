@@ -671,6 +671,51 @@ def select_agent_instance(request):
         return data_viz_agent_instance
     return multi_expert_agent_instance
 
+
+# 定时任务 custom 会话续聊用的固定工具集 Agent，按工具集元组缓存。
+_custom_continuation_agents: dict[tuple, Any] = {}
+
+
+def resolve_custom_session_tool_names(session_metadata: dict) -> Optional[List[str]]:
+    """Resolve the fixed custom tool set for continuing a scheduled custom session.
+
+    Newer sessions persist the full set as ``scheduled_task_custom_tools``;
+    older ones fall back to the current task definition.
+    """
+    persisted = session_metadata.get("scheduled_task_custom_tools")
+    if (
+        isinstance(persisted, list)
+        and persisted
+        and all(isinstance(name, str) and name for name in persisted)
+    ):
+        return list(dict.fromkeys(persisted))
+    task_id = session_metadata.get("scheduled_task_id")
+    if not task_id:
+        return None
+    from app.scheduled_tasks.storage import TaskStorage
+
+    task = TaskStorage().get(str(task_id))
+    if task is None or task.execution_mode != "custom":
+        return None
+    return list(dict.fromkeys(task.tool_names or []))
+
+
+def get_custom_continuation_agent(tool_names: List[str]):
+    """Build (or reuse) a fixed-toolset agent matching the executor's custom runs."""
+    key = tuple(tool_names)
+    agent = _custom_continuation_agents.get(key)
+    if agent is None:
+        from app.scheduled_tasks.executor.task_executor import (
+            build_runtime_custom_tool_registry,
+        )
+
+        agent = create_react_agent(
+            tool_registry=build_runtime_custom_tool_registry(tool_names),
+            enable_memory=False,
+        )
+        _custom_continuation_agents[key] = agent
+    return agent
+
 logger.info(
     "agent_instances_created",
     multi_expert_tools=len(multi_expert_agent_instance.get_available_tools()),
@@ -952,6 +997,60 @@ async def analyze_stream(
                 }
                 analyze_kwargs["extra_tool_names"] = list(dict.fromkeys(persisted_tools))
 
+        # A native custom session (scheduled task with a fixed tool registry)
+        # keeps its own runtime on every continuation: mode and tools belong to
+        # the session, not to whichever chat view the user opened it from.
+        # board/ppt keep the override because workspace promotion legitimately
+        # moves a session into those runtimes.
+        effective_manual_mode = request.mode or "expert"
+        custom_realigned = (
+            preloaded_session is not None
+            and isinstance(preloaded_session.metadata, dict)
+            and preloaded_session.metadata.get("mode") == "custom"
+            and request.mode not in {"board", "ppt"}
+        )
+        if custom_realigned:
+            persisted_context = preloaded_session.metadata.get("scheduled_task_context")
+            if not (
+                isinstance(persisted_context, dict)
+                and persisted_context.get("task_id")
+                and persisted_context.get("execution_id")
+            ):
+                raise HTTPException(status_code=409, detail="scheduled_context_incomplete")
+            custom_tool_names = resolve_custom_session_tool_names(preloaded_session.metadata)
+            if not custom_tool_names:
+                raise HTTPException(status_code=409, detail="scheduled_custom_tools_unresolved")
+            missing_tools = sorted(set(custom_tool_names) - set(global_tool_registry.list_tools()))
+            if missing_tools:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "scheduled_context_tools_unavailable", "tools": missing_tools},
+                )
+            agent = get_custom_continuation_agent(custom_tool_names)
+            effective_manual_mode = "custom"
+            analyze_kwargs["manual_mode"] = "custom"
+            analyze_kwargs["session_storage_mode"] = "custom"
+            analyze_kwargs["runtime_metadata"] = {
+                **(analyze_kwargs.get("runtime_metadata") or {}),
+                "scheduled_task": persisted_context,
+            }
+            # assistant 视图发来的上下文（个人记忆/灵魂档案等）只对 assistant
+            # 运行时生效，续聊 custom 会话时不得带入。
+            for assistant_key in [key for key in analyze_kwargs if key.startswith("assistant_")]:
+                analyze_kwargs.pop(assistant_key)
+            analyze_kwargs["extra_tool_names"] = list(dict.fromkeys([
+                *(analyze_kwargs.get("extra_tool_names") or []),
+                *custom_tool_names,
+            ]))
+            logger.info(
+                "agent_analyze_custom_session_continued",
+                session_id=actual_session_id,
+                requested_mode=request.mode,
+                tools=custom_tool_names,
+            )
+        elif request.mode == "custom":
+            raise HTTPException(status_code=400, detail="custom_mode_requires_custom_session")
+
         requested_active_contexts = (
             [item.model_dump(exclude_none=True) for item in request.active_contexts]
             if request.active_contexts is not None
@@ -995,9 +1094,14 @@ async def analyze_stream(
             )
             resolved_active_contexts = resolve_active_contexts(
                 effective_active_contexts,
-                mode=request.mode or "expert",
+                # custom 不是共享模式白名单里的键；custom 工具集已通过
+                # extra_tool_names 并入，这里用 expert 作为白名单基线。
+                mode="expert" if effective_manual_mode == "custom" else (effective_manual_mode or "expert"),
                 resources=available_resources,
-                extra_tool_names=on_demand_tool_names,
+                extra_tool_names=list(dict.fromkeys([
+                    *(analyze_kwargs.get("extra_tool_names") or []),
+                    *on_demand_tool_names,
+                ])),
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=422, detail="selected_skill_not_found") from exc
@@ -1234,7 +1338,7 @@ async def analyze_stream(
                                     "kind": "structured_question",
                                     "title": interaction_data.get("title") or "需要你的选择",
                                     "questions": interaction_data["questions"],
-                                    "mode": request.mode,
+                                    "mode": effective_manual_mode,
                                     # 持久化对象必须带 session_id：sync/restore 恢复
                                     # 后前端提交回复依赖该字段（否则被静默拦截）。
                                     "session_id": actual_session_id,

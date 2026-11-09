@@ -4,6 +4,7 @@ This tool has no frontend delivery protocol. It returns canonical ``resources``
 declarations; the normal tool-result boundary copies the file into session
 storage, updates the catalog, and emits ``resources_changed``.
 """
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -128,7 +129,9 @@ class PublishSessionFileTool(LLMTool):
                     generator=TOOL_NAME,
                     metadata={"artifact_id": html_artifact_id},
                 )
-            elif suffix == ".qmd" and self._attach_rendered_report(data, resolved_path):
+            elif suffix == ".qmd" and await asyncio.to_thread(
+                self._attach_rendered_report, data, resolved_path
+            ):
                 file_type = "report"
                 data["file_type"] = file_type
             else:

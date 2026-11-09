@@ -138,8 +138,8 @@
         "contract_id"
       ],
       "incremental_expr": "ISNULL(update_time, create_time)",
-      "always_where": "DDWORKINGORDERSTATUS IN ('Wait','Doing')",
-      "_always_where_comment": "源端流转不写 update_time（2026-11-06 源库实测）：Finish 单必然写 update_time，但活跃单(Wait/Doing)审批推进时可能不写，仅靠水位会永久漏更。故活跃单每轮无条件重拉，约 4 万行（源端读取 ~7s + upsert ~5s），随每小时 sync-all 执行。"
+      "always_where": "DDWORKINGORDERSTATUS IN ('Wait','Doing') AND CREATETIME >= '{year_start}-01-01'",
+      "_always_where_comment": "源端流转不写 update_time（2026-11-06 源库实测）：Finish 单必然写 update_time，但活跃单(Wait/Doing)审批推进时可能不写，仅靠水位会永久漏更。故活跃单每轮无条件重拉，并按 full_load_since 的年度窗口限定，避免把 2019-2025 的历史僵尸单带进 ODS 改变分析口径（实测这些老单近7天流程活动为 0，无分析价值）。{year_start} 由 load_config 在运行时替换为当年年份。"
     },
     "working_order_details": {
       "_comment": "源表无更新时间列：高频走 id 增量抓新步骤，每日 --full 全量 upsert 捕获历史步骤的状态流转；ODS 不追踪源端物理删除，行数对账用 --check。",

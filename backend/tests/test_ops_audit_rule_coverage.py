@@ -81,7 +81,8 @@ def test_rf_required_and_time_rules_are_detected():
         )
     )
     ids = _issue_ids(audit)
-    assert "RF_REQUIRED_FIELD_LOW_VALUE" in ids
+    # RF_REQUIRED_FIELD_LOW_VALUE（备注为空/低价值）已整体下线，不再作为审核点。
+    assert "RF_REQUIRED_FIELD_LOW_VALUE" not in ids
     assert "RF_ENV_TEMP_HUMIDITY_EMPTY" in ids
     assert "RF_CHECK_TIME_OUTSIDE_RANGE" in ids
 

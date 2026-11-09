@@ -444,33 +444,6 @@ def test_final_issue_list_hides_semantic_abnormal_remark_from_formula_mismatch()
     assert result["issue_count"] == 0
 
 
-def test_final_issue_list_drops_remark_only_required_field_noise():
-    audit = {
-        "records": [
-            {
-                "working_order_code": "WO-2",
-                "station_id": "ST-1",
-                "order_type": "Check",
-                "maintenance_type": "Week",
-                "scoring_issues": [
-                    {
-                        "rule_id": "RF_REQUIRED_FIELD_LOW_VALUE",
-                        "severity": "中",
-                        "category": "表单完整性",
-                        "field": "REMARK",
-                        "message": "必填字段低价值",
-                        "evidence": '{"low_value_fields":["备注.REMARK=正常"]}',
-                    }
-                ],
-            }
-        ]
-    }
-
-    result = build_final_issue_list(audit)
-
-    assert result["issue_count"] == 0
-
-
 def test_final_issue_list_keeps_rf_table_and_record_context():
     issue_base = {
         "rule_id": "RF_RANGE_VALUE_MISSING",

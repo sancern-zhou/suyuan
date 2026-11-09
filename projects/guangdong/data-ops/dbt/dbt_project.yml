@@ -207,3 +207,141 @@ models:
       +tags: ["frequent"]
     dim_station_user:
       +tags: ["daily"]
+
+    # 组分网表单透传（2026-11-09 补齐，由 sync/gen_passthrough_models.py 生成）
+    sup_rf_bcyearmaintain:
+      +tags: ["daily"]
+    sup_rf_calibration_noy:
+      +tags: ["daily"]
+    sup_rf_channelflowcalibration:
+      +tags: ["daily"]
+    sup_rf_chromatotecflowcheck:
+      +tags: ["daily"]
+    sup_rf_chromatotecmonthmaintain:
+      +tags: ["daily"]
+    sup_rf_chromatotecquartermaintain:
+      +tags: ["daily"]
+    sup_rf_chromatotecweekcheck:
+      +tags: ["daily"]
+    sup_rf_co2analyzerinspection:
+      +tags: ["daily"]
+    sup_rf_co2devicemaintain:
+      +tags: ["daily"]
+    sup_rf_co2halfyeardevicemaintain:
+      +tags: ["daily"]
+    sup_rf_co2inspection:
+      +tags: ["daily"]
+    sup_rf_co2mulitypointcheck_q:
+      +tags: ["daily"]
+    sup_rf_co2yeardevicemaintain:
+      +tags: ["daily"]
+    sup_rf_conversionrate_noy:
+      +tags: ["daily"]
+    sup_rf_dailyinspection:
+      +tags: ["daily"]
+    sup_rf_equipmentmaintenance:
+      +tags: ["daily"]
+    sup_rf_equipmentstatus:
+      +tags: ["daily"]
+    sup_rf_gacmonthmaintain:
+      +tags: ["daily"]
+    sup_rf_gacquartermaintain:
+      +tags: ["daily"]
+    sup_rf_gacweekmaintain:
+      +tags: ["daily"]
+    sup_rf_gacweekmaintainbymarga:
+      +tags: ["daily"]
+    sup_rf_gacyearmaintain:
+      +tags: ["daily"]
+    sup_rf_heavymetalinspection:
+      +tags: ["daily"]
+    sup_rf_leakageratecalibration_i:
+      +tags: ["daily"]
+    sup_rf_maintenancerecord:
+      +tags: ["daily"]
+    sup_rf_monthdevicemaintain_noy:
+      +tags: ["daily"]
+    sup_rf_multicalibration:
+      +tags: ["daily"]
+    sup_rf_n2oanalyzerinspection:
+      +tags: ["daily"]
+    sup_rf_nh3analyzerinspection:
+      +tags: ["daily"]
+    sup_rf_nh3calibration:
+      +tags: ["daily"]
+    sup_rf_nh3conversionrate:
+      +tags: ["daily"]
+    sup_rf_nh3devicemultipoint:
+      +tags: ["daily"]
+    sup_rf_nh3gaseouscalidevicecheck:
+      +tags: ["daily"]
+    sup_rf_nh3instrumentdetectionlimit:
+      +tags: ["daily"]
+    sup_rf_nh3instrumentprecision:
+      +tags: ["daily"]
+    sup_rf_nh3monthdevicemaintain:
+      +tags: ["daily"]
+    sup_rf_nh3responsetimeinspection:
+      +tags: ["daily"]
+    sup_rf_o3laserradarcalibration:
+      +tags: ["daily"]
+    sup_rf_o3laserradarcheck:
+      +tags: ["daily"]
+    sup_rf_o3laserradarmaintenance:
+      +tags: ["daily"]
+    sup_rf_ocechalfyearcheck:
+      +tags: ["daily"]
+    sup_rf_ocecmonthcheck:
+      +tags: ["daily"]
+    sup_rf_ocecmultipointcheck:
+      +tags: ["daily"]
+    sup_rf_ocecquarterhcheck:
+      +tags: ["daily"]
+    sup_rf_ocecsinglecheck:
+      +tags: ["daily"]
+    sup_rf_ocecweekcheck:
+      +tags: ["daily"]
+    sup_rf_ocecyearcheck:
+      +tags: ["daily"]
+    sup_rf_ptrmsweekcheck:
+      +tags: ["daily"]
+    sup_rf_quarterlyequipment:
+      +tags: ["daily"]
+    sup_rf_repairerecord:
+      +tags: ["daily"]
+    sup_rf_speedmetermaintain:
+      +tags: ["daily"]
+    sup_rf_thybhalfyearmaintain:
+      +tags: ["daily"]
+    sup_rf_thybmonthmaintain:
+      +tags: ["daily"]
+    sup_rf_thybquartermaintain:
+      +tags: ["daily"]
+    sup_rf_thybweekcheck:
+      +tags: ["daily"]
+    sup_rf_thybyearmaintain:
+      +tags: ["daily"]
+    sup_rf_turbidimeter:
+      +tags: ["daily"]
+    sup_rf_urgmonthmaintain:
+      +tags: ["daily"]
+    sup_rf_urgquartermaintain:
+      +tags: ["daily"]
+    sup_rf_urgweekmaintain:
+      +tags: ["daily"]
+    sup_rf_urgyearmaintain:
+      +tags: ["daily"]
+    sup_rf_visibilitymeter:
+      +tags: ["daily"]
+    sup_rf_watersolubleionsblankcheck:
+      +tags: ["daily"]
+    sup_rf_watersolubleionscalibration:
+      +tags: ["daily"]
+    sup_rf_watersolubleionssinglecheck:
+      +tags: ["daily"]
+    sup_rf_week_radiationrecord:
+      +tags: ["daily"]
+    sup_rf_year_radiationcalibration:
+      +tags: ["daily"]
+    sup_rf_zerospancalibration:
+      +tags: ["daily"]

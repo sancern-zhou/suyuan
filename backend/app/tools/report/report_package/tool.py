@@ -7,6 +7,7 @@ deliverable formats from the same report.qmd source.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shutil
@@ -817,7 +818,11 @@ format:
                 )
             else:
                 try:
-                    html_path = quarto_report_renderer.render_preview_html(safe_id)
+                    # Quarto 渲染是分钟级 subprocess.run 阻塞调用，必须在
+                    # 线程中执行，否则整个事件循环（含前端 API）被冻结。
+                    html_path = await asyncio.to_thread(
+                        quarto_report_renderer.render_preview_html, safe_id
+                    )
                     html_preview = build_report_html_preview(safe_id, html_path)
                     meta = record_report_update(
                         safe_id,
@@ -1023,7 +1028,7 @@ class RenderReportPackageTool(LLMTool):
         safe_id = _safe_report_id(report_id)
         try:
             if format == "html":
-                path = quarto_report_renderer.render_preview_html(safe_id)
+                path = await asyncio.to_thread(quarto_report_renderer.render_preview_html, safe_id)
                 qmd_path = quarto_report_renderer.get_report_dir(safe_id) / "report.qmd"
                 meta = record_report_update(safe_id, source="render_report_package_html", html_path=path)
                 data = {
@@ -1043,7 +1048,7 @@ class RenderReportPackageTool(LLMTool):
                     generator="render_report_package",
                 )
             elif format == "docx":
-                path = quarto_report_renderer.render_docx(safe_id)
+                path = await asyncio.to_thread(quarto_report_renderer.render_docx, safe_id)
                 report_dir = quarto_report_renderer.get_report_dir(safe_id)
                 qmd_path = report_dir / "report.qmd"
                 data = {
@@ -1062,7 +1067,7 @@ class RenderReportPackageTool(LLMTool):
                     generator="render_report_package",
                 )
             elif format == "pdf":
-                docx_path = quarto_report_renderer.render_docx(safe_id)
+                docx_path = await asyncio.to_thread(quarto_report_renderer.render_docx, safe_id)
                 pdf_result = await pdf_converter.convert_to_pdf(str(docx_path))
                 pdf_path = Path(pdf_result["pdf_path"])
                 report_dir = quarto_report_renderer.get_report_dir(safe_id)
@@ -1087,7 +1092,7 @@ class RenderReportPackageTool(LLMTool):
                     generator="render_report_package",
                 )
             elif format == "share_html":
-                path = quarto_report_renderer.render_share_html(safe_id)
+                path = await asyncio.to_thread(quarto_report_renderer.render_share_html, safe_id)
                 report_dir = quarto_report_renderer.get_report_dir(safe_id)
                 qmd_path = report_dir / "report.qmd"
                 data = {

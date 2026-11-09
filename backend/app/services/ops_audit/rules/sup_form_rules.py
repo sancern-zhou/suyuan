@@ -246,7 +246,21 @@ def check_range_columns(
     issues: list[Issue],
 ) -> None:
     violations = []
+    brand = _form_device_brand(form)
     for spec in profile.get("range_columns") or []:
+        # 品牌分档：同一题号在不同仪器品牌下量程不同（如水溶性离子柱流量：
+        # 4mm 柱 0.5~0.75 ml/min，2mm 柱 0.2~0.3 ml/min）。spec 给 brand_ranges
+        # 时按品牌取区间；品牌未命中分档直接跳过——用错档位判定会产生系统性误报，
+        # 宁可不判也不误报（该缺口由档案注释记录）。
+        min_value = spec.get("min")
+        max_value = spec.get("max")
+        brand_ranges = spec.get("brand_ranges")
+        if brand_ranges:
+            spec_range = brand_ranges.get(brand) or brand_ranges.get("*")
+            if not spec_range:
+                continue
+            min_value = spec_range.get("min")
+            max_value = spec_range.get("max")
         expression = str(spec.get("expression") or "")
         if expression:
             # 计算型范围：对表达式结果判区间（如 示值误差=校准前读数-标准读数）；
@@ -262,8 +276,6 @@ def check_range_columns(
             value = parse_form_number(raw)
         if value is None:
             continue
-        min_value = spec.get("min")
-        max_value = spec.get("max")
         if min_value is not None and value < float(min_value):
             pass
         elif max_value is not None and value > float(max_value):
@@ -280,6 +292,7 @@ def check_range_columns(
                 "min": min_value,
                 "max": max_value,
                 "unit": spec.get("unit") or "",
+                "brand": brand,
                 "remark": remark,
                 "with_remark": bool(remark),
             }
@@ -796,9 +809,14 @@ def extract_date_from_filename(filename: str, default_year: int | None = None) -
 
 
 def column_remark_text(form: dict[str, Any], remark_column: Any) -> str:
+    """合并指定备注列（可传列名或列名列表）与通用备注字段的非空文本。"""
+
     parts = []
-    if remark_column:
-        for key in (str(remark_column), str(remark_column).lower(), str(remark_column).upper()):
+    columns = remark_column if isinstance(remark_column, (list, tuple)) else [remark_column]
+    for column in columns:
+        if not column:
+            continue
+        for key in (str(column), str(column).lower(), str(column).upper()):
             if key in form:
                 value = form.get(key)
                 if value is not None and str(value).strip():
@@ -809,6 +827,16 @@ def column_remark_text(form: dict[str, Any], remark_column: Any) -> str:
         if value is not None and str(value).strip():
             parts.append(str(value).strip())
     return " ".join(dict.fromkeys(parts))
+
+
+def _form_device_brand(form: dict[str, Any]) -> str:
+    """Return the device brand of a sup form row (form value first, uppercase key second)."""
+
+    for key in ("DEVICEBRAND", "devicebrand", "DeviceBrand", "BRAND", "brand"):
+        value = form.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
 def parse_form_number(value: Any) -> float | None:

@@ -138,7 +138,9 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         page: String(page),
         page_size: String(pageSize)
       });
-      const response = await authFetch(`${API_BASE}/${taskId}/executions?${params}`);
+      const response = await authFetch(`${API_BASE}/${taskId}/executions?${params}`, {
+        clearOnUnauthorized: false
+      });
       if (!response.ok) throw new Error('Failed to fetch task executions');
       const data = await response.json();
       return {

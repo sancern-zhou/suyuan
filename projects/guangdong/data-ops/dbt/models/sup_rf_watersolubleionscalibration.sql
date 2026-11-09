@@ -1,0 +1,57 @@
+{{ config(
+    indexes=[
+        {'columns': ['id'], 'unique': True},
+        {'columns': ['workingordercode']},
+    ],
+    post_hook=[
+        "GRANT SELECT ON {{ this }} TO agent_reader",
+    ],
+) }}
+
+-- sup_rf_watersolubleionscalibration：组分网/业务表同步透传层（源 dbo.sup_rf_watersolubleionscalibration；ops_audit 本地取数依赖）。
+-- 列名与 ODS 一致（源列名小写）。由 sync/gen_passthrough_models.py 生成。
+select
+    id,
+    workingordercode,
+    materialname,
+    timepoint,
+    retentiontime,
+    value1,
+    value2,
+    value3,
+    value4,
+    value5,
+    value6,
+    slope,
+    r,
+    createtime,
+    deviceid,
+    stationid,
+    value7,
+    value8,
+    value9,
+    value10,
+    value11,
+    value12,
+    value13,
+    value14,
+    value15,
+    value16,
+    value17,
+    value18,
+    value19,
+    value20,
+    value21,
+    value22,
+    value23,
+    value24,
+    value25,
+    value26,
+    value27,
+    value28,
+    value29,
+    _src_incremental,
+    _sync_batch,
+    _synced_at,
+    now()::timestamp         as refreshed_at
+from {{ source('guangdong_ods', 'sup_rf_watersolubleionscalibration') }}

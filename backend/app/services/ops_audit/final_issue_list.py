@@ -159,20 +159,7 @@ def _should_exclude_issue(issue: dict[str, Any]) -> bool:
     reason_rule_id = str(evidence.get("reason_rule_id") or "")
     if reason_rule_id in EXCLUDED_RULE_IDS:
         return True
-    if rule_id == "RF_REQUIRED_FIELD_LOW_VALUE":
-        return _required_field_issue_is_remark_only(issue)
     return False
-
-
-def _required_field_issue_is_remark_only(issue: dict[str, Any]) -> bool:
-    try:
-        evidence = json.loads(issue.get("evidence") or "{}")
-    except Exception:
-        return False
-    fields = list(evidence.get("empty_fields") or []) + list(evidence.get("low_value_fields") or [])
-    if not fields:
-        return False
-    return all(str(field).split(".", 1)[0] == "备注" for field in fields)
 
 
 def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> dict[str, Any]:
@@ -585,8 +572,6 @@ def _should_exclude_semantic_source_issue(issue: dict[str, Any]) -> bool:
             return True
     if reason_rule_id in EXCLUDED_RULE_IDS:
         return True
-    if rule_id == "RF_REQUIRED_FIELD_LOW_VALUE":
-        return _required_field_issue_is_remark_only(issue)
     return False
 
 

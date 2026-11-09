@@ -1057,6 +1057,14 @@ form_profiles:
     category: week_check
     cycle: week
     max_fill_lag_days: 7
+  # 谱育（EXPEC）VOCs 周检查（ms_*/fid_*/fsq_*/mpa_*/zftj_* 多仪器分区题号）。
+  # 2026-11-09 复核：该类型存于 sup_rf_common 宽表，题目项落 string1..150 /
+  # bool_1..50 通用列，而源码映射文档（opa-source-field-mappings.md）给的是
+  # **实体列名** ms_1/fid_1/fsq_1…，两者没有可验证的对应关系（列语义文档对
+  # 该类型所有 string/bool 列均标注"占位列，需结合表单模板确认"）。
+  # 实证：string1=24.9（疑似站房温度）、string2=45.2（疑似湿度），无法确认题号，
+  # 贸然按实体题号落区间会产生系统性误报。因此仅保留及时性口径，
+  # 待拿到该类型的模板题号→宽表列位映射后再补内容规则。
   Sup_RF_thybWeekCheck:
     display_name: 谱育（EXPEC）VOCs 周检查记录
     category: week_check
@@ -1141,4 +1149,275 @@ form_profiles:
         end: time2
         label: 采样流量计校准有效期
         must_cover_checkdate: true
+        confirmed: true
+
+  # ── NH3 分析仪校准（sup_rf_nh3calibration 分表，2026-11-09 建档）────────────
+  # 依据：《组分仪器工单规则》颗粒物组分/NH3分析仪.docx 红字区间、
+  #      opa-source-field-mappings.md 源码字段映射、全量 231 行分布核对。
+  # 数据形态：string1/6/7/8 为"数值+单位"混填（0.730 / 326.3℃ / 88.9mmhg），
+  #      parse_form_number 取首个数字可正确解析；个别行整行错位（温度填进流量列、
+  #      压力填进温度列），属真实填报错误，按超范围命中。
+  # 阈值取文档标称区间；实测 231 行仅 11 条越界，抽检逐条确认为真实异常
+  # （791.64 LPM、转化炉 325.8℃、压力 780.2mmHg 等），非系统性误报。
+  Sup_RF_NH3Calibration: &sup_nh3_calibration_profile
+    display_name: NH3 分析仪校准记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 31
+    range_columns:
+      - column: string1
+        label: 采样流量
+        min: 0.35
+        max: 0.9
+        unit: LPM
+        confirmed: true
+      - column: string6
+        label: 反应室温度
+        min: 300
+        max: 350
+        unit: ℃
+        confirmed: true
+      - column: string7
+        label: 转化炉温度
+        min: 725
+        max: 800
+        unit: ℃
+        confirmed: true
+      - column: string8
+        label: 反应室压力
+        min: 50
+        max: 150
+        unit: mmHg
+        confirmed: true
+
+  # CX 变体共用同一张分表与同一套题目项列，档案合并复用。
+  Sup_RF_NH3CalibrationCX: *sup_nh3_calibration_profile
+
+  # ── 日常巡检（sup_rf_dailyinspection 分表，2026-11-09 建档）─────────────────
+  # 依据：opa-source-field-mappings.md（cshtml 标签逐列映射）+ 平台校验器 required 清单。
+  # 本表为 NMHC/VOCs 日巡检模板：bool_1..bool_11 为检查项状态，remark1..remark14
+  # 为对应处理记录，string1/2/3 为零气加热温度与零气/氢气输出压力，abnormalremark
+  # 为异常处理记录。
+  #
+  # 本轮只落及时性口径，数值区间刻意不落（2026-11-09 全量 531 行实证）：
+  # - string1 零气加热温度：431/432℃ 是稳定站内自设值（22+8 条），按 400℃ 标称
+  #   区间判会误报 46/531（8.7%），属站点仪器差异而非填报错误；
+  # - string2/3 输出压力：MPa 与 psi 混填（0.4 与 58psi 并存），单一区间无法判定。
+  # 待业务确认各站点设定值与单位口径后再落数值规则（confirmed: false 预留）。
+  Sup_RF_DailyInspection:
+    display_name: 日常巡检记录（NMHC/VOCs 日巡检）
+    category: day_check
+    cycle: day
+    max_fill_lag_days: 2
+
+  # ── 水溶性离子（GAC）周维护（sup_rf_gacweekmaintain 分表，2026-11-09 建档）─────
+  # 依据：《组分仪器工单规则》颗粒物组分/水溶性离子.docx 题号区间、
+  #      opa-source-field-mappings.md cshtml 标签映射、全量 207 行按品牌分档核对。
+  #
+  # 该表的关键特征：题号区间随**色谱柱规格**不同，而表里没有柱规格字段，
+  # 只能用 devicebrand 反推。全量实证：Pengyuchangya/ZF-PKU-GAC 填 2mm 柱口径
+  # （柱流量 0.25~0.30、抑制器电流 10~11），TH/TH-GAC-IC3000 填 4mm 柱口径
+  # （柱流量 0.5~0.7、抑制器电流 20~30）。若统一按文档 4mm 区间判，
+  # 柱流量会误报 110/207（53%）、抑制器电流误报 115/207（56%）——因此必须分档。
+  # 分档后全量越界 0 条，确认口径正确。
+  #
+  # 未落区间的题号与原因：
+  # - steamgeneratorresult：文档标 280~320℃，实际整列填 1/0（bool 状态位），
+  #   不是温度值，落区间会 100% 误报；
+  # - anionpressureresult / cationpressureresult：MPa 与 psi 与数值混填
+  #   （1.86 / 1610 / 6.1Mpa 并存），单位口径待业务确认；
+  # - anioneluentresult / cationiceluentresult 淋洗液剩余量 %：越界仅 2/207，
+  #   且需先确认随时间消耗的低值是否属正常，暂不判定。
+  Sup_RF_GACWeekMaintain:
+    display_name: 水溶性离子（GAC）周维护记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: anioncolumnresult
+        label: 阴离子柱流量
+        unit: ml/min
+        brand_ranges:
+          Pengyuchangya: {min: 0.2, max: 0.35}
+          TH: {min: 0.45, max: 0.8}
+      - column: cationcolumnresult
+        label: 阳离子柱流量
+        unit: ml/min
+        brand_ranges:
+          Pengyuchangya: {min: 0.2, max: 0.35}
+          TH: {min: 0.45, max: 0.8}
+      - column: anionsuppressorresult
+        label: 阴离子抑制器电流
+        unit: mA
+        brand_ranges:
+          Pengyuchangya: {min: 8, max: 30}
+          TH: {min: 15, max: 35}
+      - column: cationsuppressorresult
+        label: 阳离子抑制器电流
+        unit: mA
+        brand_ranges:
+          Pengyuchangya: {min: 8, max: 14}
+          TH: {min: 15, max: 35}
+
+  # ── PM1 监测仪巡查（sup_rf_pm1monitorinspection 分表，2026-11-09 建档）───────
+  # 依据：《组分仪器工单规则》颗粒物组分/PM1.docx 分周期条目、
+  #      opa-source-field-mappings.md 各变体 cshtml 标签、
+  #      Vue 头部字段映射（Week 变体）与全量数据分布核对。
+  #
+  # 【关键：标志位方向】Vue 映射明确写"bool_1 至 bool_3 分别为数据传输、
+  # 仪器参数、纸带；true = 原表单 0（是），false = 原表单 1（否）"，
+  # 即落库值 **0 = 是/正常，1 = 否/异常**。全量验证一致：Week 变体 2230 行中
+  # 2197 行三项全 0，33 行为 1 的工单全部在 otherremarks 填了停运/故障说明。
+  # 注意与 Month 变体的 leakwhether 方向相反（该列 87% 为 1，1=不漏气/正常），
+  # 因此两变体不能共用 abnormal 方向，分别建档。
+  #
+  # 三个变体的题目组不同（非同一套列的简单复用）：
+  # - Week：数据传输/仪器参数/纸带 3 项（documented + Vue 映射确认）；
+  # - Month：校准膜 merror ±5% + 清洗部件/漏气 7 项；
+  # - HalfYear：清洗部件 6 项，无 merror 数值。
+  # 因此分别建档，Week 与 HalfYear 共用 abnormal_columns 结构但不共用档案。
+
+  # 周巡检：3 项是/否检查 + 其他；文档红字"有异常情况需备注，上传巡检照片"。
+  Sup_RF_PM1MonitorInspection_Week:
+    display_name: PM1 监测仪周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    abnormal_columns:
+      - column: dtisitcalibrated
+        label: 数据传输
+        values: ["1"]
+        remark_column: otherremarks
+      - column: ipisitcalibrated
+        label: 仪器参数
+        values: ["1"]
+        remark_column: otherremarks
+      - column: papertapeisitcalibrated
+        label: 纸带
+        values: ["1"]
+        remark_column: otherremarks
+
+  # 月巡查：校准膜测定误差 ±5%（文档红字）+ 清洗部件/漏气检查。
+  # merror 全量 610 行 0 越界，确认阈值口径正确。
+  Sup_RF_PM1MonitorInspection_Month:
+    display_name: PM1 监测仪月巡查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: merror
+        label: 校准膜测定误差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: true
+
+  # 半年巡查：清洗部件同月巡检，无校准膜数值；文档红字同月检。
+  # 标志位方向：该变体 leakwhether 87% 为 1（1=不漏气/正常），
+  # externalisitclean/insideisitclean 90/92 为 0，方向与 Week 不同，
+  # 语义需业务确认后再落 abnormal 规则，本轮只建及时性口径。
+  Sup_RF_PM1MonitorInspection_HalfYear:
+    display_name: PM1 监测仪半年巡查记录
+    category: half_year_check
+    cycle: half_year
+    max_fill_lag_days: 30
+
+  # ── 2026-11-09 收益摸底批次（按"数值列真实越界率"排序后的产出）─────────────
+  # 摸底方法：解析 opa-source-field-mappings.md 题号区间，对全部未建档类型的
+  # 真实数据算越界率；高命中先甄别（区分真实异常 / 状态位假线索 / 单位口径差异）。
+
+  # 速度计维护（sup_rf_speedmetermaintain 分表，118 行 / 窗口 11 单）：
+  # 全表为 isitnormal 标志位（17 项）+ 配对备注列。方向由数据确认：
+  # dctisitnormal=1 的行 remarks 填"挪机安装调试中"，即 1=不正常；
+  # 全量 118 行中 28 行有标志位为 1，备注在配对列或全局 remarks。
+  Sup_RF_SpeedMeterMaintain:
+    display_name: 速度计维护记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    abnormal_columns:
+      - {column: nstisitnormal,   label: NS 切割头,     values: ["1"], remark_column: [nstremarks, remarks]}
+      - {column: acstisitnormal,  label: ACS 切割头,    values: ["1"], remark_column: [acstremarks, remarks]}
+      - {column: itnisitnormal,   label: ITN 加热部件,  values: ["1"], remark_column: [itnsremarks, remarks]}
+      - {column: wnisitnormal,    label: WN 部件,       values: ["1"], remark_column: [wnremarks, remarks]}
+      - {column: icsisitnormal,   label: ICS 部件,      values: ["1"], remark_column: [icsremarks, remarks]}
+      - {column: snisitnormal,    label: SN 部件,       values: ["1"], remark_column: [snremarks, remarks]}
+      - {column: wnmisitnormal,   label: WNM 部件,      values: ["1"], remark_column: [wnmremarks, remarks]}
+      - {column: itsisitnormal,   label: ITS 部件,      values: ["1"], remark_column: [itsremarks, remarks]}
+      - {column: itaaisitnormal,  label: ITAA 部件,     values: ["1"], remark_column: [itaaremarks, remarks]}
+      - {column: dfisitnormal,    label: DF 部件,       values: ["1"], remark_column: [dfremarks, remarks]}
+      - {column: nsrisitnormal,   label: NSR 部件,      values: ["1"], remark_column: [nsrremarks, remarks]}
+      - {column: idcisitnormal,   label: IDC 部件,      values: ["1"], remark_column: [idcremarks, remarks]}
+      - {column: dctisitnormal,   label: DCT 部件,      values: ["1"], remark_column: [dctremarks, remarks]}
+      - {column: cfisitnormal,    label: CF 部件,       values: ["1"], remark_column: [cfremarks, remarks]}
+      - {column: cclisitnormal,   label: CCL 部件,      values: ["1"], remark_column: [cclremarks, remarks]}
+      - {column: ircisitnormal,   label: IRC 部件,      values: ["1"], remark_column: [ircremarks, remarks]}
+      - {column: cpisitnormal,    label: CP 部件,       values: ["1"], remark_column: [cpremarks, remarks]}
+
+  # CO2 巡检（sup_rf_co2inspection 分表，141 行 / 窗口 4 单）：
+  # 文档红字宽区间（站房气压/采样流量/内部温度），全量 141 行仅 7 条越界，
+  # 抽检为真实异常。区间宽松（气压 250~1000mmHg 覆盖 731~776 实测），
+  # 属低误报风险的"健康检查"型规则。
+  Sup_RF_CO2Inspection:
+    display_name: CO2 巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: string3
+        label: 站房气压
+        min: 250
+        max: 1000
+        unit: mmHg
+        confirmed: true
+      - column: string4
+        label: 采样流量
+        min: 0.35
+        max: 1.5
+        unit: L/min
+        confirmed: true
+      - column: string5
+        label: 内部温度
+        min: 8
+        max: 47
+        unit: ℃
+        confirmed: true
+
+  # 设备状态检查（sup_rf_equipmentstatus 分表，175 行 / 窗口 8 单）：
+  # 同一题号在不同型号下含义不同（GAC 柱流量同款问题）：TiH200 的 string4/5
+  # 填蠕动泵流量（0.49~0.52 / 0.22~0.26，与文档区间吻合），Model4050 的 string4
+  # 出现 640v/650 等电压值——是另一道题。按品牌分档：Etraninc(TiH200) 落区间，
+  # SDL(Model4050) 无档案档位则跳过（不得用错档位判定）。
+  Sup_RF_EquipmentStatus:
+    display_name: 设备状态检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: string4
+        label: 蠕动泵1流量
+        unit: ml/min
+        brand_ranges:
+          Etraninc: {min: 0.45, max: 0.55}
+      - column: string5
+        label: 蠕动泵2流量
+        unit: ml/min
+        brand_ranges:
+          Etraninc: {min: 0.22, max: 0.26}
+
+  # URG 周维护（sup_rf_urgweekmaintain 分表，81 行 / 窗口 6 单，单一型号 URG9000D）：
+  # 只落阳离子柱压（文档 1500~2500psi，实测 1519~1840 基本在位）。
+  # anionicwaterpeak1 刻意不落：实测双稳态聚集（0.25 x44 与 0.38 x24），
+  # 0.38 组是否属该仪器的正常运行流量需业务确认后定，避免 30% 级别误报。
+  Sup_RF_URGWeekMaintain:
+    display_name: URG 周维护记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: cationpressureresult
+        label: 阳离子柱压
+        min: 1500
+        max: 2500
+        unit: psi
         confirmed: true

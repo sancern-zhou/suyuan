@@ -261,6 +261,43 @@ def _retry_failed_slices(config, failures, successes, store, now, raw_root, *, s
     return still_failed
 
 
+def _drop_muted_entries(entries, muted_stations, now):
+    """Remove events of stations muted for maintenance.
+
+    A mute entry accepts either a bare station code (muted indefinitely) or an
+    object with code/start/end/reason. Only events fully inside the announced
+    maintenance window are suppressed, so unrelated outages still surface.
+    """
+    if not muted_stations:
+        return entries
+    windows = {}
+    for item in muted_stations:
+        if isinstance(item, str):
+            windows.setdefault(item, []).append((None, None))
+            continue
+        code = item.get('code')
+        if not code:
+            continue
+        start = local_time(item['start']) if item.get('start') else None
+        end = local_time(item['end']) if item.get('end') else None
+        if end is not None and now > end:
+            continue
+        windows.setdefault(code, []).append((start, end))
+    if not windows:
+        return entries
+    kept = []
+    for entry in entries:
+        spans = windows.get(entry['code'])
+        if not spans:
+            kept.append(entry)
+            continue
+        start, end = local_time(entry['offline_start']), local_time(entry['offline_end'])
+        muted = any((ws is None or ws <= start) and (we is None or we >= end) for ws, we in spans)
+        if not muted:
+            kept.append(entry)
+    return kept
+
+
 def generate_report(config=None, *, date=None, now=None, root=None, refresh=True):
     config = config or load_config()
     now = local_time(now)
@@ -303,6 +340,9 @@ def generate_report(config=None, *, date=None, now=None, root=None, refresh=True
                 entry['backfill_status'] = '无法回补'
         kept_entries.append(entry)
     data['entries'] = kept_entries
+    # Stations under confirmed maintenance are still collected and counted, but
+    # their outage events stay out of the report until the mute window ends.
+    data['entries'] = _drop_muted_entries(data['entries'], config.get('muted_stations') or [], now)
     data['collection'] = collection
     if collection and not collection['success']:
         data['report_ready'] = False

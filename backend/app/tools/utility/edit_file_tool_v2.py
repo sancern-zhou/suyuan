@@ -26,6 +26,7 @@ EditFile 工具 V2 - 完整对标 Claude Code 官方实现
 - Claude Code: src/tools/FileEditTool/FileEditTool.ts
 - Claude Code: src/tools/FileEditTool/utils.ts
 """
+import asyncio
 import os
 import re
 import time
@@ -563,7 +564,9 @@ class EditFileToolV2(LLMTool):
             }
             summary = f"编辑成功：{resolved_path.name}，替换了 {changes} 处；文件读取状态已同步，无需 read_file 重读确认"
 
-            preview_refresh = refresh_preview_for_managed_document_path(resolved_path)
+            preview_refresh = await asyncio.to_thread(
+                refresh_preview_for_managed_document_path, resolved_path
+            )
             if preview_refresh:
                 result_data.update(preview_refresh)
                 refresh_state = (

@@ -75,9 +75,11 @@ export function useSessionManagement(store) {
     }
 
     for (const session of assistantConversations.value) {
+      const nativeMode = session.metadata?.mode || session.mode
+        || byId.get(session.session_id)?.metadata?.mode || 'assistant'
       byId.set(session.session_id, {
         ...(byId.get(session.session_id) || {}), ...session,
-        query: session.title, metadata: { ...(byId.get(session.session_id)?.metadata || {}), mode: 'assistant' }
+        query: session.title, metadata: { ...(byId.get(session.session_id)?.metadata || {}), ...(session.metadata || {}), mode: nativeMode }
       })
     }
     return filterConversationHistory(Array.from(byId.values())).sort((a, b) => {

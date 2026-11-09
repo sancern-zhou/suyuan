@@ -162,7 +162,6 @@ DEFAULT_SCORING_CONFIG = {
     "common_pattern_order_ratio": 0.25,
     "common_pattern_eligible_rules": [
         "RF_AUDITOR_EMPTY",
-        "RF_REQUIRED_FIELD_LOW_VALUE",
         "RF_ENV_TEMP_HUMIDITY_EMPTY",
         "RF_PERSONNEL_VEHICLE_FORMAT_LOW_VALUE",
     ],
@@ -532,11 +531,6 @@ DEFAULT_RULE_CATALOG = [
 ]
 
 DEFAULT_RF_FIELD_PROFILES = {
-    "low_value_field_groups": {
-        "人员": ["PERSON", "PERSONNEL", "INSPECTOR", "CHECKUSER", "CHECKUSERID", "PATROLUSER", "PREPARERUSERID"],
-        "车辆": ["CAR", "CARNUMBER", "VEHICLE", "VEHICLENO", "VEHICLEPLATE"],
-        "备注": ["REMARK", "REMARKS", "CHECKREMARK", "CleaningRemark", "SUBMITREMARK"],
-    },
     "temperature_fields": ["INDOORTEMPERATURE", "INDOORTEMP", "ROOMTEMPERATURE", "ROOMTEMP", "TEMPERATURE", "TEMP", "WD"],
     "humidity_fields": ["INDOORHUMIDITY", "INDOORHUMID", "ROOMHUMIDITY", "ROOMHUMID", "HUMIDITY", "HUMID", "SD"],
     "check_time_fields": ["CHECKTIME", "CHECKDATETIME", "CHECKDATE", "CALIBRATIONDATE"],
@@ -608,6 +602,7 @@ DEFAULT_RULE_REVIEW_STAGES = {
             "ATTACHMENT_XLS_READ_FAILED_DIAGNOSTIC",
             "RF_RANGE_UNIT_MISMATCH",
             "SUP_ATTACHMENT_WATERMARK_READ_FAILED",
+            "FORM_DATA_MISSING",
         ],
         "future_ocr": [
             "ATTACHMENT_CERT_INCOMPLETE",

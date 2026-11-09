@@ -133,10 +133,14 @@ def get_cooldown_failure(provider: str) -> Optional[LLMFailure]:
 def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
     # format(400) 错误通常是瞬态的（网关格式兼容、模型临时不可用等），不打 cooldown，
     # 避免主 provider 被跳过导致所有请求落到 fallback 而 fallback 又因余额不足失败。
-    if failure.reason == "format":
+    if failure.reason in {"format", "local_runtime"}:
+        # format(400) 错误通常是瞬态的（网关格式兼容、模型临时不可用等），不打 cooldown，
+        # 避免主 provider 被跳过导致所有请求落到 fallback 而 fallback 又因余额不足失败。
+        # local_runtime 是本进程基础设施故障（如事件循环不匹配），同样与远端无关。
         logger.info(
-            "llm_cooldown_skipped_for_format",
+            "llm_cooldown_skipped_for_local_failure",
             provider=provider,
+            reason=failure.reason,
             status=failure.status,
         )
         return
@@ -233,6 +237,10 @@ def classify_llm_failure(err: object) -> LLMFailure:
 
     if isinstance(err, LLMResponseRejectedError):
         return LLMFailure("invalid_response", None, None, err.reason)
+    if "is bound to a different event loop" in lower or "attached to a different loop" in lower:
+        # 本地基础设施错误（进程内多事件循环误用 asyncio 原语），与远端
+        # provider 健康无关：可切换候选，但绝不给远端 provider 打冷却。
+        return LLMFailure("local_runtime", status, code, message)
     if is_context_overflow_message(message):
         return LLMFailure("context_overflow", status, code, message)
     if is_media_fetch_failure_message(message):
@@ -266,6 +274,7 @@ def should_fallback(failure: LLMFailure) -> bool:
         "format",
         "auth",
         "invalid_response",
+        "local_runtime",
         "unknown",
     }
 

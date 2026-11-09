@@ -196,3 +196,93 @@ def test_module_level_slot_helper_works():
             pass
 
     asyncio.run(run())
+
+
+def test_bucket_works_across_multiple_event_loops():
+    """worker 进程内主循环与 run_db 线程池私有循环共用 governor：
+    同一桶的唤醒 Condition 不能跨循环复用，修复前第二个循环会直接抛
+    "is bound to a different event loop"。"""
+
+    governor = LlmConcurrencyGovernor(default_concurrency=2)
+
+    async def one_call(results, errors):
+        try:
+            async with governor.request_slot("scnet", "DeepSeek-V4.1-Flash"):
+                results.append(asyncio.get_running_loop())
+                await asyncio.sleep(0.01)
+        except Exception as exc:  # noqa: BLE001 - 测试断言用
+            errors.append(exc)
+
+    loop_a = asyncio.new_event_loop()
+    loop_b = asyncio.new_event_loop()
+    try:
+        results_a: list = []
+        errors_a: list = []
+        loop_a.run_until_complete(one_call(results_a, errors_a))
+        assert not errors_a
+
+        results_b: list = []
+        errors_b: list = []
+        loop_b.run_until_complete(one_call(results_b, errors_b))
+        assert not errors_b
+
+        assert results_a and results_b
+        assert results_a[0] is not results_b[0]
+
+        controller = governor.bucket_controller("scnet", "DeepSeek-V4.1-Flash")
+        assert controller.in_flight == 0
+    finally:
+        loop_a.close()
+        loop_b.close()
+
+
+def test_cross_loop_queueing_admits_after_release():
+    """cap=1 时另一循环的请求在前一循环释放后能拿到槽位
+    （跨循环唤醒靠 1s 兜底轮询，不能因循环不同而报错或永久排队）。"""
+
+    import threading
+
+    governor = LlmConcurrencyGovernor(default_concurrency=1)
+    loop_a = asyncio.new_event_loop()
+    loop_b = asyncio.new_event_loop()
+    ready = threading.Event()
+    release = threading.Event()
+    holder_errors: list = []
+    holder_entered = threading.Event()
+
+    async def holder():
+        try:
+            async with governor.request_slot("scnet", "m"):
+                holder_entered.set()
+                await asyncio.get_running_loop().run_in_executor(None, release.wait, 5)
+        except Exception as exc:  # noqa: BLE001 - 测试断言用
+            holder_errors.append(exc)
+
+    async def waiter(results):
+        await asyncio.get_running_loop().run_in_executor(None, holder_entered.wait, 5)
+        try:
+            async with governor.request_slot("scnet", "m"):
+                results.append(True)
+        except Exception:  # noqa: BLE001 - 测试断言用
+            results.append(False)
+
+    try:
+        thread_a = threading.Thread(target=lambda: loop_a.run_until_complete(holder()))
+        thread_a.start()
+
+        results: list = []
+        thread_b = threading.Thread(target=lambda: loop_b.run_until_complete(waiter(results)))
+        thread_b.start()
+
+        assert holder_entered.wait(5)
+        release.set()
+        thread_a.join(10)
+        thread_b.join(10)
+
+        assert not holder_errors
+        assert results == [True]
+        controller = governor.bucket_controller("scnet", "m")
+        assert controller.in_flight == 0
+    finally:
+        loop_a.close()
+        loop_b.close()

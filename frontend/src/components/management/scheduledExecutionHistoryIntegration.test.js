@@ -29,6 +29,24 @@ test('results view only requests structured results for the selected task', () =
 })
 
 
+test('results view surfaces running executions and polls until they finish', () => {
+  const source = readSource('./ScheduledTaskResultsView.vue')
+
+  assert.match(source, /const runningExecutions = ref\(\[\]\)/)
+  assert.match(source, /store\.fetchTaskExecutions\(taskId, \{ page: 1, pageSize: 10 \}\)/)
+  assert.match(source, /item\?\.status === 'running'/)
+  assert.match(source, /class="running-banner"/)
+  assert.match(source, /triggerLabel\(runningExecutions\[0\]\.trigger_type\)/)
+  assert.match(source, /formatRunningTime\(runningExecutions\[0\]\.started_at\)/)
+  assert.match(source, /setInterval\(\(\) => \{ loadRunningExecutions\(\) \}, RUNNING_POLL_INTERVAL_MS\)/)
+  assert.match(source, /clearInterval\(runningPollTimer\)/)
+  assert.match(source, /onUnmounted\(stopRunningPoll\)/)
+  assert.match(source, /stopRunningPoll\(\)\s*\n\s*runningExecutions\.value = \[\]/)
+  // 执行出终态后自动刷新结果列表与筛选项
+  assert.match(source, /当次执行已出终态[\s\S]*?reload\(\)\s*loadFacets\(\)/)
+})
+
+
 test('results view filters executions by date, station, and pollutant', () => {
   const source = readSource('./ScheduledTaskResultsView.vue')
 
