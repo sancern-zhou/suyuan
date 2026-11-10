@@ -151,29 +151,31 @@ unpacked_pm25_doc*/
 !backend/app/services/ops_audit/rules/test_rf_position_rules.py
 !backend/app/services/ops_audit/rules/test_rf_formula_rules.py
 !backend/app/services/ops_audit/semantic/test_reviewer.py
-debug_*.py
-analyze_*.py
-extract_*.py
-record_*.py
-simulate_*.py
-verify_*.py
-check_*.py
-run_*.py
+# 后端根目录临时排查/调试脚本（锚定到 backend 根，避免任意深度匹配误伤
+# backend/app 内生产代码——曾命中 simple_scheduler.py、run_agent_workflow.py 等）
+backend/debug_*.py
+backend/analyze_*.py
+backend/extract_*.py
+backend/record_*.py
+backend/simulate_*.py
+backend/verify_*.py
+backend/check_*.py
+backend/run_*.py
 !backend/app/fetchers/base/run_log.py
-simple_*.py
-ultimate_*.py
-deep_*.py
-interactive_*.py
-manual_*.py
-final_*.py
+backend/simple_*.py
+backend/ultimate_*.py
+backend/deep_*.py
+backend/interactive_*.py
+backend/manual_*.py
+backend/final_*.py
 !backend/app/services/ops_audit/final_issue_list.py
-find_*.py
-correct_*.py
-refactored_*.py
-expand_*.py
-click_*.py
-start_*.py
-auto_*.py
+backend/find_*.py
+backend/correct_*.py
+backend/refactored_*.py
+backend/expand_*.py
+backend/click_*.py
+backend/start_*.py
+backend/auto_*.py
 
 # Standalone executors (not for version control)
 backend/app/agent/executors/quick_trace_executor.py

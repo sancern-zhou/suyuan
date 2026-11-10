@@ -40,7 +40,6 @@ json-repair>=0.57.0  # Automatically repair malformed JSON from LLMs
 llama-index-core>=0.14.22,<0.15  # Optional cognitive map schema-guided extraction provider
 
 # Async & Concurrency
-celery==5.4.0
 redis==5.2.0
 nacos-sdk-python==2.0.11
 
@@ -52,12 +51,6 @@ structlog==24.4.0
 
 # Date & Time
 python-dateutil==2.9.0
-
-# CORS
-fastapi-cors==0.0.6
-
-# Optional: Rate Limiting
-slowapi==0.1.9
 
 # Runtime dependencies (single source of truth; dev tools live in requirements-dev.txt)
 
@@ -86,7 +79,6 @@ jieba>=0.42.1  # Chinese word segmentation for BM25 sparse vectors
 rapidfuzz>=3.14,<4  # Fast deterministic near-duplicate checks for exam generation
 
 # Report Export (PDF/Word generation)
-weasyprint==63.1
 tinycss2>=1.4.0,<2  # Report HTML color/style parsing
 cssselect2>=0.7.0,<1  # Report CSS cascade and selectors
 python-docx==1.1.2
@@ -121,12 +113,9 @@ scikit-learn==1.8.0  # Regression and prediction analysis tools
 # Optional: Python code execution (for execute_python tool)
 ipython>=8.0.0  # Optional, for better output capture and error handling
 
-# Social Platform Integration (QQ, WeChat, DingTalk, WeCom)
-qq-botpy>=1.0.0  # QQ robot SDK
+# Social Platform Integration (QQ, WeChat, WeCom —— 渠道均为 aiohttp 自实现，不依赖厂商 SDK)
 qrcode>=8.0  # QR code generation for WeChat login
 pycryptodome>=3.20.0  # Cryptographic library for WeChat
-dingtalk-stream>=0.24.0  # DingTalk streaming SDK
-wecom-aibot-sdk-python>=0.1.5  # WeCom (WeChat Work) SDK
 pyyaml>=6.0  # YAML configuration parsing
 
 # Search APIs (for web_search tool)
