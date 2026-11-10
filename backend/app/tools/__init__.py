@@ -600,6 +600,106 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             )
 
     try:
+        from app.tools.analysis.ops_audit_retrospective.tool import (
+            OpsAuditReconcileChecklistTool,
+            OpsAuditRetrospectiveStatsTool,
+        )
+        registry.register(OpsAuditReconcileChecklistTool(), priority=51)
+        logger.info("tool_loaded", tool="ops_audit_reconcile_checklist")
+        registry.register(OpsAuditRetrospectiveStatsTool(), priority=52)
+        logger.info("tool_loaded", tool="ops_audit_retrospective_stats")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="ops_audit_retrospective_tools", error=str(e))
+
+    # 广东运维工单数据集 SQL 查询 + 指标语义层（guangdong 分支专属模块，仅 guangdong 项目加载）
+    if getattr(context.manifest, "project", "") == "guangdong":
+        try:
+            from app.tools.query.guangdong_ops_sql_query.tool import ExecuteGuangdongMartSQLTool
+            registry.register(ExecuteGuangdongMartSQLTool(), priority=47)
+            logger.info("tool_loaded", tool="execute_guangdong_mart_sql")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="execute_guangdong_mart_sql", error=str(e))
+        try:
+            from app.tools.query.guangdong_cube_metrics.tool import GuangdongQueryMetricsTool
+            registry.register(GuangdongQueryMetricsTool(), priority=47)
+            logger.info("tool_loaded", tool="guangdong_query_metrics")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="guangdong_query_metrics", error=str(e))
+
+    # 广东站点目录查询（provider + tool 成对注册进共享站点目录服务，模式同许昌）
+    if is_project_tool_enabled(context, "legacy", "guangdong_station_catalog"):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.guangdong.station_catalog.provider import (
+                GuangdongStationCatalogProvider,
+            )
+            from app.tools.guangdong.station_catalog.tool import GuangdongStationCatalogTool
+
+            station_provider = GuangdongStationCatalogProvider()
+            get_station_directory_registry().register(
+                station_provider, projects=["guangdong"]
+            )
+            registry.register(
+                GuangdongStationCatalogTool(provider=station_provider), priority=47
+            )
+            logger.info("tool_loaded", tool="guangdong_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="guangdong_station_catalog",
+                error=str(e),
+            )
+
+    # 广东监测体系站点地理目录（与运维台账/组分体系并列的第三套站点体系，
+    # 复用 station_directory 底座；按名注册，不改写项目的目录绑定）
+    if is_project_tool_enabled(context, "legacy", "monitoring_station_catalog"):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.guangdong.monitoring_station_catalog.provider import (
+                MonitoringStationCatalogProvider,
+            )
+            from app.tools.guangdong.monitoring_station_catalog.tool import (
+                MonitoringStationCatalogTool,
+            )
+
+            monitoring_provider = MonitoringStationCatalogProvider()
+            get_station_directory_registry().register(monitoring_provider)
+            registry.register(
+                MonitoringStationCatalogTool(provider=monitoring_provider), priority=47
+            )
+            logger.info("tool_loaded", tool="monitoring_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="monitoring_station_catalog",
+                error=str(e),
+            )
+
+    # 广东组分体系站点地理目录（geo_mappings + 城市归属，服务 query_component）
+    if is_project_tool_enabled(context, "legacy", "component_station_catalog"):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.guangdong.component_station_catalog.provider import (
+                ComponentStationCatalogProvider,
+            )
+            from app.tools.guangdong.component_station_catalog.tool import (
+                ComponentStationCatalogTool,
+            )
+
+            component_provider = ComponentStationCatalogProvider()
+            get_station_directory_registry().register(component_provider)
+            registry.register(
+                ComponentStationCatalogTool(provider=component_provider), priority=47
+            )
+            logger.info("tool_loaded", tool="component_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="component_station_catalog",
+                error=str(e),
+            )
+
+    try:
         from app.tools.knowledge.knowledge_graph_query.tool import KnowledgeGraphQueryTool
         registry.register(KnowledgeGraphQueryTool(), priority=51)
         logger.info("tool_loaded", tool="knowledge_graph_query")
