@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import Counter
 from collections.abc import Iterable
@@ -11,9 +12,12 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from app.services.ops_audit import feedback_ledger
 from app.services.ops_audit.field_labels import remark_field_display_name
 from app.services.ops_audit.final_issue_list import ensure_issue_ids
 from app.services.ops_audit.issue_linking import is_abnormal_fact_rule, parse_issue_evidence
+
+logger = logging.getLogger(__name__)
 
 REPORT_INPUT_FILENAME = "latest_finished_work_orders_report_input.json"
 REVIEW_DECISIONS_FILENAME = "latest_finished_work_orders_review_decisions.json"
@@ -155,6 +159,12 @@ def apply_human_feedback(
     if expected_source_sha256 and expected_source_sha256 != actual_sha256:
         raise ValueError("report input changed after the feedback panel was opened")
 
+    # Snapshot of the audit output the panel judged, plus its execution scope;
+    # both anchor the ledger records so the retrospective can replay context.
+    snapshot_ref = expected_source_sha256 or actual_sha256
+    execution_ref = feedback_ledger.derive_execution_ref(source_path)
+    ledger_records: list[dict[str, Any]] = []
+
     pending_issue_ids = {
         str(item.get("issue_id"))
         for item in report.get("pending_review_items", [])
@@ -191,6 +201,17 @@ def apply_human_feedback(
         feedback = normalized.get(item_id)
         if not feedback:
             continue
+        ledger_record = _panel_ledger_record(
+            item,
+            feedback,
+            feedback_id=feedback_id,
+            execution_ref=execution_ref,
+            source_path=source_path,
+            snapshot_ref=snapshot_ref,
+            reviewer=reviewer,
+        )
+        if ledger_record is not None:
+            ledger_records.append(ledger_record)
         item["human_feedback"] = {"feedback_id": feedback_id, **feedback}
         if feedback["decision"] == "include":
             item["needs_manual_review"] = False
@@ -209,6 +230,17 @@ def apply_human_feedback(
         matching_items = _semantic_feedback_matches(source.get("items", []), review)
         for item in matching_items:
             item_id = str(item.get("issue_id") or "")
+            ledger_record = _panel_ledger_record(
+                item,
+                feedback,
+                feedback_id=feedback_id,
+                execution_ref=execution_ref,
+                source_path=source_path,
+                snapshot_ref=snapshot_ref,
+                reviewer=reviewer,
+            )
+            if ledger_record is not None:
+                ledger_records.append(ledger_record)
             item["human_feedback"] = {"feedback_id": feedback_id, **feedback}
             if feedback["decision"] == "include":
                 item["needs_manual_review"] = False
@@ -228,7 +260,75 @@ def apply_human_feedback(
     updated = persist_report_input(source, report_path, source_path=source_path)
     updated["feedback_id"] = feedback_id
     updated["feedback"] = list(normalized.values())
+    updated["feedback_ledger_count"] = _append_feedback_ledger(ledger_records)
     return updated
+
+
+def _panel_ledger_record(
+    item: dict[str, Any],
+    feedback: dict[str, Any],
+    *,
+    feedback_id: str,
+    execution_ref: str | None,
+    source_path: Path,
+    snapshot_ref: str,
+    reviewer: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Project one panel decision into a feedback ledger record.
+
+    ``pending`` decisions carry no signal and are not recorded.  Must be
+    called before the item is mutated with the human verdicts so
+    ``original_judgment`` keeps the pre-feedback state.
+    """
+
+    decision = feedback["decision"]
+    if decision == "pending":
+        return None
+    return {
+        "channel": feedback_ledger.PANEL_CHANNEL,
+        "outcome": (
+            feedback_ledger.OUTCOME_CONFIRMED
+            if decision == "include"
+            else feedback_ledger.OUTCOME_REJECTED
+        ),
+        "order_code": item.get("working_order_code"),
+        "rule_id": item.get("rule_id"),
+        "issue_id": item.get("issue_id"),
+        "item_id": feedback["item_id"],
+        "execution_ref": execution_ref,
+        "station_id": item.get("station_id"),
+        "original_judgment": _original_panel_judgment(item),
+        "reason": feedback["comment"] or None,
+        "feedback_id": feedback_id,
+        "reviewer": reviewer or None,
+        "source_ref": str(source_path),
+        "snapshot_ref": snapshot_ref,
+    }
+
+
+def _original_panel_judgment(item: dict[str, Any]) -> str | None:
+    for key in ("review_status", "remark_review_status"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _append_feedback_ledger(records: list[dict[str, Any]]) -> int:
+    """Best-effort ledger append; the applied feedback stays the source of truth.
+
+    The ledger only feeds the monthly retrospective.  A failed append must not
+    fail an already-applied feedback round: the raw decisions remain available
+    in ``last_human_feedback`` and the session metadata history.
+    """
+
+    if not records:
+        return 0
+    try:
+        return len(feedback_ledger.append_records(records))
+    except Exception:  # noqa: BLE001 - auxiliary signal, never blocks feedback
+        logger.exception("human feedback ledger append failed")
+        return 0
 
 
 def _semantic_feedback_matches(items: list[dict[str, Any]], review: dict[str, Any]) -> list[dict[str, Any]]:
