@@ -448,6 +448,8 @@ backend:
     - ops_audit_fetch_dataset
     - ops_audit_run_rules
     - ops_audit_inspect
+    - ops_audit_reconcile_checklist
+    - ops_audit_retrospective_stats
     - guangdong_station_catalog
     - execute_guangdong_mart_sql
     - guangdong_query_metrics

@@ -1,0 +1,39 @@
+{
+  "task_id": "gd_ops_audit_monthly_retrospective",
+  "name": "工单审核月度复盘",
+  "description": "每月1日汇总反馈台账（面板裁决+清单对账+回库分诊）生成上月经审核工单的自我迭代复盘报告：清单识别率/错误率、面板确认与排除率、按规则人工推翻率、候选新规则信号，分流口径问题/数据管道问题/候选新规则/校准参考并给出带证据链的变更建议（只读不改规则）",
+  "execution_mode": "custom",
+  "model_tier": "auto",
+  "tool_names": [
+    "ops_audit_retrospective_stats",
+    "read_file",
+    "write_file",
+    "publish_session_file"
+  ],
+  "trigger_type": "schedule",
+  "schedule_type": "monthly_custom",
+  "day_of_month": 1,
+  "hour": 7,
+  "minute": 0,
+  "enabled": true,
+  "prompt": "生成上一自然月的工单审核自我迭代复盘报告。执行步骤：1) 调用 ops_audit_retrospective_stats（month 传上一自然月 YYYY-MM，enable_db_recheck=true 执行通道3 回库分诊），统计与分诊全部以工具返回为准，禁止自行数数或改写数字。2) 按技能 ops_audit_retrospective 的报告契约写 markdown 报告：开篇 KPI（全部带分子分母，无全量核对声明时错误率写'不适用'并说明原因）；分流清单四节——口径问题（verified 且推翻集中的规则）、数据管道问题（data_drifted 聚合，建议回流数据管道，不改规则）、候选新规则（missed 且 rule_id=null，附样本工单号）、校准参考（evidence_mismatch 与 original_judgment×结局交叉表）；变更建议（每条带台账证据链、预期影响面量级、建议改动的配置文件路径，只建议不实施）。3) 指标背离（如面板排除率与清单错误率方向相反）单独点评。4) 分母小于5的比率必须标注'样本过小，仅供参考'。5) 用 write_file 保存报告为 ops_audit_retrospective_上自然月.md（放在当前执行工作目录），随后用 publish_session_file 登记该文件。红线：不修改任何 configs/*.yaml，不调用 ops_audit_run_rules，台账只读；历史记忆提示上月已否决的提案，本月无新证据不重复提交。台账记录为0时如实写'本月无反馈信号'并说明采集渠道，不得编造指标。",
+  "timeout_seconds": 1200,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "gd-ops-audit-retrospective-agent",
+  "owner_display_name": "工单审核复盘智能体",
+  "tags": [
+    "广东",
+    "运维工单",
+    "工单审核",
+    "自我迭代",
+    "只读"
+  ],
+  "workspace_entry": {
+    "enabled": false
+  },
+  "history_learning": {
+    "enabled": true
+  },
+  "skill_id": "ops_audit_retrospective"
+}
