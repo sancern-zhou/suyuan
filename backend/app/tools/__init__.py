@@ -289,13 +289,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="get_observed_meteorology", error=str(e))
 
-    try:
-        from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
-        registry.register(GetJiningRegularStationsTool(), priority=31)
-        logger.info("tool_loaded", tool="get_jining_regular_stations")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
-
     if is_project_tool_enabled(context, "legacy", "analyze_city_pollutant_rankings"):
         try:
             from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool

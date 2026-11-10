@@ -961,7 +961,6 @@ class ToolExecutor:
         """
         # 识别数据查询工具
         query_tools = {
-            "get_jining_regular_stations",
             "get_air_quality",
             "get_vocs_data",
             "get_pm25_ionic",
