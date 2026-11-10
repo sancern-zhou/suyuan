@@ -128,6 +128,9 @@ def write_word(data, config, path):
         entries = [entry for entry in data['entries'] if entry['type'] == kind]
         for i, entry in enumerate(entries, 1):
             note = '数据已回补' if entry['backfill_status']=='已回补' else entry['backfill_status']
+            judgment = judgment_note(entry)
+            if judgment:
+                note = judgment + '；' + note
             if entry.get('unrecoverable_confirmation'):
                 note += '；'+entry['unrecoverable_confirmation']['reason']+'；依据：'+entry['unrecoverable_confirmation']['evidence']
             if entry['backfill_sources']:
@@ -235,6 +238,30 @@ def incident_text(entry):
             f"{recovery}{backfill}。")
 
 
+FACTOR_NAMES = {'sO2': 'SO2', 'nO2': 'NO2', 'pM10': 'PM10',
+                'co': 'CO', 'o3': 'O3', 'pM2_5': 'PM2.5'}
+
+
+def judgment_note(entry):
+    """Offline-judgment summary for the attachment remark column: when the
+    station went fully silent, and which factors still carry no value."""
+    span = entry.get('offline_span')
+    if not span:
+        return ''
+    s, e = local_time(span['start']), local_time(span['end'])
+    if (s.year, s.month, s.day) == (e.year, e.month, e.day):
+        span_text = f'{s.month}月{s.day}日{s.hour}至{e.hour}时'
+    else:
+        span_text = f'{s.month}月{s.day}日{s.hour}时至{e.month}月{e.day}日{e.hour}时'
+    parts = [span_text + '整站无数据']
+    if not entry['recovered']:
+        unresolved = entry.get('unresolved_factors') or {}
+        missing = [FACTOR_NAMES[f] for f in unresolved.get('missing') or []]
+        if missing:
+            parts.append('仍有' + '、'.join(missing) + '无数据')
+    return '；'.join(parts)
+
+
 def incident_table_values(entry, index):
     start, end = local_time(entry['offline_start']), local_time(entry['offline_end'])
     left = f'{start.month}月{start.day}日{start.hour}时'
@@ -247,6 +274,9 @@ def incident_table_values(entry, index):
     status = entry['backfill_status']
     note = ('数据已回补' if status == '已回补' else '数据无法回补' if status == '无法回补'
             else '数据待回补' if entry['recovered'] else '持续跟进')
+    judgment = judgment_note(entry)
+    if judgment:
+        note = judgment + '；' + note
     validity = entry.get('data_validity_impact')
     return [str(index), entry['city'], entry['name'], left + '-' + right,
             '是' if entry['recovered'] else '否', str(entry['affected_hours']),

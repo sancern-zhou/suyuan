@@ -261,7 +261,7 @@
         "平台每日 10:15 左右重算，当月得分以当日重算结果为准；月初上月数据可能仍在微调",
         "金额单位元：initial_amount(合同)/deduction_amount(核减)/penalty_amount(扣款)/paid_amount(实发)；跨合同汇总需按 contract 区分",
         "扣减规则说明在 deduction_remark 原文（如\"考核分数90分（含）以上的，不扣减\"），金额争议以此为准",
-        "组分站无运维单位/部门信息；组分网与主网合同不同，横向比较需按合同分组",
+        "组分站运维单位以站点台账（dim_station）解析为准，个别站点未登记时如实声明；组分网与主网合同不同，横向比较需按合同分组",
         "工单维度绩效追查用 opa_performance（按 working_order_code 关联工单）"
       ],
       "measures": {

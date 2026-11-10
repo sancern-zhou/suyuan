@@ -74,7 +74,7 @@ GUIDE_START
 - sup_devicemodel：组分网设备型号字典
 - sup_effectrate：组分网站点数据有效率统计
 - sup_monthreport：组分网月度报告数据
-- sup_mtc_device：组分网运维任务设备关联台账
+- sup_mtc_device：组分网运维任务设备关联台账（设备级 OperationUnitId 映射，dim_station 运维单位解析源）
 - sup_nmhc_curveverificationpoint：NMHC 曲线核查点数据（组分网质控）
 - sup_nmhc_systemblank：NMHC 系统空白数据（组分网质控）
 - sup_powerfailurereport：组分网停运申请报告主表（对应主网 SEC_BlackOutReport）

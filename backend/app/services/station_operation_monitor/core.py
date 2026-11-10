@@ -255,87 +255,139 @@ class MonitorStore:
                     continue
                 sources = national_sources if station['type'] == '国控' else [provincial_source]
                 main_source = sources[0]
-                # Keep originally observed holes, including those subsequently backfilled.
-                # An incident hour must have carried no data at all: rows flagged while a
-                # partial record existed (first_missing_raw preserved, data since returned)
-                # are single-parameter evidence, never outages.
-                missing = list(db.execute('''SELECT * FROM cells WHERE code=? AND source=?
-                    AND first_missing_at IS NOT NULL AND (first_missing_raw IS NULL OR present=0)
+                # Hour classification drives both initiation and continuation:
+                #   offline  — every parameter absent or '—' (station not uploading)
+                #   impaired — data arrived but a factor is missing or flagged
+                #   healthy  — complete, unflagged data
+                # An outage episode *starts* on an offline hour (all-parameter rule)
+                # and *continues* through impaired hours until a healthy one: after a
+                # network failure the station often returns with one factor still down
+                # or the backfill carrying flags, which is not a recovered station.
+                cells_all = list(db.execute('''SELECT * FROM cells WHERE code=? AND source=?
                     AND hour<=? ORDER BY hour''',
                     (station['code'], main_source, end.isoformat())))
-                groups = [group for group in _consecutive_groups(missing)
-                          if len(group) > min_missing_hours]
-                # One ongoing outage can straddle a never-observed blind window,
-                # which would otherwise print as two identical incidents. Bridge
-                # only confirmed gaps: a sub-threshold blip is never dragged into
-                # an incident it does not itself qualify for.
-                outages = []
-                for group in groups:
-                    if outages and db.execute('''SELECT 1 FROM cells WHERE code=? AND source=?
+
+                def _status(cell):
+                    # Judged purely on the data present *now*: an hour already
+                    # refilled (including with Re/H flags) is no longer a gap. Only a
+                    # factor carrying no value at all (absent or '—') is unresolved.
+                    if not cell['present']:
+                        return 'offline'
+                    if not cell['data_complete']:
+                        return 'impaired'
+                    return 'healthy'
+
+                runs = []
+                for cell in cells_all:
+                    if _status(cell) == 'healthy':
+                        continue
+                    if runs and local_time(cell['hour']) - local_time(runs[-1][-1]['hour']) == timedelta(hours=1):
+                        runs[-1].append(cell)
+                    elif runs and db.execute('''SELECT 1 FROM cells WHERE code=? AND source=?
                             AND hour>? AND hour<? LIMIT 1''',
                             (station['code'], main_source,
-                             outages[-1][-1]['hour'], group[0]['hour'])).fetchone() is None:
-                        outages[-1].extend(group)
+                             runs[-1][-1]['hour'], cell['hour'])).fetchone() is None:
+                        # Only an unobserved blind window (no rows at all) sits
+                        # between the two problem runs: it cannot prove recovery,
+                        # so they stay one episode. A healthy hour in between is
+                        # what actually splits them.
+                        runs[-1].append(cell)
                     else:
-                        outages.append(list(group))
-                for group in outages:
-                    # Only continuous absences longer than min_missing_hours become
-                    # incidents; shorter absences and single-parameter gaps stay
-                    # in raw evidence only.
-                    if len(group) <= min_missing_hours:
+                        runs.append([cell])
+                for group in runs:
+                    # Only runs containing a genuine station-offline hour qualify:
+                    # single-factor impairment without an outage never initiates one.
+                    offline_hours = [c for c in group if _status(c) == 'offline']
+                    if not offline_hours:
                         continue
                     event_start = local_time(group[0]['hour']) - timedelta(hours=1)
                     event_end = local_time(group[-1]['hour'])
                     # Duration follows the reported offline span, so a bridged outage
                     # never prints a start-to-end range longer than its own hour count.
                     span_hours = int((event_end - event_start).total_seconds() // 3600)
-                    first_observed = local_time(group[0]['hour'])
-                    last_observed = local_time(group[-1]['hour'])
+                    if span_hours < min_missing_hours:
+                        continue
                     window_affected_hours = sum(
-                        start < local_time(hour_key(first_observed + timedelta(hours=offset))) <= end
+                        start < local_time(hour_key(event_start + timedelta(hours=offset))) <= end
                         for offset in range(1, span_hours + 1))
                     complete_sources, remaining = [], {}
                     for source in sources:
                         holes = []
                         for cell in group:
-                            latest = db.execute('SELECT present FROM cells WHERE code=? AND source=? AND hour=?',
+                            latest = db.execute('SELECT data_complete FROM cells WHERE code=? AND source=? AND hour=?',
                                                 (station['code'], source, cell['hour'])).fetchone()
-                            if latest is None or not latest['present']:
+                            if latest is None or not latest['data_complete']:
                                 holes.append(cell['hour'])
                         remaining[source] = holes
                         if not holes:
                             complete_sources.append(source)
                     backfilled = bool(complete_sources)
-                    # An incident hour carried no data at all, so every parameter is missing.
-                    missing_parameters = sorted(POLLUTANTS)
-                    latest = db.execute('''SELECT hour,present FROM cells
+                    # Parameters absent at any hour of the episode, from raw evidence.
+                    missing_parameters = sorted({field for cell in group
+                        for field in POLLUTANTS
+                        if cell['raw'] is None
+                        or normalize(json.loads(cell['raw']))['values'][field] is None})
+                    latest = db.execute('''SELECT hour,present,quality_complete,data_complete,
+                        first_missing_at,first_missing_raw FROM cells
                         WHERE code=? AND source=? AND hour<=? ORDER BY hour DESC LIMIT 1''',
                         (station['code'], main_source, end.isoformat())).fetchone()
-                    # Any valid upload after the outage counts as recovery;
-                    # single-parameter gaps never block it.
-                    recovered = bool(latest and latest['present'] and local_time(latest['hour']) >= event_end)
-                    # A resumed upload closes this historical incident even if a new,
-                    # separate outage occurs later. Backfill does not extend tracking.
-                    if event_end <= start:
-                        later = db.execute('''SELECT 1 FROM cells
-                            WHERE code=? AND source=? AND hour>? AND hour<=? AND present=1
-                            LIMIT 1''',
-                            (station['code'], main_source, event_end.isoformat(), end.isoformat()))
-                        resumed = recovered or later.fetchone() is not None
-                        if resumed:
-                            continue
+                    # Recovery means the station delivered complete data again at some
+                    # point after the episode. Quality/repair flags (H, Re) do not
+                    # block recovery — they are valid values; only absent or '—'
+                    # factors keep an episode unresolved.
+                    recovered = db.execute('''SELECT 1 FROM cells WHERE code=? AND source=?
+                        AND hour>? AND hour<=? AND present=1 AND data_complete=1 LIMIT 1''',
+                        (station['code'], main_source, event_end.isoformat(), end.isoformat())).fetchone() is not None
+                    if not recovered:
+                        # Every offline hour of the episode is now fully backfilled:
+                        # the platform restored the whole gap.
+                        last_offline = offline_hours[-1]
+                        recovered = bool(last_offline['present'] and last_offline['data_complete'])
+                    # An episode fully inside the past and healed afterwards drops out;
+                    # one that never healed stays tracked without a term limit.
+                    if event_end <= start and recovered:
+                        continue
+                    if recovered:
+                        evidence_kind = (f'整站小时数据无数据达到{min_missing_hours}小时，'
+                                         '设备离线原因待核实')
+                    else:
+                        evidence_kind = (f'整站小时数据无数据达到{min_missing_hours}小时，其后未完全恢复'
+                                         '（仍有因子无数据），设备离线原因待核实')
+                    # Remark evidence for the attachment table: the all-parameter
+                    # outage sub-window, plus which factors still carry no value.
+                    offline_span = {
+                        'start': (local_time(min(c['hour'] for c in offline_hours))
+                                  - timedelta(hours=1)).isoformat(),
+                        'end': max(c['hour'] for c in offline_hours),
+                    }
+                    # Judge what is still unresolved from the latest hour that
+                    # actually carries data; trailing all-silent hours say nothing
+                    # about which factors are down.
+                    data_hours = [c for c in group if c['present']]
+                    last_cell = max(data_hours or group, key=lambda c: local_time(c['hour']))
+                    unresolved_factors = None
+                    if not recovered:
+                        if not data_hours:
+                            unresolved_factors = {'missing': sorted(POLLUTANTS)}
+                        else:
+                            parsed_last = normalize(json.loads(last_cell['raw']))
+                            unresolved_factors = {
+                                'missing': [f for f in POLLUTANTS if parsed_last['values'][f] is None]
+                            }
                     entries.append({
                         **dict(station), 'source': main_source,
                         'offline_start': event_start.isoformat(), 'offline_end': event_end.isoformat(),
                         'affected_hours': span_hours,
                         'window_affected_hours': window_affected_hours,
-                        'observed_missing_hours': len(group),
-                        'first_observed_at': min(c['first_missing_at'] for c in group),
+                        'observed_missing_hours': len(offline_hours),
+                        'offline_span': offline_span,
+                        'unresolved_factors': unresolved_factors,
+                        'first_observed_at': min(c['first_missing_at'] or c['observed_at'] for c in group),
                         'recovered': recovered, 'status_as_of': latest['hour'] if latest else None,
                         'backfill_status': '已回补' if backfilled else '待回补',
                         'backfill_sources': complete_sources, 'remaining_hours': remaining,
                         'carry_over': event_start < start,
-                        'evidence_kind': f'连续小时整站无数据超过{min_missing_hours}小时，设备离线原因待核实',
+                        'evidence_kind': evidence_kind,
                         'missing_parameters': missing_parameters,
                     })
                 # A successful collect must cover the end hour; stale or failed collection
@@ -363,9 +415,9 @@ class MonitorStore:
             'collection_errors': errors, 'report_ready': not errors,
             'national_sources': national_sources, 'provincial_source': provincial_source,
             'limitations': [
-                f'日报仅记录整站小时数据连续缺失超过{min_missing_hours}小时的事件；单污染物缺失不计入离线，与不超过该时长的短时缺失一并保留在原始快照中，不单独列入日报。',
-                '数据恢复上传即视为核实完成并结束跟进，仅持续缺数站点继续跟进；回补情况仅作备注展示，不作为跟进条件。',
-                '已恢复上传的事件仅在过去24小时缺失窗口内展示；窗口外不再跟进。持续未恢复上传的事件继续跟进，不设3期上限；原始证据保留。',
+                f'站点离线指全部参数无数据或为"—"；离线达到{min_missing_hours}小时即列入日报。单因子缺失（未发生整站离线）不计入离线，保留在原始快照中，不单独列入日报。',
+                '离线发生后，只要仍有任一因子缺失或带质控标记（如回补修复标记），即视为未完全恢复并延续计时，直至数据完全恢复；期间的起止时间为已观察时段。',
+                '已完全恢复的事件仅在过去24小时缺失窗口内展示，窗口外不再跟进；未完全恢复的事件持续跟进，不设期数上限；原始证据保留。',
                 '小时数据缺失用于运行监控，不能直接证明设备离线或无法回补。',
                 '首次采集前已回补的历史缺口无法还原；离线起止时间为已观察缺失时段。',
             ] + ([] if len(national_sources) > 1 else ['国控目前仅接入省控小时接口，独立发布源未接入。'])

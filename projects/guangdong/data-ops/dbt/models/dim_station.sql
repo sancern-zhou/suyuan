@@ -13,6 +13,8 @@
 -- （每日全量，ID 空间 1~102 与主网 1000+ 不重叠）。
 -- 城市维度（2026-10-25 二期）: 两个 city 视图全站覆盖；DDStationType 按字典映射中文名。
 -- manager_name 来自 alm_home（仅告警推送站点，约 63 站，供参考）。
+-- 运维单位（2026-11-10）: 主网经 v_cityandregionanddepartment；组分网视图该字段全空，
+--   改经设备台账 sup_mtc_device 最近台账 → sys_department 解析（约 86/100 站，见下方 join 注释）。
 -- 契约: sync/datasets/dim_station.yaml（station_id 输出为文本形式）。
 select
     b.stationid::text          as station_id,
@@ -64,8 +66,8 @@ select
     sup.regionid               as city_code,
     sup.regionname             as city_name,
     '组分站'                   as station_type_name,
-    null::text                 as operation_unit_id,
-    sup.operationdepatment     as operation_unit_name,
+    coalesce(nullif(trim(sup.departmentid), ''), mu.operationunitid) as operation_unit_id,
+    coalesce(nullif(trim(sup.operationdepatment), ''), dep.departmentname) as operation_unit_name,
     null::text                 as department_name,
     null::text                 as manager_name,
     null::text                 as longitude,
@@ -81,3 +83,17 @@ select
     null::timestamp            as create_time,
     now()::timestamp           as refreshed_at
 from {{ source('guangdong_ods', 'v_supcityandregionanddepartment') }} sup
+left join (
+    -- 运维单位解析（2026-11-10）：源视图 100 站 operationdepatment/departmentid 全空
+    -- （源库 SYS_DEPARTMENTSTATION 只覆盖主网），改经设备台账每站取最近一次台账的
+    -- OperationUnitId → sys_department 解析名称。一站多设备商（历史）取 createtime
+    -- 最新 = 当前运维商；台账未记录的站点维持 NULL，补录后随小时级重建自动补上。
+    select distinct on (stationid)
+        stationid            as sid,
+        nullif(trim(operationunitid), '') as operationunitid
+    from {{ source('guangdong_ods', 'sup_mtc_device') }}
+    where nullif(trim(coalesce(operationunitid, '')), '') is not null
+    order by stationid, createtime desc nulls last
+) mu on mu.sid = sup.stationid2::text
+left join {{ source('guangdong_ods', 'sys_department') }} dep
+       on dep.departmentid = mu.operationunitid

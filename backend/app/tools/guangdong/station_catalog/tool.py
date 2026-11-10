@@ -4,7 +4,8 @@
 - 按站点名称（模糊/简称）、编码（station_code/unique_code/station_id）或城市解析站点
 - 返回站点基础信息、城市/区域归属、站点类型、运维单位、运维人员名册、经纬度与地址
 - 支持"按运维单位/运维人员反查负责站点"，作为工单、告警等业务数据按站点过滤的前置解析
-- 覆盖运维台账口径 432 站（主网 332 + 组分网 100）；组分站无经纬度/运维单位/运维人员，缺口如实声明
+- 覆盖运维台账口径 432 站（主网 332 + 组分网 100）；组分站运维单位约 86/100 经设备台账解析
+  （2026-11 起，dim_station 契约），经纬度/地址/运维人员名册仍为源系统缺口，按实际返回如实声明
 """
 from __future__ import annotations
 
@@ -27,8 +28,9 @@ _TOOL_SUMMARY = (
     "广东运维站点目录解析。按站点名称（支持模糊与简称，如“从化天湖”）、站点编码"
     "（station_code/unique_code/station_id）或城市解析站点，返回站点编码、名称、城市归属、"
     "站点类型、运维单位、运维人员名册、经纬度与地址。覆盖运维台账在用站点（432 站口径 = 主网 332 + "
-    "组分网 100，每日刷新），停用/废弃站点已在目录层屏蔽、不返回；组分站源系统无经纬度/运维单位/"
-    "运维人员，工具会如实声明缺口。注意：台账的'组分站'类型（100 站）不区分 VOCs/颗粒物组分"
+    "组分网 100，每日刷新），停用/废弃站点已在目录层屏蔽、不返回；组分站运维单位约 86/100 经设备台账"
+    "解析（2026-11 起），个别站点缺失时如实声明；组分站经纬度/地址/运维人员名册源系统未提供，"
+    "相关字段为空属预期。注意：台账的'组分站'类型（100 站）不区分 VOCs/颗粒物组分"
     "监测能力，回答'某城市有无 VOCs 站/颗粒物组分站'或按组分类型过滤时，"
     "用 component_station_catalog（超站组分 38 站清单，带能力标注）。"
     "按运维单位或运维人员反查负责站点用 operation_units/managers 参数。"
@@ -183,8 +185,24 @@ class GuangdongStationCatalogTool(LLMTool):
         )
         summary_parts = [f"解析到 {len(items)} 个站点{scope}"]
         if has_component:
+            component_items = [
+                item for item in items if item.get("station_category") == "component"
+            ]
+            with_unit = sum(
+                1
+                for item in component_items
+                if str(item.get("operation_unit_name") or "").strip()
+            )
+            if with_unit == len(component_items):
+                unit_note = f"运维单位已关联 {with_unit}/{len(component_items)}"
+            elif with_unit:
+                unit_note = (
+                    f"运维单位已关联 {with_unit}/{len(component_items)}，其余源系统未登记"
+                )
+            else:
+                unit_note = "运维单位源系统未登记"
             summary_parts.append(
-                "组分站无经纬度/运维单位/运维人员（源系统未提供），相关字段为空属预期"
+                f"组分站无经纬度/地址/运维人员名册（源系统未提供）；本批组分站{unit_note}"
             )
         if metadata["generated_time"]:
             summary_parts.append(f"数据截至 {metadata['generated_time']}")

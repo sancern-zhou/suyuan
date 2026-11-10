@@ -13,7 +13,8 @@ ROSTER=[{'code':'A','name':'一站','city':'测试市','type':'国控','confirme
 
 
 def rows(start,end,codes=('A','B'),missing=()):
-    return [{'code':code,'timePoint':hour,'sO2':'7(H)','nO2':'0','pM10':'11(Re)',
+    # Healthy hourly records: complete values, no quality/maintenance flags.
+    return [{'code':code,'timePoint':hour,'sO2':'7','nO2':'0','pM10':'11',
              'co':'0.4','o3':'30','pM2_5':'8'} for code in codes for hour in hours(start,end)
             if (code,hour) not in missing]
 
@@ -33,7 +34,9 @@ def test_hour_grid_and_quality_flags():
     assert parse_value('0')==(0,None)
     assert parse_value('-99')[0] is None
     assert parse_value('—')[0] is None
-    r=normalize(rows(BASE,BASE+timedelta(hours=1))[0])
+    flagged=dict(rows(BASE,BASE+timedelta(hours=1))[0])
+    flagged.update({'sO2':'7(H)','pM10':'11(Re)'})
+    r=normalize(flagged)
     assert r['present'] and not r['quality_complete']
     assert r['marks']['sO2']=='H' and r['marks']['pM10']=='Re'
 
@@ -84,14 +87,16 @@ def test_either_source_must_fill_entire_gap_not_mixed_hours(tmp_path):
     assert entry['affected_hours']==5
 
 
-def test_stale_recheck_cannot_erase_later_backfill(tmp_path):
+def test_fully_backfilled_outage_is_not_reported(tmp_path):
+    """数据完全回补、无残留问题：不再视为离线，不列入日报。"""
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
+    # Nothing arrives on the first pass, then the whole window is backfilled.
     ingest(store,BASE,end,[],observed=end+timedelta(minutes=20))
     ingest(store,BASE,end,rows(BASE,end),observed=end+timedelta(minutes=30))
+    # A stale re-check with an older timestamp must not resurrect the gap.
     ingest(store,BASE,end,[],observed=end+timedelta(minutes=25))
-    entry=report(store,end)['entries'][0]
-    assert entry['backfill_status']=='已回补' and entry['recovered']
+    assert [e for e in report(store,BASE+timedelta(hours=6))['entries'] if e['code']=='A']==[]
 
 
 def test_only_gaps_over_four_hours_are_recorded(tmp_path):
@@ -100,11 +105,12 @@ def test_only_gaps_over_four_hours_are_recorded(tmp_path):
     missing={('A',h) for h in hours(BASE,BASE+timedelta(hours=4))}
     missing.update(('B',h) for h in hours(BASE,BASE+timedelta(hours=5)))
     ingest(store,BASE,end,rows(BASE,end,missing=missing))
-    # 4-hour gap stays below the threshold; 5-hour gap becomes an incident.
+    # A 4-hour gap now counts too (离线4小时也算); 5-hour likewise.
     entries=report(store,end)['entries']
-    assert [e['code'] for e in entries]==['B'] and entries[0]['affected_hours']==5
-    assert entries[0]['evidence_kind'].startswith('连续小时整站无数据超过4小时')
-    assert any('整站小时数据连续缺失超过4小时' in item for item in report(store,end)['limitations'])
+    assert [e['code'] for e in entries]==['A','B']
+    assert [e['affected_hours'] for e in entries]==[4,5]
+    assert entries[0]['evidence_kind'].startswith('整站小时数据无数据达到4小时')
+    assert any('离线达到4小时即列入日报' in item for item in report(store,end)['limitations'])
 
 
 class FakeSource:
@@ -140,19 +146,33 @@ def test_arrival_grace_and_future_window_rejected(tmp_path):
         generate_report(config(),now=BASE,root=tmp_path,refresh=False)
 
 
-def test_partial_parameter_return_counts_as_upload_resumed(tmp_path):
+def test_single_factor_gap_never_initiates_offline_event(tmp_path):
+    """单因子缺失不构成站点离线：没有整站无数据小时就不报事件。"""
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
-    absent={('B',h) for h in hours(BASE,BASE+timedelta(hours=5))}
-    ingest(store,BASE,end,rows(BASE,end,missing=absent))
-    partial=rows(BASE,end)
-    for record in partial:
+    records=rows(BASE,end)
+    for record in records:
         if record['code']=='B':record['co']='—'
-    ingest(store,BASE,end,partial,observed=end+timedelta(minutes=40))
-    entry=report(store,end)['entries'][0]
-    # Any valid upload after the outage closes it; single-parameter gaps never
-    # block recovery or backfill.
-    assert entry['recovered'] and entry['backfill_status']=='已回补'
+    ingest(store,BASE,end,records)
+    assert [e for e in report(store,end)['entries'] if e['code']=='B']==[]
+
+
+def test_offline_followed_by_single_factor_gap_stays_unrecovered(tmp_path):
+    """整站离线后数据回来、但仍有因子无数据：事件延续并视为未恢复。"""
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    gap=BASE+timedelta(hours=4)
+    # Phase 1: 4 hours of all-parameter silence gets observed.
+    absent={('B',h) for h in hours(BASE,gap)}
+    ingest(store,BASE,gap,rows(BASE,gap,missing=absent),observed=gap+timedelta(minutes=30))
+    # Phase 2: data returns for the rest of the window, but CO never recovers.
+    rest=[{'code':'B','timePoint':h,'sO2':'7','nO2':'0','pM10':'11','co':'—',
+           'o3':'30','pM2_5':'8'} for h in hours(gap,end)]
+    ingest(store,gap,end,rest,observed=end+timedelta(minutes=30))
+    entries=[e for e in report(store,end)['entries'] if e['code']=='B']
+    assert len(entries)==1
+    assert not entries[0]['recovered']
+    assert entries[0]['unresolved_factors']['missing']==['co']
 
 
 def test_malformed_response_not_persisted_as_station_outage(tmp_path):
@@ -325,6 +345,8 @@ def test_single_parameter_gap_at_cutoff_does_not_block_recovery(tmp_path):
             record['o3']='—'
     ingest(store,BASE,end,records)
     entry=report(store,end)['entries'][0]
+    # The earlier outage healed (backfilled cleanly), and the cutoff-hour single
+    # factor gap never initiates an episode of its own.
     assert entry['recovered'] and entry['missing_parameters']==['co','nO2','o3','pM10','pM2_5','sO2']
 
 
@@ -606,10 +628,10 @@ def test_blind_window_merges_one_outage_into_cumulative_event(tmp_path):
     assert local_time(entries[0]['offline_end'])==end and entries[0]['carry_over']
 
 
-def test_sub_threshold_blip_is_not_dragged_into_later_incident(tmp_path):
+def test_blind_window_keeps_blip_and_outage_as_one_episode(tmp_path):
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
-    # A 3-hour blip never qualifies on its own, so a blind window must not
-    # promote it into the following outage.
+    # A 3-hour blip, a long unobserved blind window, then a 5-hour outage: the
+    # blind window cannot prove recovery, so all of it stays one episode.
     absent={('A',h) for h in hours(BASE,BASE+timedelta(hours=3))}
     ingest(store,BASE,BASE+timedelta(hours=3),rows(BASE,BASE+timedelta(hours=3),missing=absent))
     later=BASE+timedelta(days=1)
@@ -617,8 +639,8 @@ def test_sub_threshold_blip_is_not_dragged_into_later_incident(tmp_path):
     ingest(store,later,later+timedelta(hours=5),rows(later,later+timedelta(hours=5),missing=absent))
     end=later+timedelta(hours=5)
     entries=report(store,end)['entries']
-    assert len(entries)==1 and entries[0]['affected_hours']==5
-    assert local_time(entries[0]['offline_start'])==later
+    assert len(entries)==1 and entries[0]['affected_hours']==29
+    assert local_time(entries[0]['offline_start'])==BASE
 
 
 def test_seed_drops_stations_removed_from_roster(tmp_path):
@@ -782,3 +804,106 @@ def test_provincial_heading_keeps_footnote_anchor():
     assert heading.text == '省控站点（163个）：'
     # The reference stays right after the number, before the closing bracket.
     assert heading._p.xml.index('footnoteReference') < heading._p.xml.index('）：')
+
+
+def test_offline_then_single_factor_gap_stays_unrecovered(tmp_path):
+    """德庆香山 11-09/10 模式：整站缺失后，单因子持续 '—' 未恢复。
+
+    事件自整站缺失起算并延续；带质控标记（H/Re）的数据算已有数据，
+    只有因子真无数据（缺失或 '—'）才保持未恢复。
+    """
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+
+    def record(hour, pm25, extra_marks=False):
+        r={'code':'A','timePoint':hour,'sO2':'7','nO2':'5','pM10':'13',
+           'co':'1.0','o3':'72','pM2_5':pm25}
+        if extra_marks:
+            r.update({'sO2':'22(H)','nO2':'-5(H)','pM10':'24(H)','co':'1.7(H)','o3':'53(H)'})
+        return r
+
+    def at(day, hour):
+        return local_time(f'2026-10-06T{hour:02d}:00:00').replace(day=day).isoformat()
+
+    # 11-09 1-21时正常；22、23时整站缺失
+    good=[record(at(9,h),'9') for h in range(1,22)]
+    ingest(store,local_time('2026-10-09T20:00'),local_time('2026-10-09T22:00'),good,
+           observed=local_time('2026-10-09T22:30'))
+    # 11-10 00时数据回来但带 H 标记，PM2.5 '—'；01-12时仅 PM2.5 '—'
+    back=[record(at(10,0),'—',extra_marks=True)]
+    back+=[record(at(10,h),'—') for h in range(1,17)]
+    ingest(store,local_time('2026-10-09T21:00'),local_time('2026-10-10T17:00'),back,
+           observed=local_time('2026-10-10T17:30'))
+    entries=[e for e in report(store,local_time('2026-10-10T17:00'))['entries']
+             if e['code']=='A']
+    assert len(entries)==1
+    entry=entries[0]
+    assert not entry['recovered']
+    assert entry['unresolved_factors']['missing']==['pM2_5']
+    assert local_time(entry['offline_start']).day==9 and local_time(entry['offline_start']).hour==21
+
+
+def test_flagged_backfill_counts_as_recovered(tmp_path):
+    """质控/回补标记（Re、H）是有效数据：因子补回后即算恢复。"""
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    gap=BASE+timedelta(hours=4)
+    absent={('A',h) for h in hours(BASE,gap)}
+    ingest(store,BASE,gap,rows(BASE,gap,missing=absent),observed=gap+timedelta(minutes=30))
+    # The platform refills the gap with 'Re'-flagged values (valid data).
+    refill=[{'code':'A','timePoint':h,'sO2':'9','nO2':'6','pM10':'24',
+             'co':'1.0','o3':'67','pM2_5':'10(Re)'} for h in hours(BASE,gap)]
+    ingest(store,BASE,gap,refill,observed=end+timedelta(minutes=30))
+    # Nothing left unresolved, so the healed episode is not reported at all.
+    assert [e for e in report(store,end)['entries'] if e['code']=='A']==[]
+
+
+def test_four_hour_offline_with_clean_backfill_is_reported_recovered(tmp_path):
+    """陆河河田模式：整站缺失4小时后数据干净回补，报4小时已恢复。"""
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    absent={('A',h) for h in hours(BASE,BASE+timedelta(hours=4))}
+    ingest(store,BASE,end,rows(BASE,end,missing=absent))
+    entries=report(store,end)['entries']
+    assert len(entries)==1 and entries[0]['affected_hours']==4
+    assert entries[0]['recovered']
+
+
+def test_table_remark_explains_offline_judgment_when_unrecovered():
+    from app.services.station_operation_monitor.word import judgment_note, incident_table_values
+    entry=dict(city='肇庆', name='德庆香山', offline_start='2026-11-09T21:00:00+08:00',
+               offline_end='2026-11-10T11:00:00+08:00', affected_hours=14, recovered=False,
+               backfill_status='待回补',
+               offline_span={'start':'2026-11-09T21:00:00+08:00','end':'2026-11-09T23:00:00+08:00'},
+               unresolved_factors={'missing':['pM2_5']})
+    note=judgment_note(entry)
+    assert '11月9日21至23时整站无数据' in note
+    assert '仍有PM2.5无数据' in note
+    values=incident_table_values(entry, 1)
+    # Remark column carries the evidence, then the follow-up status.
+    assert values[-1]==note+'；持续跟进'
+
+
+def test_table_remark_for_recovered_event_has_no_unresolved_factors():
+    from app.services.station_operation_monitor.word import judgment_note
+    entry=dict(city='汕尾', name='陆河河田', recovered=True, backfill_status='已回补',
+               offline_span={'start':'2026-11-09T10:00:00+08:00','end':'2026-11-09T14:00:00+08:00'},
+               unresolved_factors=None)
+    note=judgment_note(entry)
+    assert note=='11月9日10至14时整站无数据'
+    assert '无数据；' not in note
+
+
+def test_quality_flags_do_not_count_as_unresolved():
+    """H/Re flags are valid data: they never keep an episode unresolved."""
+    from app.services.station_operation_monitor.word import judgment_note
+    entry=dict(recovered=False, backfill_status='待回补',
+               offline_span={'start':'2026-11-09T21:00:00+08:00','end':'2026-11-09T23:00:00+08:00'},
+               unresolved_factors={'missing':['pM2_5']})
+    note=judgment_note(entry)
+    assert '仍有PM2.5无数据' in note
+    assert '质控标记' not in note
+
+
+def test_table_remark_is_empty_without_judgment_evidence():
+    from app.services.station_operation_monitor.word import judgment_note
+    assert judgment_note(dict(recovered=True))==''

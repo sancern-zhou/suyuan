@@ -54,9 +54,13 @@ TARGET_PATH = resolve_agent_path(
 # 若后续引入按站分片表，在此登记正则，避免分片淹没兜底契约。
 SHARD_RE = re.compile(r"^$")
 
-# mart 已覆盖、但仍需原始表兜底的例外（广东现行无；登记标准：
+# mart 已覆盖、但仍需原始表兜底的例外（登记标准：
 # mart 只给了汇总值或部分列，而"某条明细/某条映射是什么"仍不可查时启用）。
-EXTRA_FALLBACK: set[str] = set()
+EXTRA_FALLBACK: set[str] = {
+    # dim_station 只取每站最近一次台账的 OperationUnitId 解析运维单位（2026-11-10），
+    # 设备级历史映射（某站某台设备归属哪个单位）仍需直查原始台账。
+    "sup_mtc_device",
+}
 
 # 每张兜底表的用途说明（必须人工登记；新增同步表若落到兜底清单而没有说明，
 # 生成直接失败，逼一次"这表要不要给 Agent 查"的决策）。
@@ -200,7 +204,7 @@ ODS_TABLE_NOTES = {
     "sup_rf_zerospancalibration": "组分网零点/跨度校准记录表单",
     "sup_pw_task": "组分网计划任务头（周期/站点，完成率统计用）",
     "sup_pw_taskitem": "组分网计划任务项（完成/超期/转工单明细）",
-    "sup_mtc_device": "组分网运维任务设备关联台账",
+    "sup_mtc_device": "组分网运维任务设备关联台账（设备级 OperationUnitId 映射，dim_station 运维单位解析源）",
     "sup_devicelog": "组分网设备状态变更日志",
     "sup_device": "组分网设备台账",
     "sup_devicemodel": "组分网设备型号字典",

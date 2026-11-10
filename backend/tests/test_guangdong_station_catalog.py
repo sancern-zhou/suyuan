@@ -354,7 +354,26 @@ async def test_catalog_tool_lookup_notes_component_gap():
 
     assert result["status"] == "success"
     assert result["metadata"]["component_count"] == 1
-    assert "组分站无经纬度/运维单位/运维人员" in result["summary"]
+    assert "组分站无经纬度/地址/运维人员名册" in result["summary"]
+    assert "运维单位源系统未登记" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_tool_lookup_component_with_resolved_unit():
+    rows = [dict(row) for row in STATION_ROWS]
+    for row in rows:
+        if row["station_id"] == "5":
+            row["operation_unit_id"] = "64e18d93-c9c5-4679-8dd9-7c69facfd7e9"
+            row["operation_unit_name"] = "202805力合科技"
+    catalog = build_catalog(rows, MANAGER_ROWS)
+    provider = GuangdongStationCatalogProvider(catalog_loader=_fake_loader(catalog))
+    tool = GuangdongStationCatalogTool(provider=provider)
+
+    result = await tool.execute(station_types=["组分站"])
+
+    assert result["status"] == "success"
+    assert result["data"][0]["operation_unit_name"] == "202805力合科技"
+    assert "运维单位已关联 1/1" in result["summary"]
 
 
 @pytest.mark.asyncio

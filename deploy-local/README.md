@@ -38,6 +38,8 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
+上述"停服务 → 清理端口孤儿 → 启动 → 验证"已固化为 `deploy-local\restart-backend.bat [web|worker|all]`（管理员会话运行）：net stop 重试 → taskkill 端口 LISTENING 残留 → 确认端口清空才启动 → 等待监听 + HTTP 探活；任一步不达标立即报错并尝试恢复原状，避免新旧两代进程并存监听同一端口、请求随机命中旧代码。
+
 修改 WinSW XML 后需重新注册才生效：`winsvcs\<服务>\<服务>.exe stop` → `install`（覆盖安装）→ `start`。
 
 ## 统一入口网关（8092，公网 113.108.142.147:8093）

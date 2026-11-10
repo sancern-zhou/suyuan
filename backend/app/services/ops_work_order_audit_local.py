@@ -9,7 +9,8 @@ guangdong_mart（data-ops 链路同步），行键经别名映射与源库大小
 口径与源库差异（registry/契约已登记）：
 - 数据范围 = 今年窗口（full_load_since 滚动），更早历史不可查；
 - RF 表单/附件为快照同步，非实时；
-- OPERATIONUNITID 本地暂缺（dim_station 未同步运维单位部门ID），仅 OPERATIONUNIT 名称可用。
+- 运维单位取 dim_station.operation_unit_name/id（组分站经设备台账 sup_mtc_device →
+  sys_department 解析，约 86/100 站；台账未记录的站点为空，报告退回"未关联运维单位"分组）。
 """
 from __future__ import annotations
 
