@@ -53,8 +53,8 @@ class ChannelManager:
         Supports multi-instance channels (e.g., multiple WeChat accounts).
         Channel keys use format: "type:instance_id" (e.g., "weixin:account_1")
         """
-        # 单实例渠道（QQ、钉钉）
-        for name in ['qq', 'dingtalk']:
+        # 单实例渠道（QQ；钉钉渠道模块已移除，仅保留 weixin 多实例通道）
+        for name in ['qq']:
             channel_config = getattr(self.config, name, None)
             if not channel_config:
                 logger.debug(f"Channel {name}: no config found")
@@ -158,9 +158,6 @@ class ChannelManager:
             elif name == "weixin":
                 from app.channels.weixin import WeixinChannel
                 return WeixinChannel(config, self.bus, instance_id=instance_id)
-            elif name == "dingtalk":
-                from app.channels.dingtalk import DingTalkChannel
-                return DingTalkChannel(config, self.bus)
             else:
                 logger.warning("Unknown channel", name=name)
                 return None
