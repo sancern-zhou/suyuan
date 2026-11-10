@@ -12,6 +12,7 @@
 from typing import Dict, Any, List, Tuple
 from math import radians, sin, cos, sqrt, atan2, exp, log
 import asyncio
+import os
 import structlog
 
 from app.utils.http_client import http_client
@@ -46,7 +47,8 @@ class EnterpriseMatcher:
             grid_resolution: 网格分辨率（度）- 增加以减少查询次数
             max_height_m: 最大有效高度（米）
         """
-        self.enterprise_api_base = enterprise_api_base or "http://180.184.91.74:9095"
+        self.enterprise_api_base = enterprise_api_base or os.getenv(
+            "ENTERPRISE_MATCH_API_BASE", "http://180.184.91.74:9095")
         self.search_radius_km = search_radius_km
         self.interpolation_interval_km = interpolation_interval_km
         self.grid_resolution = grid_resolution

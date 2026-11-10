@@ -17,6 +17,7 @@
 """
 
 import json
+import os
 import pyodbc
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -359,14 +360,16 @@ def main():
     input_json = project_root / "config" / "station_district_results_with_type_id.json"
     output_json = project_root / "config" / "station_district_results_with_type_id_updated.json"
 
-    # SQL Server连接配置
-    # 注意：请根据实际情况修改连接字符串
+    # 注意：凭据从环境变量 SQLSERVER_PASSWORD 读取，缺失即报错，禁止硬编码口令
+    _sql_password = os.environ.get("SQLSERVER_PASSWORD")
+    if not _sql_password:
+        raise SystemExit("缺少环境变量 SQLSERVER_PASSWORD，无法连接 SQL Server")
     connection_string = (
         "DRIVER={ODBC Driver 17 for SQL Server};"
         "SERVER=180.184.30.94,1433;"
         "DATABASE=AirPollutionAnalysis;"
         "UID=sa;"
-        "PWD=#Ph981,6J2bOkWYT7p?5slH$I~g_0itR;"
+        f"PWD={_sql_password};"
         "TrustServerCertificate=yes;"
     )
 

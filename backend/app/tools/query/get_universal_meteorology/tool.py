@@ -260,7 +260,8 @@ class UniversalMeteorologyTool(LLMTool):
                         for i, time_str in enumerate(times):
                             try:
                                 timestamp = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-                            except:
+                            except Exception:
+                                logger.warning("hourly_timestamp_parse_failed_using_query_time", time_str=time_str)
                                 timestamp = query_time
 
                             # 安全获取数据
@@ -306,7 +307,8 @@ class UniversalMeteorologyTool(LLMTool):
                     for i, entry in enumerate(pbl_series):
                         try:
                             timestamp = datetime.fromisoformat(entry["time"].replace("Z", "+00:00"))
-                        except:
+                        except Exception:
+                            logger.warning("pbl_series_timestamp_parse_failed_using_query_time", time=entry.get("time"))
                             timestamp = query_time
 
                         records.append(UnifiedDataRecord(
@@ -333,7 +335,8 @@ class UniversalMeteorologyTool(LLMTool):
                     realtime_time_str = realtime_data.get("time", "")
                     try:
                         realtime_time = datetime.fromisoformat(realtime_time.replace("Z", "+00:00")) if realtime_time else query_time
-                    except:
+                    except Exception:
+                        logger.warning("realtime_timestamp_parse_failed_using_query_time", time=realtime_time_str)
                         realtime_time = query_time
 
                     records.append(UnifiedDataRecord(
@@ -399,7 +402,8 @@ class UniversalMeteorologyTool(LLMTool):
                             # 从高度字符串提取数值（去掉'm'后缀）
                             try:
                                 height_m = float(height.replace("m", ""))
-                            except:
+                            except Exception:
+                                logger.debug("wind_profile_height_parse_failed", height=height)
                                 height_m = None
 
                             records.append(UnifiedDataRecord(
@@ -429,7 +433,8 @@ class UniversalMeteorologyTool(LLMTool):
                         for i, date_str in enumerate(daily_times):
                             try:
                                 date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-                            except:
+                            except Exception:
+                                logger.warning("daily_date_parse_failed_using_query_time", date_str=date_str)
                                 date_obj = query_time
 
                             def safe_get_daily(data_list, index, default=None):
@@ -735,7 +740,8 @@ class UniversalMeteorologyTool(LLMTool):
                             "is_past": time < now,
                             "is_future": time >= now
                         })
-                except:
+                except Exception:
+                    logger.debug("pbl_point_parse_skipped", time_str=time_str)
                     continue
 
             if not pbl_series:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,7 +25,7 @@ from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
-BASE_URL = "http://10.10.10.112:8313"
+BASE_URL = os.getenv("PLATFORM_WEATHER_IMAGE_BASE_URL", "http://10.10.10.112:8313")
 NMC_WEATHER_CHART_KEY = "nmc_surface_weather_chart"
 NMC_WEATHER_CHART_ALIASES = {
     NMC_WEATHER_CHART_KEY,

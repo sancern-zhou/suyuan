@@ -14,7 +14,12 @@ def xcai_connection_string() -> str:
     port = os.getenv("XCAI_SQL_PORT", "1433")
     database = os.getenv("XCAI_SQL_DATABASE", "XcAiDb")
     user = os.getenv("XCAI_SQL_USER", "sa")
-    password = os.getenv("XCAI_SQL_PASSWORD", "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR")
+    password = os.getenv("XCAI_SQL_PASSWORD")
+    if not password:
+        raise RuntimeError(
+            "XCAI_SQL_PASSWORD is required: database credentials must come from "
+            "the environment; hardcoded fallbacks are not allowed."
+        )
     return (
         "DRIVER={ODBC Driver 17 for SQL Server};"
         f"SERVER={host},{port};DATABASE={database};UID={user};PWD={{{password}}};"

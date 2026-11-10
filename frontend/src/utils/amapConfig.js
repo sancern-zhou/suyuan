@@ -19,6 +19,7 @@ export async function resolveAMapConfig({ env = {}, fetchImpl = globalThis.fetch
   try {
     const response = await fetchImpl(`${base}/config`)
     if (!response?.ok) {
+      console.warn('[amapConfig] /config 请求失败，地图 key 将为空', response?.status)
       return { key: '', securityJsCode: '' }
     }
     const config = await response.json()
@@ -26,7 +27,8 @@ export async function resolveAMapConfig({ env = {}, fetchImpl = globalThis.fetch
       key: config?.amapPublicKey || '',
       securityJsCode: config?.amapSecurityCode || ''
     }
-  } catch {
+  } catch (error) {
+    console.warn('[amapConfig] /config 请求异常，地图 key 将为空', error)
     return { key: '', securityJsCode: '' }
   }
 }

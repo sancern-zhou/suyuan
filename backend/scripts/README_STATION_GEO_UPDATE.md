@@ -108,12 +108,13 @@ python test_city_matching.py 广州
 所有脚本使用相同的 SQL Server 连接配置：
 
 ```python
+# 口令一律从环境变量 SQLSERVER_PASSWORD 读取，禁止写入仓库
 connection_string = (
     "DRIVER={ODBC Driver 17 for SQL Server};"
     "SERVER=180.184.30.94,1433;"
     "DATABASE=AirPollutionAnalysis;"
     "UID=sa;"
-    "PWD=#Ph981,6J2bOkWYT7p?5slH$I~g_0itR;"
+    f"PWD={os.environ['SQLSERVER_PASSWORD']};"
     "TrustServerCertificate=yes;"
 )
 ```

@@ -403,7 +403,9 @@ class TianjiWeatherClient:
                         timestamp = datetime.fromisoformat(timestamp_str.replace("+08:00", "+08:00"))
                     else:
                         timestamp = datetime.fromisoformat(timestamp_str)
-                except:
+                except Exception:
+                    logger.warning("tianji_timestamp_parse_failed_using_grid_fallback",
+                                   timestamp_str=timestamp_str, hour_index=i)
                     timestamp = start_time + timedelta(hours=i)
 
                 # 构建单点气象数据
