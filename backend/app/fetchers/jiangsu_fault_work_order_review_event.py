@@ -1821,6 +1821,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
             "工单创建时间不能直接作为无效开始时间，维修完成时间不能自动作为无效结束时间。",
             "自动巡检快照不纳入本证据包：该接口只返回查询时刻状态，不按证据窗口对齐。",
             "本站 5 分钟监测数据按平台宽表整行抓取，不传 pollutantCodes；关联污染物仅用于下游审核聚焦。",
+            "PM2.5不提供5分钟数据；宽表即使含pM2_5字段，也不得作为PM2.5独立5分钟观测使用，PM2.5请核验小时数据。",
         ]
         if sop_id == "SOP-01":
             collection_notes.extend([

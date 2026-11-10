@@ -299,6 +299,7 @@
 
               <template v-else-if="source.key === 'station_5minute'">
                 <p class="five-minute-note">仅用于异常、处置和恢复核验，不作为分钟级剔除依据；小时有效性及区间请对照上方小时曲线。</p>
+                <p v-if="isPm25Order" class="source-empty">PM2.5 没有5分钟数据，请查看上方小时曲线；可切换查看本站其他污染物的5分钟证据。</p>
                 <template v-if="fiveMinuteCoverage.query_start || fiveMinuteData.rows?.length || fiveMinuteCoverage.warning">
                   <div class="five-minute-coverage" :class="{ warning: fiveMinuteCoverage.warning }">
                     <strong>实际入包 {{ fiveMinuteCoverage.saved_record_count || 0 }}/{{ fiveMinuteCoverage.platform_record_count || 0 }} 条</strong>
@@ -314,13 +315,14 @@
                     </div>
                     <label class="five-minute-flag-filter"><input v-model="fiveMinuteFlaggedOnly" type="checkbox" />仅看质控标识</label>
                   </div>
-                  <div v-if="fiveMinuteOptions.length > 1" class="pollutant-switch" role="group" aria-label="分钟图污染物切换">
+                  <div v-if="fiveMinuteOptions.length > 1 || (isPm25Order && fiveMinuteOptions.length)" class="pollutant-switch" role="group" aria-label="分钟图污染物切换">
                     <button v-for="option in fiveMinuteOptions" :key="option.code" type="button"
                       :class="{ active: fiveMinuteActiveGroup === option.code }" :aria-pressed="fiveMinuteActiveGroup === option.code"
                       @click="fiveMinutePollutant = option.code"><i class="switch-swatch" :style="{ background: option.color }"></i>{{ option.code }}</button>
                   </div>
                   <p v-if="!fiveMinuteHasData" class="source-empty">已保存的原始记录无可绘制数值；可展开原始数据表核对缺失值和标识。</p>
                   <ReviewTimeSeriesChart
+                    v-if="!isPm25Order || fiveMinutePollutant"
                     title="5分钟原始监测曲线"
                     :series="fiveMinuteSeries"
                     :initial-window="fiveMinuteVisibleWindow"
@@ -331,7 +333,7 @@
                   />
                   <div class="five-minute-actions">
                     <button type="button" class="link-btn" @click="scrollToSection('station_hour')">查看对应小时曲线</button>
-                    <button type="button" class="link-btn" @click="toggleSourceRows('station_5minute')">
+                    <button v-if="fiveMinuteActiveMembers.length" type="button" class="link-btn" @click="toggleSourceRows('station_5minute')">
                       {{ expandedSourceKeys.includes('station_5minute') ? '收起原始数据表' : '展开原始数据表' }}
                     </button>
                   </div>
@@ -502,8 +504,10 @@ import {
 import {
   buildFiveMinuteSeries,
   fiveMinuteColors,
+  fiveMinutePollutants,
   fiveMinuteTableRows,
   fiveMinuteWindow,
+  supportsFiveMinutePollutant,
 } from '@/components/visualization/reviewFiveMinuteData.js'
 import {
   getWorkOrderReview,
@@ -644,7 +648,9 @@ const pollutantColorMap = computed(() => hourlyChartBundle.value.colorMap)
 
 const fiveMinuteData = computed(() => sourceCache.value.station_5minute?.data || {})
 const fiveMinuteCoverage = computed(() => fiveMinuteData.value.coverage || {})
-const fiveMinuteHasData = computed(() => Object.keys(fiveMinuteData.value.points_by_pollutant || {}).length > 0)
+const isPm25Order = computed(() => !supportsFiveMinutePollutant(entry.value.pollutant))
+const fiveMinuteHasData = computed(() => fiveMinutePollutants(fiveMinuteData.value)
+  .some(code => fiveMinuteData.value.points_by_pollutant?.[code]?.length))
 const fiveMinuteColorMap = computed(() => fiveMinuteColors(fiveMinuteData.value, pollutantColorMap.value))
 const fiveMinuteMode = ref('handling')
 const fiveMinutePollutant = ref('')
@@ -655,7 +661,7 @@ const fiveMinuteWindowOptions = [
   { key: 'full', label: '完整取证窗口' },
 ]
 const fiveMinuteGroups = computed(() => {
-  const codes = fiveMinuteData.value.available_pollutants || Object.keys(fiveMinuteData.value.points_by_pollutant || {})
+  const codes = fiveMinutePollutants(fiveMinuteData.value)
   const target = String(entry.value.pollutant || '').toUpperCase()
   return switcherPollutantGroups(codes).map(group => ({
     members: group.members,
@@ -667,6 +673,7 @@ const fiveMinuteGroups = computed(() => {
 const fiveMinuteOptions = computed(() => fiveMinuteGroups.value)
 const fiveMinuteActiveGroup = computed(() => {
   const selected = fiveMinuteGroups.value.find(group => group.code === fiveMinutePollutant.value)
+  if (!selected && isPm25Order.value) return ''
   return (selected || fiveMinuteGroups.value[0])?.code || ''
 })
 const fiveMinuteChartBundle = computed(() => buildFiveMinuteSeries(fiveMinuteData.value, {

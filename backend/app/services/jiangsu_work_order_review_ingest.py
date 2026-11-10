@@ -201,9 +201,11 @@ def _station_5minute_source(pack: dict[str, Any]) -> dict[str, Any]:
         return {"status": "skipped", "record_count": 0, "summary": "事件包未含5分钟原始监测数据",
                 "data": {"points_by_pollutant": {}, "rows": []}}
     rows = _tool_payload_rows(payload)
+    # 平台宽表虽有 pM2_5 字段，PM2.5 并不提供5分钟观测，不能投影成分钟序列。
+    minute_row_keys = {name: keys for name, keys in POLLUTANT_ROW_KEYS.items() if name != "PM2.5"}
     points_by_pollutant = {
         name: _points_from_rows(rows, name, keep_flags=True)
-        for name in POLLUTANT_ROW_KEYS
+        for name in minute_row_keys
     }
     points_by_pollutant = {name: points for name, points in points_by_pollutant.items() if points}
     times = sorted(str(row.get("timePoint") or row.get("time") or "").strip()
@@ -252,11 +254,12 @@ def _station_5minute_source(pack: dict[str, Any]) -> dict[str, Any]:
         "summary": summary,
         "data": {
             "points_by_pollutant": points_by_pollutant,
-            "available_pollutants": [name for name, keys in POLLUTANT_ROW_KEYS.items() if any(
+            "available_pollutants": [name for name, keys in minute_row_keys.items() if any(
                 isinstance(row, dict) and any(row.get(key) not in (None, "") for key in keys)
                 for row in rows
             )],
-            "units": POLLUTANT_UNITS,
+            "unsupported_pollutants": {"PM2.5": "PM2.5不提供5分钟数据，请查看小时曲线。"},
+            "units": {name: unit for name, unit in POLLUTANT_UNITS.items() if name in minute_row_keys},
             "rows": rows,
             "coverage": coverage,
         },

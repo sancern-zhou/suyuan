@@ -1,5 +1,13 @@
 import { CHART_COMPARISON_PAIRS, EXTRA_POLLUTANT_COLORS, switcherPollutantGroups } from './reviewTimeSeriesData.js'
 
+export function supportsFiveMinutePollutant(value) {
+  return !['PM2.5', 'PM2_5', 'PM25'].includes(String(value || '').trim().toUpperCase())
+}
+
+export function fiveMinutePollutants(data = {}) {
+  return (data.available_pollutants || Object.keys(data.points_by_pollutant || {})).filter(supportsFiveMinutePollutant)
+}
+
 export const FIVE_MINUTE_FLAG_LABELS = {
   PS: '跨度检查',
   PZ: '零点检查',
@@ -42,7 +50,7 @@ export function fiveMinuteWindow(data = {}, mode = 'handling') {
 
 export function fiveMinuteColors(data = {}, inherited = {}) {
   const colors = { ...inherited }
-  const target = data.available_pollutants || Object.keys(data.points_by_pollutant || {})
+  const target = fiveMinutePollutants(data)
   const palette = ['#2f86e0', '#9b8cff', ...EXTRA_POLLUTANT_COLORS]
   for (const code of target) {
     if (!colors[code]) colors[code] = palette.find(color => !Object.values(colors).includes(color)) || palette[target.indexOf(code) % palette.length]
@@ -59,14 +67,17 @@ export function buildFiveMinuteSeries(data = {}, {
 } = {}) {
   const pointsByPollutant = data.points_by_pollutant || {}
   const targetCode = String(target || data.pollutant || '').toUpperCase()
-  const groups = switcherPollutantGroups(data.available_pollutants || Object.keys(pointsByPollutant))
+  const groups = switcherPollutantGroups(fiveMinutePollutants(data))
+  if (!supportsFiveMinutePollutant(selected) || (!selected && !supportsFiveMinutePollutant(targetCode))) {
+    return { group: undefined, series: [], window: fiveMinuteWindow(data, mode) }
+  }
   const group = groups.find(item => item.members.join('/') === selected)
     || groups.find(item => item.members.includes(targetCode))
     || groups[0]
   const [start, end] = fiveMinuteWindow(data, mode)
   const members = [...(group?.members || [])]
   const pair = members.length === 1 ? CHART_COMPARISON_PAIRS[members[0]] : null
-  if (pair && pointsByPollutant[pair]?.length) members.push(pair)
+  if (pair && supportsFiveMinutePollutant(pair) && pointsByPollutant[pair]?.length) members.push(pair)
   const colors = fiveMinuteColors(data, colorMap)
   const series = members.filter(code => pointsByPollutant[code]?.length).map(code => ({
     code,
@@ -82,7 +93,7 @@ export function buildFiveMinuteSeries(data = {}, {
 }
 
 export function fiveMinuteTableRows(data = {}, members = [], { flaggedOnly = false, window = [] } = {}) {
-  const codes = new Set(members)
+  const codes = new Set(members.filter(supportsFiveMinutePollutant))
   const keys = {
     PM10: ['pM10', 'PM10', 'pm10'], 'PM2.5': ['pM2_5', 'PM2.5', 'PM2_5', 'PM25', 'pm2_5'],
     SO2: ['sO2', 'SO2'], NO: ['no', 'NO'], NO2: ['nO2', 'NO2'],

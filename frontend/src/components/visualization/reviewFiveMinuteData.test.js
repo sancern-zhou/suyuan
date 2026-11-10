@@ -3,8 +3,10 @@ import assert from 'node:assert/strict'
 import {
   buildFiveMinuteSeries,
   fiveMinuteFlagLabel,
+  fiveMinutePollutants,
   fiveMinuteTableRows,
   fiveMinuteWindow,
+  supportsFiveMinutePollutant,
 } from './reviewFiveMinuteData.js'
 
 const data = {
@@ -96,4 +98,20 @@ test('one-way comparison and flag-only missing observations stay accessible', ()
   const bundle = buildFiveMinuteSeries(missing, { target: 'NO' })
   assert.deepEqual(bundle.group.members, ['NO'])
   assert.equal(fiveMinuteTableRows(missing, bundle.group.members, { flaggedOnly: true }).length, 2)
+})
+
+test('PM2.5 wide-table fields never become five-minute series or a PM10 comparison', () => {
+  const legacy = { ...data, available_pollutants: ['PM10', 'PM2.5', 'NO'],
+    points_by_pollutant: { ...data.points_by_pollutant,
+      PM10: [{ time: '2026-11-07T08:10:00', value: 34 }],
+      'PM2.5': [{ time: '2026-11-07T08:10:00', value: 14 }],
+    },
+    rows: [{ timePoint:'2026-11-07T08:10:00', pM10:'34', pM2_5:'14' }],
+  }
+  assert.deepEqual(fiveMinutePollutants(legacy), ['PM10', 'NO'])
+  assert.deepEqual(buildFiveMinuteSeries(legacy, { target:'PM10' }).series.map(item => item.code), ['PM10'])
+  assert.deepEqual(buildFiveMinuteSeries(legacy, { target:'PM2.5' }).series, [])
+  assert.deepEqual(buildFiveMinuteSeries(legacy, { selected:'PM2.5', target:'NO' }).series, [])
+  assert.deepEqual(fiveMinuteTableRows(legacy, ['PM2.5']), [])
+  for (const alias of ['PM2.5', 'PM25', 'PM2_5', 'pm2.5']) assert.equal(supportsFiveMinutePollutant(alias), false)
 })

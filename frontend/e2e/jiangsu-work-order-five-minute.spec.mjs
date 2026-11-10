@@ -40,7 +40,8 @@ const source = {
   },
 }
 
-async function openWorkbench(page, minute = source) {
+async function openWorkbench(page, minute = source, pollutant = 'NO') {
+  const workEntry = { ...entry, pollutant }
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   const sources = {
@@ -52,7 +53,7 @@ async function openWorkbench(page, minute = source) {
   await page.route('**/api/**', route => {
     const { pathname } = new URL(route.request().url())
     if (pathname.endsWith(`/work-order-reviews/${CODE}`)) {
-      return route.fulfill({ json: { entry, index: { sources, mark_areas: [], operations: [] } } })
+      return route.fulfill({ json: { entry: workEntry, index: { sources, mark_areas: [], operations: [] } } })
     }
     const match = /\/sources\/(\w+)$/.exec(pathname)
     if (match) {
@@ -64,7 +65,7 @@ async function openWorkbench(page, minute = source) {
       } } })
       return route.fulfill({ json: { source: match[1], data: null } })
     }
-    return route.fulfill({ json: { orders: [entry], total: 1, statuses: ['待归档'] } })
+    return route.fulfill({ json: { orders: [workEntry], total: 1, statuses: ['待归档'] } })
   })
   await page.route('**/__wor_five_minute_test__', route => route.fulfill({
     contentType: 'text/html',
@@ -128,6 +129,33 @@ test('minute card shows real coverage, QC diamonds, raw flags and window control
   await expect(card.locator('canvas')).toBeVisible()
   await card.getByRole('button', { name:'查看对应小时曲线', exact:true }).click()
   await expect(page.getByRole('button', { name:'3. 污染物小时时序', exact:true })).toHaveClass(/active/)
+  expect(errors).toEqual([])
+})
+
+test('PM10 minute series never plots a legacy PM2.5 field as its comparison', async ({ page }) => {
+  const minute = { source:'station_5minute', data: { ...source.data,
+    available_pollutants:['PM10','PM2.5','NO'],
+    points_by_pollutant: { PM10:points, 'PM2.5':points.map(point => ({ ...point, value:14 })), NO:points },
+    rows:points.map(point => ({ timePoint:point.time, pM10:String(point.value), pM2_5:'14', no:String(point.value) })),
+  } }
+  const errors = await openWorkbench(page, minute, 'PM10')
+  const card = page.locator('#wor-section-station_5minute')
+  await expect(card.getByRole('button', { name:'PM10', exact:true })).toBeVisible()
+  await expect(card.getByRole('button', { name:/PM2\.5/ })).toHaveCount(0)
+  const chart = await readChart(page)
+  expect(chart.series.filter(item => item.type==='line').map(item => item.name)).toEqual(['PM10（5分钟）'])
+  await card.getByRole('button', { name:'展开原始数据表', exact:true }).click()
+  await expect(card.getByRole('columnheader', { name:/PM2\.5/ })).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('PM2.5 order defaults to an explicit no-minute-data notice instead of another pollutant curve', async ({ page }) => {
+  const errors = await openWorkbench(page, source, 'PM2.5')
+  const card = page.locator('#wor-section-station_5minute')
+  await expect(card.getByText('PM2.5 没有5分钟数据，请查看上方小时曲线；可切换查看本站其他污染物的5分钟证据。')).toBeVisible()
+  await expect(card.locator('canvas')).toHaveCount(0)
+  await card.getByRole('button', { name:'NO/NO2', exact:true }).click()
+  await expect(card.locator('canvas')).toBeVisible()
   expect(errors).toEqual([])
 })
 

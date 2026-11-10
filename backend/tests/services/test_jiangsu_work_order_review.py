@@ -168,7 +168,11 @@ def test_build_workbench_package_keeps_five_minute_flags_and_coverage():
     assert source["record_count"] == 3
     points = source["data"]["points_by_pollutant"]
     assert points["NO"][0] == {"time": "2026-11-07T08:10:00", "value": 401, "flag": "PS"}
-    assert points["PM2.5"][0]["value"] == 14
+    assert "PM2.5" not in points
+    assert "PM2.5" not in source["data"]["available_pollutants"]
+    assert "PM2.5" not in source["data"]["units"]
+    assert source["data"]["unsupported_pollutants"]["PM2.5"].startswith("PM2.5不提供5分钟数据")
+    assert source["data"]["rows"][0]["pM2_5"] == "14"
     assert points["PM10"][0]["value"] == 34
     assert points["NOX"][0]["value"] == 630
     assert source["data"]["units"]["CO"] == "mg/m³"
