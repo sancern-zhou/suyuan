@@ -225,6 +225,7 @@ docs/
 # Shared work-order audit skill is runtime configuration and must be versioned.
 !backend/docs/
 backend/docs/*
+!backend/docs/ops-audit-self-iteration.md
 !backend/docs/skills/
 backend/docs/skills/*
 !backend/docs/skills/ops_work_order_audit.md
