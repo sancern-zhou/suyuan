@@ -14,8 +14,9 @@ http://117.159.53.11:60601（政府侧部署）。许昌 76 个区县乡镇站�
   {code:200, data:{access_token, expires_in}}，token 有效期 12 小时。
 
 验证码识别：图片扭曲严重，ddddocr 实测几乎不可用（2/12 且答案错误）；
-改用 GLM 网关 glm-4.6v 视觉模型（复用 settings.glm_* 配置，thinking
-关闭），单次识别实测 4/5，验证码错误时换图重试即可。
+改用视觉模型候选链（thinking 关闭），按序尝试、单个候选失败自动切换：
+SCNET Qwen3.8-Flash（2026-11-09 实测 4/4）→ SCNET GLM-5.3-Flash（3/4）
+→ GLM glm-4.6v（原通道，key 失效期间自动跳过，续费后自动恢复）。
 
 业务接口前缀 /prod-api/subsystem/ssair：
 - /airNetwork/page?tstype=4 站点目录（76 站，含在线状态与最新值）；
@@ -46,6 +47,36 @@ MAX_PAGES = 50  # 分页保险丝：2000/页 × 50 足够 3 天 × 76 站
 
 # 算式识别：数字 运算符 数字（容忍 OCR 把等号/问号读丢）
 _ARITHMETIC = re.compile(r"(\d+)\s*([+\-x×*/])\s*(\d+)")
+
+# 验证码视觉识别候选链 (provider, model)：按序尝试，某候选未配置/报错/识
+# 别失败自动切下一个。scnet 走 settings.scnet_*，glm 走 settings.glm_*。
+# 2026-11-09：GLM coding 网关 key 失效（401）导致抓取断流 34h，临时补
+# SCNET 双候选；GLM 保留在链尾，key 恢复后自动并入。
+CAPTCHA_VISION_CANDIDATES: tuple[tuple[str, str], ...] = (
+    ("scnet", "Qwen3.8-Flash"),
+    ("scnet", "GLM-5.3-Flash"),
+    ("glm", "glm-4.6v"),
+)
+
+_CAPTCHA_PROMPT = (
+    "识别图中的算术验证码，只输出完整算式本身（例如 5+1=?），"
+    "不要思考过程，不要其他文字。"
+)
+
+
+def _vision_endpoint(provider: str) -> tuple[str, str] | None:
+    """按 provider 返回 (base_url, api_key)；未配置返回 None。"""
+    if provider == "scnet":
+        base_url = (settings.scnet_base_url or "").rstrip("/")
+        api_key = settings.scnet_api_key
+    elif provider == "glm":
+        base_url = (settings.glm_base_url or "").rstrip("/")
+        api_key = settings.glm_api_key
+    else:
+        return None
+    if not base_url or not api_key:
+        return None
+    return base_url, api_key
 
 
 def eval_captcha_expression(text: str | None) -> str | None:
@@ -92,33 +123,27 @@ class TownCloudClient:
         self._token_expires_at: float = 0.0
 
     # ---- 验证码识别 --------------------------------------------------------
-    def _read_captcha_with_vision(self, image_bytes: bytes) -> str | None:
-        """调用 GLM 视觉模型识别算术验证码，返回求值结果；失败返回 None。"""
-        api_key = settings.glm_api_key
-        base_url = (settings.glm_base_url or "").rstrip("/")
-        if not api_key or not base_url:
-            raise TownCloudLoginError(
-                "未配置 GLM_API_KEY / GLM_BASE_URL，无法识别云平台验证码"
-            )
-        image_b64 = base64.b64encode(image_bytes).decode()
+    def _query_vision_model(
+        self, base_url: str, api_key: str, model: str, image_b64: str
+    ) -> str | None:
+        """调用单个视觉模型，返回原始文本；网络/协议失败返回 None。"""
         try:
             resp = requests.post(
                 f"{base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model": "glm-4.6v",
+                    "model": model,
                     "messages": [
                         {
                             "role": "user",
                             "content": [
                                 {
                                     "type": "image_url",
-                                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{image_b64}"
+                                    },
                                 },
-                                {
-                                    "type": "text",
-                                    "text": "识别图中的算术验证码，只输出完整算式本身（例如 5+1=?），不要思考过程，不要其他文字。",
-                                },
+                                {"type": "text", "text": _CAPTCHA_PROMPT},
                             ],
                         }
                     ],
@@ -130,11 +155,29 @@ class TownCloudClient:
             )
             resp.raise_for_status()
             choice = (resp.json().get("choices") or [{}])[0]
-            text = (choice.get("message") or {}).get("content") or ""
-        except Exception as exc:  # noqa: BLE001 - 视觉服务异常按本轮识别失败处理
-            logger.warning("town_cloud_vision_captcha_failed", error=str(exc))
+            return (choice.get("message") or {}).get("content") or ""
+        except Exception as exc:  # noqa: BLE001 - 视觉服务异常按该候选失败处理
+            logger.warning(
+                "town_cloud_vision_captcha_failed",
+                model=model,
+                error=str(exc),
+            )
             return None
-        return eval_captcha_expression(text)
+
+    def _read_captcha_with_vision(self, image_bytes: bytes) -> str | None:
+        """遍历视觉候选链识别算术验证码，返回求值结果；全部失败返回 None。"""
+        image_b64 = base64.b64encode(image_bytes).decode()
+        for provider, model in CAPTCHA_VISION_CANDIDATES:
+            endpoint = _vision_endpoint(provider)
+            if endpoint is None:
+                continue
+            base_url, api_key = endpoint
+            text = self._query_vision_model(base_url, api_key, model, image_b64)
+            code = eval_captcha_expression(text)
+            if code is not None:
+                return code
+            logger.warning("town_cloud_captcha_candidate_missed", model=model)
+        return None
 
     # ---- 登录 --------------------------------------------------------------
     def _rsa_encrypt_credentials(self, public_key_der_b64: str) -> str:
