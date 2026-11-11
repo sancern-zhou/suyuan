@@ -267,6 +267,9 @@ backend/docs/skills/*
 !backend/docs/skills/xlsx_authoring.md
 !backend/docs/skills/xlsx_authoring/
 !backend/docs/skills/xlsx_authoring/**
+!backend/docs/skills/routine_monitoring_analysis_expert.md
+!backend/docs/skills/weather_analysis_expert.md
+!backend/docs/skills/xuchang_station_daily_source_report.md
 # 已入库的正式设计与运维文档（此前靠强制添加维持，补白名单防止新同名文件静默丢失）
 !backend/docs/*.md
 !backend/docs/third_party/
