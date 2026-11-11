@@ -99,6 +99,41 @@ def _pollutants(package: dict[str, Any]) -> str:
     return "、".join(values)
 
 
+def enqueue_wechat_message(
+    kind: str,
+    text: str,
+    *,
+    media: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    root: Path | None = None,
+) -> dict[str, Any] | None:
+    """把任意推送场景的定稿文案（及附图路径）写入待发队列。
+
+    场景用 kind 区分（station_alert/pollution_cause/monthly_review/...），
+    场景标识（如【污染原因分析】前缀）由调用方写在 text 首行——RPA agent
+    对以"【"开头的文案不再叠加全局 message_prefix。空文案跳过；media 存
+    agent 可解析的项目相对路径（web 侧 /media 端点下发）。调用方负责
+    try/except：入队失败只记日志、不影响其他投递主流程。
+    """
+    payload = str(text or "").strip()
+    if not payload:
+        return None
+    now = datetime.now()
+    record = {
+        "id": f"wx-{now:%Y%m%d%H%M%S%f}-{uuid.uuid4().hex[:8]}",
+        "kind": str(kind or "generic").strip() or "generic",
+        "text": payload,
+        "media": [str(p) for p in (media or [])],
+        "metadata": {
+            k: v for k, v in (metadata or {}).items() if v not in (None, "")
+        },
+        "created_at": now.isoformat(timespec="seconds"),
+        "attempts": 0,
+    }
+    _write_atomic(record, _status_dir(PENDING_DIR, root) / f"{record['id']}.json")
+    return record
+
+
 def enqueue_station_alert_wechat_message(
     package: dict[str, Any],
     message: str,
@@ -106,32 +141,19 @@ def enqueue_station_alert_wechat_message(
     media: list[str] | None = None,
     root: Path | None = None,
 ) -> dict[str, Any] | None:
-    """把定稿的站点告警通报文案（及证据附图路径）写入待发队列。
-
-    空文案跳过；media 存 agent 原始路径（web 侧经 resolve_agent_path 解析，
-    由 /media 端点下发）。调用方（alert_notification workflow）负责
-    try/except，入队失败只记日志、不影响现有投递主流程。
-    """
-    text = str(message or "").strip()
-    if not text:
-        return None
-    now = datetime.now()
-    record = {
-        "id": f"wx-{now:%Y%m%d%H%M%S%f}-{uuid.uuid4().hex[:8]}",
-        "kind": "station_alert",
-        "text": text,
-        "media": [str(p) for p in (media or [])],
-        "metadata": {
+    """站点告警（场景1）专用入队：提取 episode 元数据后走通用入队。"""
+    return enqueue_wechat_message(
+        "station_alert",
+        message,
+        media=media,
+        metadata={
             "episode_id": _first_episode_id(package),
             "station_id": str(package.get("station_id") or ""),
             "station_name": str(package.get("station_name") or ""),
             "pollutants": _pollutants(package),
         },
-        "created_at": now.isoformat(timespec="seconds"),
-        "attempts": 0,
-    }
-    _write_atomic(record, _status_dir(PENDING_DIR, root) / f"{record['id']}.json")
-    return record
+        root=root,
+    )
 
 
 def find_message(

@@ -296,6 +296,12 @@ backend:
     # 旧云平台：乡镇站小时/日数据回写 TownStationData 原表(原始+审核同值双写，恢复 view_dat_town_* 视图)
     - xuchang_town_hour_fetcher
     - xuchang_town_day_fetcher
+    # ④污染原因分析：许昌PM2.5日均高于相邻五市均值20%触发通报（微信群+APP）
+    - xuchang_pollution_cause_trigger_fetcher
+    # ①月度特征分析：每月2日上月证据包（APP 推局长/科长）
+    - xuchang_monthly_review_evidence_fetcher
+    # ②企业核查线索周报（代理口径，CEMS 接入前）：每周一上风向筛查线索（APP）
+    - xuchang_enterprise_clue_weekly_fetcher
     - gems_xuchang_image_fetcher
   weather_history:
     bootstrap_days: 90
@@ -331,3 +337,9 @@ scheduled_tasks:
   - task_xuchang_weekly_weather_situation_report
   - task_xuchang_mee_cnemc_weekly_news
   - task_runtime_monitor
+  # ④污染原因分析通报（PM2.5 高于相邻五市均值 20% 触发）
+  - task_xuchang_pollution_cause_analysis
+  # ①月度特征分析通报（每月 2 日，APP 推局长/科长）
+  - task_xuchang_monthly_review_analysis
+  # ②企业核查线索周报（代理口径，APP 推科长/区县/执法）
+  - task_xuchang_enterprise_clue_weekly

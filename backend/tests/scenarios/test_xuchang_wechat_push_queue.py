@@ -65,8 +65,10 @@ def test_enqueue_without_episode_or_alerts_still_queues(tmp_path):
     record = queue.enqueue_station_alert_wechat_message(
         _package(), "正文", root=tmp_path
     )
-    assert record["metadata"]["episode_id"] == ""
-    assert record["metadata"]["pollutants"] == ""
+    # 通用入队剥离空元数据字段：无告警时不带 episode_id/pollutants 键
+    assert record["metadata"] == {
+        "station_id": "1008A", "station_name": "许昌学院"
+    }
 
 
 def test_list_pending_orders_by_enqueue_time_and_skips_broken_file(tmp_path):

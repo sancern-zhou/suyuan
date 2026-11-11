@@ -286,8 +286,14 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
         return
     for msg in messages:
         message_id = str(msg.get("id") or "")
-        text = f"{cfg['message_prefix']}{msg.get('text') or ''}"
-        if not message_id or not msg.get("text"):
+        raw_text = str(msg.get("text") or "")
+        # 场景前缀由后端写在文案首行（如【污染原因分析】）；仅当文案不带
+        # 场景前缀时才叠加 agent 全局 message_prefix，避免双前缀刷屏
+        if cfg.get("message_prefix") and not raw_text.startswith("【"):
+            text = f"{cfg['message_prefix']}{raw_text}"
+        else:
+            text = raw_text
+        if not message_id or not raw_text:
             log(f"[warn] 跳过异常消息：{msg}")
             continue
         if message_id in markers["markers"]:

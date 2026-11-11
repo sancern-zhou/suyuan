@@ -35,6 +35,15 @@ def register_project_workflow_handlers(project: str) -> None:
         from app.scenarios.xuchang_station_deviation.alert_notification import (
             run_station_alert_workflow,
         )
+        from app.scenarios.xuchang_pollution_cause.notification import (
+            run_pollution_cause_workflow,
+        )
+        from app.scenarios.xuchang_monthly_review.notification import (
+            run_monthly_review_workflow,
+        )
+        from app.scenarios.xuchang_enterprise_clue.notification import (
+            run_enterprise_clue_weekly_workflow,
+        )
 
         register_manual_event_builder(EVENT_TYPE, build_weather_evidence_event)
 
@@ -53,6 +62,57 @@ def register_project_workflow_handlers(project: str) -> None:
 
         register_workflow_handler(
             "xuchang_station_deviation_alert", run_xuchang_station_alert
+        )
+
+        async def run_xuchang_pollution_cause(
+            task: Any,
+            execution: Any,
+            event: Any = None,
+            history_section: str | None = None,
+        ) -> dict[str, Any]:
+            return await run_pollution_cause_workflow(
+                task=task,
+                execution=execution,
+                event=event,
+                history_section=history_section,
+            )
+
+        register_workflow_handler(
+            "xuchang_pollution_cause_analysis", run_xuchang_pollution_cause
+        )
+
+        async def run_xuchang_monthly_review(
+            task: Any,
+            execution: Any,
+            event: Any = None,
+            history_section: str | None = None,
+        ) -> dict[str, Any]:
+            return await run_monthly_review_workflow(
+                task=task,
+                execution=execution,
+                event=event,
+                history_section=history_section,
+            )
+
+        register_workflow_handler(
+            "xuchang_monthly_review_analysis", run_xuchang_monthly_review
+        )
+
+        async def run_xuchang_enterprise_clue_weekly(
+            task: Any,
+            execution: Any,
+            event: Any = None,
+            history_section: str | None = None,
+        ) -> dict[str, Any]:
+            return await run_enterprise_clue_weekly_workflow(
+                task=task,
+                execution=execution,
+                event=event,
+                history_section=history_section,
+            )
+
+        register_workflow_handler(
+            "xuchang_enterprise_clue_weekly", run_xuchang_enterprise_clue_weekly
         )
 
 

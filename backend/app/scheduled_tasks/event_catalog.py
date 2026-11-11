@@ -74,6 +74,24 @@ _EVENT_DEFINITIONS = {
         description="超标日小时污染回顾及确定性污染机制、传输和气象证据已完成",
         filter_fields=["city", "target_date", "target_pollutant", "station_id", "diagnosis"],
     ),
+    "xuchang.pollution_cause_analysis.triggered": EventDefinition(
+        event_type="xuchang.pollution_cause_analysis.triggered",
+        label="许昌PM2.5高于相邻五市触发原因分析",
+        description="许昌市PM2.5日均浓度高于相邻五市（郑汴平漯周）均值20%以上，触发污染原因分析通报推送",
+        filter_fields=["city", "target_date", "triggered", "deviation_percent"],
+    ),
+    "xuchang.monthly_review.completed": EventDefinition(
+        event_type="xuchang.monthly_review.completed",
+        label="许昌月度特征分析证据已生成",
+        description="每月2日上月城市浓度对比、排名、气象、站点告警与企业背景证据包已冻结，推送APP月度通报",
+        filter_fields=["city", "month"],
+    ),
+    "xuchang.enterprise_clue_weekly.completed": EventDefinition(
+        event_type="xuchang.enterprise_clue_weekly.completed",
+        label="许昌企业核查线索周报证据已生成",
+        description="每周一汇总上周站点告警的上风向候选企业筛查线索（代理口径，不认定责任），推送APP周报",
+        filter_fields=["city"],
+    ),
 }
 
 
