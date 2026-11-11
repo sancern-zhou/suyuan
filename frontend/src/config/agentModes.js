@@ -245,7 +245,12 @@ function mergeAgentMode(agent, override) {
 
 export const getAgentMode = (mode, overrides = {}) => {
   const agent = AGENT_MODES.find(item => item.id === mode)
-  return mergeAgentMode(agent, overrides[mode])
+  const override = overrides[mode]
+  if (!agent && !override) return null
+  // 仅项目清单声明的模式：清单 override 即完整定义（含 name/welcome 等展示字段），
+  // 共享目录不承载项目专属模式条目。
+  if (!agent) return { id: mode, ...override }
+  return mergeAgentMode(agent, override)
 }
 
 export const selectAgentModes = (modeIds, overrides = {}) => (
