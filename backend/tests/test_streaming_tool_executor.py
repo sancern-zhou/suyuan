@@ -10,6 +10,7 @@ StreamingToolExecutor 单元测试
 
 import asyncio
 import importlib.util
+from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
@@ -21,7 +22,7 @@ def _load_module(name, path):
     spec.loader.exec_module(mod)
     return mod
 
-_ste_path = "/home/xckj/suyuan/backend/app/agent/core/streaming_tool_executor.py"
+_ste_path = str(Path(__file__).resolve().parents[1] / "app/agent/core/streaming_tool_executor.py")
 _ste = _load_module("streaming_tool_executor", _ste_path)
 
 StreamingToolExecutor = _ste.StreamingToolExecutor
