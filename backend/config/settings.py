@@ -180,11 +180,6 @@ class Settings(BaseSettings):
         le=20000,
         description="交付边界吸收时单条委派结果的内联上限字符数",
     )
-    # 阶段 C 交付验收清单：off 跳过 / observe 只记录 would_reject / enforce 并入校验触发修复轮。
-    delivery_checklist_mode: Literal["off", "observe", "enforce"] = Field(
-        default="observe",
-        description="交付验收清单执行模式；observe 期按真实案例修订清单内容后再切 enforce",
-    )
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -791,12 +786,6 @@ class Settings(BaseSettings):
         description="Cooldown seconds for transiently failing LLM providers"
     )
 
-    mimo_vl_api_key: Optional[str] = Field(default=None, description="Mimo VL API key for flow visual checks")
-    mimo_vl_base_url: Optional[str] = Field(
-        default=None,
-        description="Mimo VL OpenAI-compatible API base URL"
-    )
-    mimo_vl_model: str = Field(default="mimo-v2.5", description="Mimo VL model name")
     ops_attachment_root: Optional[str] = Field(default=None, description="Local root used to resolve /WebFiles attachments")
     attachment_root: Optional[str] = Field(default=None, description="Fallback local attachment root")
     ops_attachment_base_url: Optional[str] = Field(default=None, description="Base URL used to resolve /WebFiles attachments")

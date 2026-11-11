@@ -306,7 +306,7 @@ class EvaluationRunner:
                     await self.dispatch(tool, {"cities": cities}, mode=self.case.mode, parent=True)
         else:
             nodes = [{"task_id": name, "target_mode": "query_forecast" if name.startswith("weather") else "query_monitoring_city",
-                      "goal": name, "task_contract": {"deliverables": ["data"]}} for name in self.case.datasets]
+                      "goal": name} for name in self.case.datasets]
             if self.case.mode == "expert":
                 nodes.append({"task_id": "analysis", "target_mode": "expert_analysis", "goal": "analysis",
                               "dependencies": list(self.case.datasets), "task_contract": {"deliverables": ["analysis"]}})

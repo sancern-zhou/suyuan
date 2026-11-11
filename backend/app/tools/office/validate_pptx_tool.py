@@ -28,6 +28,12 @@ from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
+# 占位符残留（交付前必须清除）：xxx/TODO/TBD/lorem/[insert/占位/待补充 等
+PLACEHOLDER_RE = re.compile(
+    r"(?:\bxxx+\b|\btodo\b|\btbd\b|\blorem\b|\[insert|占位符?|待补充|待填写|待定稿)",
+    re.IGNORECASE,
+)
+
 
 def validation_output_resources(pptx_path: Path, outputs: List[Path]) -> List[Dict[str, Any]]:
     """Declare a presentation and all QA derivatives as one resource group."""
@@ -81,7 +87,7 @@ class ValidatePptxTool(LLMTool):
             name="validate_pptx",
             description=(
                 "渲染PPTX并执行基础交付检查：PDF/PNG预览、montage、空页/越界/字体检测。\n\n"
-                "⚠️ 使用前请先阅读：backend/app/tools/office/PPT操作指南.md"
+                "生成 PPT 前先 view_skill: pptx_authoring 获取设计规范与 QA 闭环协议"
             ),
             category=ToolCategory.QUERY,
             version="1.0.0",
@@ -192,6 +198,9 @@ class ValidatePptxTool(LLMTool):
                 "usage_notes": [
                     "pages 中的 slide/page_number 与 page-XXX.png 文件名均为 1-based。",
                     "montage_path 仅用于全局总览；修复或核查指定页时应读取 pages 中对应 slide 的 png_path。",
+                    "视觉自评：确定性 gate 通过≠视觉合格。对 visual_review.worst_pages 与 montage 用 "
+                    "read_file(png_path, as_multimodal_attachment=true) 逐页挂载后，按技能 qa-loop "
+                    "的视觉自评标准检查（密度/对齐/层级/配色/图表可读/中文渲染）。",
                 ],
                 "geometry": geometry,
                 "rendered_pages": rendered_checks,
@@ -203,6 +212,7 @@ class ValidatePptxTool(LLMTool):
                 "issue_count": len(issues),
             }
             report.update(self._build_structured_quality_sections(report))
+            report["visual_review"] = self._build_visual_review(report)
 
             report_path = qa_dir / "report.json"
             report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -242,6 +252,45 @@ class ValidatePptxTool(LLMTool):
         if output_dir:
             return resolve_agent_path(output_dir)
         return (self.default_qa_root / f"{pptx_path.stem}_{uuid.uuid4().hex[:8]}").resolve()
+
+    @staticmethod
+    def _text_overlap_pairs(bboxes: List[tuple[float, float, float, float]]) -> List[List[float]]:
+        """文本框两两重叠检测：重叠面积占较小框 >25% 视为真重叠（卡片内文字为单形状不误报）。"""
+        pairs: List[List[float]] = []
+        for i, (l1, t1, w1, h1) in enumerate(bboxes):
+            for l2, t2, w2, h2 in bboxes[i + 1 :]:
+                overlap_w = min(l1 + w1, l2 + w2) - max(l1, l2)
+                overlap_h = min(t1 + h1, t2 + h2) - max(t1, t2)
+                if overlap_w <= 0 or overlap_h <= 0:
+                    continue
+                intersection = overlap_w * overlap_h
+                smaller = min(w1 * h1, w2 * h2)
+                if smaller > 0 and intersection / smaller > 0.25:
+                    pairs.append([round(intersection / smaller, 2)])
+        return pairs
+
+    def _build_visual_review(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        """视觉自评定位：按渲染分数升序取最差页（供 read_file 挂载自评）。"""
+        visual = report.get("visual_quality") if isinstance(report.get("visual_quality"), dict) else {}
+        slides = [s for s in (visual.get("slides") or []) if isinstance(s, dict)]
+        pages_by_slide = {
+            page.get("slide"): page.get("png_path")
+            for page in report.get("pages", [])
+            if isinstance(page, dict)
+        }
+        worst = sorted(slides, key=lambda s: s.get("score") if s.get("score") is not None else 100)[:3]
+        return {
+            "hint": "对 worst_pages 逐页 read_file(png_path, as_multimodal_attachment=true) 挂载自评；"
+                    "总览用 montage_path。",
+            "worst_pages": [
+                {
+                    "slide": item["slide"],
+                    "score": item.get("score"),
+                    "png_path": pages_by_slide.get(item["slide"]),
+                }
+                for item in worst
+            ],
+        }
 
     def _build_structured_quality_sections(self, report: Dict[str, Any]) -> Dict[str, Any]:
         raw_issues = [issue for issue in report.get("issues", []) if isinstance(issue, dict)]
@@ -339,6 +388,7 @@ class ValidatePptxTool(LLMTool):
             "rendered_nearly_blank",
             "rendered_corner_cluster",
             "high_text_density",
+            "text_placeholder_residue",
             "validation_error",
             "rendered_visual_qa_unavailable",
         }
@@ -348,6 +398,7 @@ class ValidatePptxTool(LLMTool):
             "expected_font_missing",
             "repeated_layout_pattern",
             "rendered_dense_composition",
+            "text_shape_overlap",
         }
         if issue_type in high:
             return "high"
@@ -368,6 +419,8 @@ class ValidatePptxTool(LLMTool):
             "rendered_corner_cluster": "渲染内容异常集中在页面左上角。",
             "high_text_density": "页面文字行数或字符数超过高密度阈值。",
             "moderate_text_density": "页面文字行数或字符数接近密集阈值。",
+            "text_placeholder_residue": "页面存在占位符残留（xxx/TODO/占位/待补充等），交付前必须清除。",
+            "text_shape_overlap": "两个文本框显著重叠（重叠面积占较小框 >25%），文字会互相压盖。",
             "text_only_slide": "页面主要由文本框组成，缺少图表、图片、表格或形状等视觉元素。",
             "tiny_text": "页面存在小于可读阈值的字号。",
             "expected_font_missing": "PDF 字体检测未发现期望字体。",
@@ -590,6 +643,8 @@ class ValidatePptxTool(LLMTool):
             font_sizes: List[float] = []
             shape_signature = []
             slide_text_parts: List[str] = []
+            text_bboxes: List[tuple[float, float, float, float]] = []
+            placeholders: List[Dict[str, Any]] = []
 
             for shape in slide.shapes:
                 left = round(int(getattr(shape, "left", 0) or 0) / 914400, 1)
@@ -605,6 +660,12 @@ class ValidatePptxTool(LLMTool):
                         text_boxes += 1
                         text_chars += len(text)
                         text_lines += max(1, len([line for line in text.splitlines() if line.strip()]))
+                        if width > 0 and height > 0:
+                            text_bboxes.append((left, top, width, height))
+                        if PLACEHOLDER_RE.search(text):
+                            placeholders.append(
+                                {"type": "text_placeholder_residue", "slide": slide_index, "excerpt": text[:24]}
+                            )
                     if len(text) > 2:
                         for paragraph in shape.text_frame.paragraphs:
                             for run in paragraph.runs:
@@ -635,7 +696,14 @@ class ValidatePptxTool(LLMTool):
             previous_signature = signature
 
             score = 100
-            slide_issues: List[Dict[str, Any]] = []
+            slide_issues: List[Dict[str, Any]] = list(placeholders)
+            score -= 25 * len(placeholders)
+            overlaps = self._text_overlap_pairs(text_bboxes)
+            if overlaps:
+                score -= 12 * min(len(overlaps), 3)
+                slide_issues.append(
+                    {"type": "text_shape_overlap", "slide": slide_index, "pairs": overlaps[:5]}
+                )
             # A card/dashboard layout commonly uses many short text boxes. Count
             # it as high density only when line count and actual copy volume agree.
             if text_chars > 900 or (text_lines > 30 and text_chars > 600):
@@ -667,7 +735,12 @@ class ValidatePptxTool(LLMTool):
                     slide_issues.append({"type": "low_typographic_contrast", "slide": slide_index})
 
             score = max(0, score)
-            issues.extend(issue for issue in slide_issues if issue["type"] in {"high_text_density", "text_only_slide", "tiny_text"})
+            issues.extend(
+                issue
+                for issue in slide_issues
+                if issue["type"]
+                in {"high_text_density", "text_only_slide", "tiny_text", "text_placeholder_residue", "text_shape_overlap"}
+            )
             slide_scores.append(
                 {
                     "slide": slide_index,

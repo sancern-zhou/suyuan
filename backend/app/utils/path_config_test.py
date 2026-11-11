@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from app.tools.office.ppt_master_tool import CreatePptxWithPptMasterTool
 from app.tools.office.read_pptx_tool import ReadPptxTool
 from app.tools.office.validate_pptx_tool import ValidatePptxTool
 from app.tools.utility import bash_tool, edit_file_tool_v2, glob_tool, list_directory_tool
@@ -80,14 +79,11 @@ def test_bash_working_directory_uses_project_relative_contract(tmp_path, monkeyp
     assert tool._resolve_working_dir("backend/jobs") == target.resolve()
 
 
-def test_office_agent_paths_do_not_depend_on_process_cwd(tmp_path, monkeypatch):
+def test_pptx_agent_paths_do_not_depend_on_process_cwd(tmp_path, monkeypatch):
     monkeypatch.setattr(path_config, "PROJECT_ROOT", tmp_path)
     expected = (tmp_path / "deliverables/deck.pptx").resolve()
     assert ReadPptxTool()._resolve_path("deliverables/deck.pptx") == expected
     assert ValidatePptxTool()._resolve_path("deliverables/deck.pptx") == expected
-    assert CreatePptxWithPptMasterTool()._resolve_output_file(
-        "deliverables/deck.pptx", "ignored"
-    ) == expected
 
 
 def test_backend_output_paths_keep_backend_prefix(tmp_path, monkeypatch):

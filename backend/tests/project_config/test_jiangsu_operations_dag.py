@@ -103,13 +103,9 @@ def test_parent_function_schema_exposes_only_its_internal_roles(jiangsu, monkeyp
 
 
 def task(task_id, mode, dependencies=()):
+    # 2026-11-11 合并 main（fa27df8d）：节点契约由 goal 承载，task_contract 退役为可选透传字段。
     return {"task_id": task_id, "target_mode": mode, "goal": task_id,
-            "dependencies": list(dependencies), "task_contract": {
-                "protocol_version": "workflow.v1", "task_type": "expert_analysis", "question": task_id,
-                "scope": {"time_range": {"start": "2026-09-01", "end": "2026-09-30"},
-                          "objects": ["省控站点"], "metric_definitions": "Fault工单，无超期率"},
-                "required_evidence": ["共享工单记录"], "deliverables": ["结论和证据"],
-            }}
+            "dependencies": list(dependencies)}
 
 
 @pytest.mark.asyncio
@@ -131,12 +127,19 @@ async def test_real_dag_parallel_analysis_and_extension_reuse_sources(jiangsu, m
                     both.set()
                 await asyncio.wait_for(both.wait(), 2)
                 assert any(handle.get("file_path") == str(source) for handle in kwargs["_upstream_handles"])
-            assert kwargs["result_schema"]["x-evidence-references"]
-            assert kwargs["task_contract"]["result_schema"] == kwargs["result_schema"]
+            if goal == "risk":
+                # require_counter_evidence 显式 opt-in：项目注入证据引用 schema。
+                assert kwargs["result_schema"]["x-evidence-references"]
+            elif goal == "data":
+                # 调用方自带 schema 优先：宽松 schema 原样透传，不被项目契约覆盖。
+                assert kwargs["result_schema"] == {"type": "object"}
+            else:
+                assert kwargs["result_schema"] is None
             result = {"status": "completed", "findings": [{"statement": goal, "evidence_ids": ["e1"], "counter_evidence": [], "alternative_explanations": []}],
                       "evidence": [{"id": "e1", "source": "共享工单记录", "locator": str(source)}],
                       "uncertainties": [], "data_gaps": []}
-            assert validate_result_schema(result, kwargs["result_schema"]) == []
+            if kwargs.get("result_schema"):
+                assert validate_result_schema(result, kwargs["result_schema"]) == []
             return {"status": "success", "success": True, "result": goal,
                     "data": {"structured_result": result, "result_envelope": result, "file_paths": [str(source)]}}
 
@@ -165,8 +168,8 @@ async def test_real_dag_parallel_analysis_and_extension_reuse_sources(jiangsu, m
     workflow = {"workflow_id": "monthly", "nodes": [task("data", "jiangsu_ops_data_workorder"),
                 task("coverage", "jiangsu_ops_regular_analysis", ["data"]),
                 task("risk", "jiangsu_ops_risk_analysis", ["data"])]}
-    # Worker checkpoints may wrap payloads. A caller's loose nested schema
-    # must not shadow the enforced project result contract.
+    # 调用方自带宽松 schema 按新契约原样透传（caller schema 优先）；项目仅在
+    # require_counter_evidence 模式且未自带 schema 时注入证据契约。
     data_node = workflow["nodes"][0]
     workflow["nodes"][0] = {"task_id": "data", "payload": {
         **{key: value for key, value in data_node.items() if key != "task_id"},
@@ -188,13 +191,18 @@ async def test_real_dag_parallel_analysis_and_extension_reuse_sources(jiangsu, m
 
 
 @pytest.mark.asyncio
-async def test_missing_contract_and_out_of_scope_delegation_fail_before_children(jiangsu):
+async def test_goal_only_node_accepted_and_out_of_scope_delegation_fails(jiangsu):
+    """合并 main 后节点契约由 goal 承载：缺 task_contract 不再拒收，越权委派仍在子会话前拦截。"""
+    from app.agent.workflow.project_policy import prepare_node
+
     value = task("risk", "jiangsu_ops_risk_analysis")
-    value.pop("task_contract")
+    prepare_node(value)
+    assert value["iteration_cap"] == 14
+    assert value["timeout_cap"] == 360
+    # 反证模式 opt-in 注入证据契约；非反证模式不注入。
+    assert value["result_schema"]["x-evidence-references"]
+
     tool = RunAgentWorkflowTool()
-    result = await tool.execute(context=SimpleNamespace(runtime_mode="operations_analysis"), workflow={"nodes": [value]})
-    assert not result["success"]
-    assert "task_contract" in result["summary"]
     result = await tool.execute(context=SimpleNamespace(runtime_mode="assistant"),
                                 workflow={"nodes": [task("risk", "jiangsu_ops_risk_analysis")]})
     assert not result["success"]

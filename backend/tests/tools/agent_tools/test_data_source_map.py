@@ -133,3 +133,31 @@ def test_granularity_is_injected_into_agent_system_prompt():
     prompt = build_react_system_prompt("query_monitoring")
 
     assert "粒度：逐小时/逐日/逐年" in prompt
+
+
+def test_project_scoped_entries_render_only_for_matching_project(tmp_path, monkeypatch):
+    """projects 标签条目仅对标注项目渲染；未标注条目全项目可见。"""
+    _write_catalog(
+        tmp_path,
+        """
+sources:
+  - domain: 共享域（国控历史）
+    route: sql
+    locator: city_aqi_publish_history
+  - domain: 许昌专属域（中台 Cube）
+    route: tool
+    locator: xuchang_cube_metrics
+    projects: [xuchang]
+""",
+    )
+    monkeypatch.setattr(data_source_map, "_catalog_path", lambda: tmp_path / data_source_map.CATALOG_FILENAME)
+
+    monkeypatch.setattr(data_source_map, "_current_project_id", lambda: "xuchang")
+    entries = load_data_source_catalog(refresh=True)
+    assert [item["domain"] for item in entries] == ["共享域（国控历史）", "许昌专属域（中台 Cube）"]
+    assert "许昌专属域（中台 Cube）" in render_data_source_map()
+
+    monkeypatch.setattr(data_source_map, "_current_project_id", lambda: "default")
+    entries = load_data_source_catalog(refresh=True)
+    assert [item["domain"] for item in entries] == ["共享域（国控历史）"]
+    assert "许昌专属域（中台 Cube）" not in render_data_source_map()

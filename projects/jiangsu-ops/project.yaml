@@ -230,7 +230,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_data_alarm:
       positioning: 告警与事件数据准备
       scope: 站点告警、智能事件与报警积压的批量指标、受控明细与数据对齐
@@ -238,7 +237,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_data_inspection:
       positioning: 巡检数据准备
       scope: 巡检任务项数、超期(周期结束未完成)、周期类型/人员/站点分布与受控明细
@@ -246,7 +244,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_data_qc:
       positioning: 质控数据准备
       scope: 质控执行量与不合格数、质控安排与已过期任务、补测闭环的批量指标与受控明细
@@ -254,7 +251,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_data_device:
       positioning: 设备与停电数据准备
       scope: 设备生命周期事件、设备参数与台账、停电报备单及时长、站房动环供电历史
@@ -264,7 +260,6 @@ backend:
       # 2026-10-19: 数据域墙钟统一 300s（原 180s 多次击穿；重试扩容受 timeout_cap 封顶，须同步抬高策略值）
       max_iterations: 14
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_data_station:
       positioning: 站点与人员数据准备
       scope: 站点健康快照、站点日概况、站点与设备台账、到站签到条数与签到轨迹
@@ -272,7 +267,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_data_rates:
       positioning: 平台率值数据准备
       scope: 数据获取率、有效率、传输率等平台统计口径指标及其分母可用性
@@ -280,7 +274,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_regular_analysis:
       positioning: 常态监管专题分析
       scope: 复用共享数据回答一个人员覆盖、故障处置、告警、巡检或质控问题
@@ -288,7 +281,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
       max_iterations: 12
       timeout_seconds: 300
-      max_deliverables: 3
     jiangsu_ops_risk_analysis:
       positioning: 风险线索专题分析
       require_counter_evidence: true
@@ -297,7 +289,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
       max_iterations: 14
       timeout_seconds: 360
-      max_deliverables: 3
     jiangsu_ops_evidence:
       positioning: 定向证据核验
       scope: 按明确站点、工单、窗口核验实时记录和历史明细
@@ -305,7 +296,6 @@ backend:
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 8
       timeout_seconds: 300
-      max_deliverables: 3
   agent_workflow_parents:
     operations_analysis:
       child_modes:

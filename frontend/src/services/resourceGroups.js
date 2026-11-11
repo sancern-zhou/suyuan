@@ -3,9 +3,9 @@ import { isTaskReviewCatalogResource } from './visualizationTypes.js'
 const PRODUCT_ROLES = new Set(['output', 'report'])
 const PRODUCT_KINDS = new Set(['data', 'file', 'artifact', 'visual'])
 const SUPPORTED_RENDERERS = new Set([
-  'pdf', 'html', 'markdown', 'spreadsheet', 'presentation', 'image', 'chart', 'board'
+  'pdf', 'html', 'markdown', 'spreadsheet', 'presentation', 'image', 'chart', 'board', 'docx'
 ])
-const DOCUMENT_RENDERERS = new Set(['pdf', 'html', 'markdown', 'spreadsheet', 'presentation'])
+const DOCUMENT_RENDERERS = new Set(['pdf', 'html', 'markdown', 'spreadsheet', 'presentation', 'docx'])
 const PREVIEW_TABS = new Set(['document', 'visualization', 'board'])
 
 const newestFirst = (left, right) => {
@@ -59,6 +59,10 @@ export function preferredPreview(group) {
   if (group?.primary?.renderer === 'chart' && group.primary.status === 'active') return group.primary
   // Web 端有交互表格渲染器：xlsx 组优先主文档，PDF 预览留给无表格能力的场景
   if (group?.primary?.renderer === 'spreadsheet' && group.primary.status === 'active') {
+    return group.primary
+  }
+  // Web 端有 docx 原生渲染器：优先主文档（即时渲染），组内 PDF 派生只是 QA 产物
+  if (group?.primary?.renderer === 'docx' && group.primary.status === 'active') {
     return group.primary
   }
   return active.find(resource => resource.relation === 'preview' && SUPPORTED_RENDERERS.has(resource.renderer))

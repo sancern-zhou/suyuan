@@ -33,8 +33,7 @@ def test_run_agent_workflow_schema_documents_free_form_dag():
     for token in (
         "自主决定",
         "nodes",
-        "dependencies",
-        "task_contract",
+        "goal",
         "result_schema",
         "expert_meteorology",
         "expert_analysis",
@@ -59,7 +58,7 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
     description = schema["description"]
     target_mode = schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]
 
-    assert "能力与工具边界" in description
+    assert "定位与边界" in description
     assert "同源数据由一个节点获取，后续节点通过 dependencies 复用" in description
     assert {"query", "expert", "report"}.isdisjoint(target_mode["enum"])
     call_target_mode = CallSubAgentTool().get_function_schema()["parameters"]["properties"]["target_mode"]
@@ -69,54 +68,34 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
 def test_run_agent_workflow_schema_requires_one_question_per_expert_node():
     schema = RunAgentWorkflowTool().get_function_schema()
     description = schema["description"]
-    assert "一个专家节点只能回答一个分析问题" in description
-    assert "deliverables 最多 3 项" in description
+    assert "一个专家节点只回答一个独立问题" in description
+    assert "input_contracts" not in description
+    assert "output_contract" not in description
+    assert "input_contracts" not in schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]
+    assert "output_contract" not in schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]
 
 
 @pytest.mark.asyncio
-async def test_run_agent_workflow_rejects_overloaded_expert_node():
-    result = await RunAgentWorkflowTool().execute(
-        workflow={
-            "workflow_id": "overloaded-expert",
-            "nodes": [{
-                "task_id": "analysis-all",
-                "target_mode": "expert_analysis",
-                "goal": "完成所有分析",
-                "task_contract": {
-                    "deliverables": ["相关性", "超标统计", "时空对比", "趋势图"],
-                },
-            }],
-        },
-    )
-    assert result["success"] is False
-    assert "超过专家节点上限" in result["result"]
+async def test_expert_node_does_not_require_fixed_task_contract(monkeypatch):
+    seen = {}
 
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            seen.update(kwargs)
+            return {"status": "success", "success": True, "data": {}}
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("node,expect", [
-    (
-        {"task_id": "met-all", "target_mode": "expert_meteorology", "goal": "气象集中研判"},
-        "缺少 task_contract",
-    ),
-    (
-        {"task_id": "analysis-all", "target_mode": "expert_analysis", "goal": "集中研判",
-         "task_contract": {"protocol_version": "workflow.v1", "question": "成因"}},
-        "缺少 deliverables",
-    ),
-    (
-        {"task_id": "analysis-empty", "target_mode": "expert_analysis", "goal": "集中研判",
-         "task_contract": {"protocol_version": "workflow.v1", "question": "成因", "deliverables": []}},
-        "为空",
-    ),
-])
-async def test_report_expert_node_requires_contract_with_deliverables(node, expect):
-    """专家节点必须携带 task_contract.deliverables（1~3 项），缺失即整单拒绝。"""
+    monkeypatch.setattr(RunAgentWorkflowTool, "_build_sub_agent_tool", staticmethod(FakeSubAgentTool))
     result = await RunAgentWorkflowTool().execute(
-        workflow={"workflow_id": "granularity", "nodes": [node]},
+        workflow={"workflow_id": "simple-expert", "nodes": [{
+            "task_id": "analysis",
+            "target_mode": "expert_analysis",
+            "goal": "回答一个独立分析问题",
+        }]},
+        run_in_background=False,
     )
-    assert result["success"] is False
-    assert expect in result["result"]
-    assert "拆" in result["result"]
+    assert result["success"] is True
+    assert seen["goal"] == "回答一个独立分析问题"
+    assert seen["task_contract"] is None
 
 
 def test_call_sub_agent_extracts_current_tool_result_file_handles():
@@ -243,7 +222,7 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
     assert all(call["_force_isolated_session"] is True for call in calls)
     assert all(call["max_iterations"] == 20 for call in calls)
     assert all(
-        node["timeout_seconds"] == 360
+        node["timeout_seconds"] == 900
         for node in result["data"]["node_results"].values()
     )
 
@@ -282,9 +261,9 @@ async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
     assert by_mode["expert_analysis"]["max_iterations"] == 20
     views = result["data"]["node_results"]
     assert views["weather"]["target_mode"] == "expert_meteorology"
-    assert views["weather"]["timeout_seconds"] == 300
+    assert views["weather"]["timeout_seconds"] == 900
     assert views["analysis"]["target_mode"] == "expert_analysis"
-    assert views["analysis"]["timeout_seconds"] == 360
+    assert views["analysis"]["timeout_seconds"] == 900
 
 
 @pytest.mark.asyncio
@@ -402,7 +381,7 @@ async def test_run_agent_workflow_returns_compact_view_and_persists_full_results
                         "status": "completed_with_gaps",
                         "summary": "分析完成。\n" + embedded_json,
                         "evidence": [],
-                        "data_gaps": ["组分数据缺测"],
+                        "outputs": {"data_gaps": ["组分数据缺测"]},
                     },
                 },
                 "metadata": {
@@ -557,7 +536,7 @@ async def test_non_report_mode_allows_expert_nodes(monkeypatch):
         }
 
     monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
-    context = SimpleNamespace(runtime_mode="assistant", session_id="assistant_session_x")
+    context = SimpleNamespace(runtime_mode="expert", session_id="expert_session_x")
     result = await RunAgentWorkflowTool().execute(
         context=context,
         workflow={
@@ -694,7 +673,7 @@ async def test_non_report_mode_rejects_generic_query(monkeypatch):
         }
 
     monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
-    context = SimpleNamespace(runtime_mode="assistant", session_id="assistant_session_x")
+    context = SimpleNamespace(runtime_mode="expert", session_id="expert_session_x")
     result = await RunAgentWorkflowTool().execute(
         context=context,
         workflow={
@@ -737,3 +716,84 @@ async def test_run_agent_workflow_query_nodes_get_at_least_eight_iterations(monk
     by_goal = {call["goal"]: call for call in calls}
     assert by_goal["城市取数"]["max_iterations"] == 8
     assert by_goal["气象取数"]["max_iterations"] == 20
+
+
+@pytest.mark.asyncio
+async def test_expert_node_timeout_floor_overrides_authored_smaller_value(monkeypatch):
+    """D6（2026-11-05）：分析子 agent 超时下限 900s——编排写 300s 也抬到下限。"""
+    calls = []
+
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            calls.append(kwargs)
+            return {"status": "success", "success": True, "result": "ok", "data": {}}
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    result = await RunAgentWorkflowTool().execute(
+        workflow={
+            "workflow_id": "timeout-floor",
+            "nodes": [
+                {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象分析",
+                 "timeout_seconds": 300,
+                 "task_contract": {"protocol_version": "workflow.v1", "question": "静稳形势",
+                                   "deliverables": ["静稳指数"]}},
+            ],
+        },
+    )
+    assert result["success"] is True, result
+    # 超时由 coordinator 按节点定义的 asyncio.timeout 执行，不随 kwargs 下发；
+    # 下限生效体现在节点视图 timeout_seconds 被抬到 900
+    assert result["data"]["node_results"]["met"]["timeout_seconds"] == 900
+
+
+def test_compact_node_view_surfaces_published_charts_and_artifact_paths(tmp_path):
+    """D7：紧凑节点视图保留子信封图表声明形状，并以 published_charts 暴露可引用图表资源。"""
+    from app.tools.agent_tools.run_agent_workflow import compact_parent_node_result
+
+    chart_png = tmp_path / "fig_demo.png"
+    chart_png.write_bytes(b"\x89PNG\r\n")
+    node = {
+        "status": "success",
+        "success": True,
+        "result": "分析完成",
+        "data": {
+            "file_paths": [str(chart_png)],
+            "resource_refs": [{
+                "handle_type": "session_resource",
+                "source_session_id": "child-session",
+                "resource_id": "res-chart-1",
+                "resource_key": "chart-image",
+                "kind": "file",
+                "label": "清远10月AQI时序图",
+                "locator": {"path": str(chart_png)},
+            }],
+            "structured_result": {
+                "status": "completed", "summary": "s", "findings": [], "evidence": [],
+                "uncertainties": [], "data_gaps": [],
+                "artifacts": [{"type": "chart", "path": str(chart_png), "description": "时序图"}],
+                "deliverables": [{"format": "png", "path": str(chart_png)}],
+            },
+        },
+        "metadata": {},
+        "result_envelope": {
+            "status": "completed", "summary": "s", "findings": [], "evidence": [],
+            "uncertainties": [], "data_gaps": [],
+            "artifacts": [{"type": "chart", "path": str(chart_png), "description": "时序图"}],
+        },
+    }
+    view = compact_parent_node_result(
+        "charts", node, target_mode="expert_analysis", max_iterations=20, timeout_seconds=900,
+    )
+    # 子信封图表声明不再塌缩成空对象
+    assert view["result_envelope"]["artifacts"][0]["type"] == "chart"
+    assert view["result_envelope"]["artifacts"][0]["path"] == str(chart_png)
+    # 已发布图表资源成列：父侧可 [[chart:<resource_id>]] 引用或作为报告 image assets
+    assert view["published_charts"] == [{
+        "resource_id": "res-chart-1",
+        "label": "清远10月AQI时序图",
+        "path": str(chart_png),
+    }]

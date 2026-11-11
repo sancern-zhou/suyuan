@@ -238,6 +238,15 @@ backend/docs/skills/*
 !backend/docs/skills/SKILLS_INDEX.md
 !backend/docs/skills/analysis_report_workflow.md
 !backend/docs/skills/生态环境招投标市场分析.md
+!backend/docs/skills/pptx_authoring.md
+!backend/docs/skills/pptx_authoring/
+!backend/docs/skills/pptx_authoring/**
+!backend/docs/skills/docx_authoring.md
+!backend/docs/skills/docx_authoring/
+!backend/docs/skills/docx_authoring/**
+!backend/docs/skills/xlsx_authoring.md
+!backend/docs/skills/xlsx_authoring/
+!backend/docs/skills/xlsx_authoring/**
 scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py
@@ -308,3 +317,5 @@ backend/.tmp-pytest/
 # 本机部署专属（不入 git）
 迁移包/
 deploy/nginx/templates-local/
+# ZCode 会话产物（计划存档等本地文件）
+.zcode/

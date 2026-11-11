@@ -79,14 +79,18 @@ def test_render_contracts_empty_when_missing(tmp_path, monkeypatch):
     assert render_table_contracts() == ""
 
 
-def test_tool_description_embeds_contracts(tmp_path, monkeypatch):
+def test_tool_description_routes_to_describe_table_not_embeds_contracts(tmp_path, monkeypatch):
+    """预算策略：描述只留路由与红线，字段契约走 describe_table 按需通道。"""
     _use_tmp_contracts(tmp_path, monkeypatch)
     tool = ExecuteCrawlerSQLQueryTool()
     description = tool.function_schema["description"]
-    assert "表字段契约" in description
-    assert "PositionName" in description
-    assert "DataTypePlan" in description  # 口径列进契约
-    # 手写表说明已移除，不再有漂移文本
+    # 契约与逐表字段不再内联进描述
+    assert "表字段契约" not in description
+    assert "DataTypePlan" not in description
+    # 路由保留：白名单、口径红线与 describe_table 指引
+    assert "describe_table" in description
+    assert "StationDay" in description
+    assert "统计口径硬规则" in description
     assert "站点字段 StationCode/StationName/" not in description
 
 
@@ -156,13 +160,18 @@ async def test_non_column_failure_keeps_describe_guidance(tmp_path, monkeypatch)
 
 
 def test_deployment_contract_matches_crawler_whitelist():
-    """提交的契约文件必须覆盖采集库全部白名单表（防遗漏）。"""
+    """契约文件必须只收录白名单表，且本部署存在的白名单表不得遗漏。
+
+    白名单是多项目超集（postgres 工具同款模式：项目专属表并入共享白名单，
+    其他部署查询得到"未找到白名单表"明确提示），因此方向为
+    contracts ⊆ whitelist；契约文件按部署生成，天然只含本库真实存在的表。
+    """
     from app.tools.query.execute_crawler_sql_query.tool import CRAWLER_SQL_TABLES
 
     contracts = load_table_contracts(refresh=True)
     if contracts is None:
         pytest.skip("未配置 data_table_contracts.yaml")
-    assert set(contracts["tables"]) == set(CRAWLER_SQL_TABLES)
+    assert set(contracts["tables"]) <= set(CRAWLER_SQL_TABLES)
     for table, info in contracts["tables"].items():
         names = []
         for key in ("time_columns", "dimension_columns", "value_columns", "mark_columns", "caliber_columns"):

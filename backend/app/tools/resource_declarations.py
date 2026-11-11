@@ -502,6 +502,9 @@ def generated_file_products(
         capabilities: tuple[str, ...] = ("download",)
         if suffix == ".pdf":
             renderer, capabilities = "pdf", ("preview", "download")
+        elif suffix == ".docx":
+            # Web 端 docx 原生渲染与编辑（docx-editor viewing/editing 模式），无需 PDF 派生
+            renderer, capabilities = "docx", ("preview", "download", "edit")
         elif suffix in {".html", ".htm"}:
             renderer, capabilities = "html", ("preview", "download")
         elif suffix in {".md", ".qmd"}:

@@ -12,7 +12,7 @@ export function workflowCanResume(snapshot = {}, status = snapshot?.status) {
 
 export function workflowGaps(snapshot = {}) {
   snapshot ||= {}
-  if (snapshot.delivery?.gaps) return snapshot.delivery.gaps
+  if (snapshot.delivery?.gaps) return snapshot.delivery.gaps.filter(gap => gap.status !== 'resource_gap')
   return Object.entries(snapshot.graph || {}).filter(([, node]) =>
     ['failed', 'blocked'].includes(node.status)).map(([task_id, node]) => ({
     task_id, status: node.status, reason: snapshot.node_errors?.[task_id] || '缺少上游证据',
