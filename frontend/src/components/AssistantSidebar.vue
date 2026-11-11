@@ -303,7 +303,7 @@ import {
   toggleConversationListView,
   writeSidebarConversationLayout
 } from './conversationListPolicy.js'
-import { AGENT_MODES, AGENT_MODE_IDS } from '@/config/agentModes.js'
+import { AGENT_MODE_IDS, getAgentMode } from '@/config/agentModes.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
 import AppDownloadQrcodeDialog from '@/components/AppDownloadQrcodeDialog.vue'
 
@@ -489,7 +489,7 @@ const agentModeHeader = mode => {
   if (mode === 'other') {
     return { label: '其他' }
   }
-  const meta = AGENT_MODES.find(item => item.id === mode)
+  const meta = getAgentMode(mode, projectConfig.agentModeOverrides)
   return { label: meta?.shortName || meta?.name || mode }
 }
 

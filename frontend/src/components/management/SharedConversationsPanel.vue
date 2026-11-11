@@ -157,7 +157,8 @@ import { useAuthStore } from '@/auth/authStore.js'
 import { authFetch } from '@/auth/http.js'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
-import { AGENT_MODES } from '@/config/agentModes.js'
+import { getAgentMode } from '@/config/agentModes.js'
+import { projectConfig } from '@/config/projectConfig.js'
 import {
   deleteSharedConversation,
   getSharedConversation,
@@ -241,7 +242,7 @@ function badgeColor(share) {
 }
 
 function modeChip(share) {
-  const mode = AGENT_MODES.find(item => item.id === share?.mode)
+  const mode = getAgentMode(share?.mode, projectConfig.agentModeOverrides)
   if (!mode) return null
   return { label: mode.shortName || mode.name, accent: mode.accent || '#2878ff' }
 }
