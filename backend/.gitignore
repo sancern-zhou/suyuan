@@ -106,6 +106,8 @@ __tmp_*.py
 !app/tools/**/*.png
 !app/tools/**/*.jpg
 !app/tools/**/*.jpeg
+# 许可证抓取器测试夹具是仓库文件（此前靠强制添加维持）
+!app/fetchers/emission/permit_license_crawler/tests/fixtures/*.html
 $null
 nul
 
