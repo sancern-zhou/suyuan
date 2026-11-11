@@ -96,7 +96,7 @@ async def test_visual_id_placeholder_is_kept_unchanged():
 async def test_unknown_and_non_chart_ids_are_kept_unchanged():
     session_id = "expert_session_test"
     service = SessionResourceService.in_memory()
-    id_to_visual = await _publish_session(service, session_id)
+    await _publish_session(service, session_id)
     data_resources = [
         resource for resource in service._state.resources.values()
         if resource.resource_key == "primary:data"
