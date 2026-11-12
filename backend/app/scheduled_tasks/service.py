@@ -389,10 +389,10 @@ class ScheduledTaskService:
                 trigger_type="manual" if manual else None,
             )
             if execution.status != ExecutionStatus.SUCCESS:
-                self.task_storage.update_run_stats(task.task_id, success=False)
+                await asyncio.to_thread(self.task_storage.update_run_stats, task.task_id, False)
                 return execution
 
-            self.task_storage.update_run_stats(task.task_id, success=True)
+            await asyncio.to_thread(self.task_storage.update_run_stats, task.task_id, True)
             return execution
         except Exception as exc:
             logger.error(
@@ -416,12 +416,12 @@ class ScheduledTaskService:
                     trigger_type="manual" if manual else "scheduled",
                     error_message=str(exc),
                 )
-                self.execution_storage.create(execution)
+                await asyncio.to_thread(self.execution_storage.create, execution)
             else:
                 execution.status = ExecutionStatus.FAILED
                 execution.error_message = str(exc)
-                self.execution_storage.update(execution)
-            self.task_storage.update_run_stats(task.task_id, success=False)
+                await asyncio.to_thread(self.execution_storage.update, execution)
+            await asyncio.to_thread(self.task_storage.update_run_stats, task.task_id, False)
             return execution
 
         finally:
@@ -507,7 +507,7 @@ class ScheduledTaskService:
 
         return result
 
-    def _create_failed_event_execution(
+    async def _create_failed_event_execution(
         self,
         task: ScheduledTask,
         event: TaskEvent,
@@ -530,7 +530,7 @@ class ScheduledTaskService:
             event_attributes=event.attributes,
             error_message=error,
         )
-        self.execution_storage.create(execution)
+        await asyncio.to_thread(self.execution_storage.create, execution)
         return execution
 
     async def _execute_event_task(
@@ -557,12 +557,12 @@ class ScheduledTaskService:
                     task.target_user_ids
                 )
                 if not recipients:
-                    execution = self._create_failed_event_execution(
+                    execution = await self._create_failed_event_execution(
                         task,
                         event,
                         "no active bound social recipients",
                     )
-                    self.task_storage.update_run_stats(task.task_id, success=False)
+                    await asyncio.to_thread(self.task_storage.update_run_stats, task.task_id, False)
                     self.claim_storage.mark_status(
                         claim_id,
                         "failed",
@@ -585,12 +585,12 @@ class ScheduledTaskService:
                 execution_id=execution.execution_id,
             )
             if execution.status != ExecutionStatus.SUCCESS:
-                self.task_storage.update_run_stats(task.task_id, success=False)
+                await asyncio.to_thread(self.task_storage.update_run_stats, task.task_id, False)
                 self.claim_storage.mark_status(claim_id, "failed")
                 await notify_event_result(task, event, execution)
                 return execution
 
-            self.task_storage.update_run_stats(task.task_id, success=True)
+            await asyncio.to_thread(self.task_storage.update_run_stats, task.task_id, True)
             self.claim_storage.mark_status(claim_id, "succeeded")
             await notify_event_result(task, event, execution)
             return execution
@@ -603,12 +603,12 @@ class ScheduledTaskService:
                 exc_info=True,
             )
             if execution is None:
-                execution = self._create_failed_event_execution(task, event, str(exc))
+                execution = await self._create_failed_event_execution(task, event, str(exc))
             else:
                 execution.status = ExecutionStatus.FAILED
                 execution.error_message = str(exc)
-                self.execution_storage.update(execution)
-            self.task_storage.update_run_stats(task.task_id, success=False)
+                await asyncio.to_thread(self.execution_storage.update, execution)
+            await asyncio.to_thread(self.task_storage.update_run_stats, task.task_id, False)
             self.claim_storage.mark_status(
                 claim_id,
                 "failed",
@@ -619,10 +619,10 @@ class ScheduledTaskService:
 
     async def retry_failed_delivery(self, execution_id: str) -> dict:
         """Retry only failed recipients using the stored Agent result."""
-        execution = self.execution_storage.get(execution_id)
+        execution = await asyncio.to_thread(self.execution_storage.get, execution_id)
         if not execution:
             raise ValueError(f"Execution {execution_id} not found")
-        task = self.task_storage.get(execution.task_id)
+        task = await asyncio.to_thread(self.task_storage.get, execution.task_id)
         if not task or not execution.event_id:
             raise ValueError("Execution is not an event task delivery")
         claim = self.claim_storage.get(task.task_id, execution.event_id)
@@ -659,7 +659,7 @@ class ScheduledTaskService:
             retried_by_user.get(row.get("user_id"), row)
             for row in execution.delivery_results
         ]
-        self.execution_storage.update(execution)
+        await asyncio.to_thread(self.execution_storage.update, execution)
         return {
             "success": all(row.get("sent") for row in retried),
             "retried_user_ids": failed_user_ids,

@@ -3,6 +3,7 @@
 保留最近50条执行记录
 """
 import json
+import threading
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime, timedelta
@@ -16,27 +17,34 @@ class ExecutionStorage:
 
     MAX_RECORDS = 50  # 最多保留50条记录
 
+    # 存储操作下放线程后不再被事件循环天然串行化；进程内多个实例可能指向
+    # 同一 executions.json，用类级锁保证读改写原子。
+    _LOCK = threading.RLock()
+
     def __init__(self, storage_dir: str = None):
         self.storage_dir = Path(storage_dir) if storage_dir else get_data_registry() / "scheduled_tasks"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.executions_file = self.storage_dir / "executions.json"
 
         # 初始化文件
-        if not self.executions_file.exists():
-            self._write_executions([])
+        with ExecutionStorage._LOCK:
+            if not self.executions_file.exists():
+                self._write_executions([])
 
     def _read_executions(self) -> List[dict]:
         """读取所有执行记录"""
         try:
-            with open(self.executions_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with ExecutionStorage._LOCK:
+                with open(self.executions_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return []
 
     def _write_executions(self, executions: List[dict]):
         """写入执行记录"""
-        with open(self.executions_file, "w", encoding="utf-8") as f:
-            json.dump(executions, f, ensure_ascii=False, indent=2, default=str)
+        with ExecutionStorage._LOCK:
+            with open(self.executions_file, "w", encoding="utf-8") as f:
+                json.dump(executions, f, ensure_ascii=False, indent=2, default=str)
 
     def _cleanup_old_records(self, executions: List[dict]) -> List[dict]:
         """清理旧记录，保留最近50条"""
@@ -49,17 +57,18 @@ class ExecutionStorage:
 
     def create(self, execution: TaskExecution) -> TaskExecution:
         """创建执行记录"""
-        executions = self._read_executions()
+        with ExecutionStorage._LOCK:
+            executions = self._read_executions()
 
-        # 添加记录
-        exec_dict = execution.model_dump(mode="json")
-        executions.append(exec_dict)
+            # 添加记录
+            exec_dict = execution.model_dump(mode="json")
+            executions.append(exec_dict)
 
-        # 清理旧记录
-        executions = self._cleanup_old_records(executions)
+            # 清理旧记录
+            executions = self._cleanup_old_records(executions)
 
-        self._write_executions(executions)
-        return execution
+            self._write_executions(executions)
+            return execution
 
     def get(self, execution_id: str) -> Optional[TaskExecution]:
         """获取执行记录"""
@@ -71,20 +80,21 @@ class ExecutionStorage:
 
     def update(self, execution: TaskExecution) -> TaskExecution:
         """更新执行记录"""
-        executions = self._read_executions()
-        updated = False
+        with ExecutionStorage._LOCK:
+            executions = self._read_executions()
+            updated = False
 
-        for i, exec_dict in enumerate(executions):
-            if exec_dict["execution_id"] == execution.execution_id:
-                executions[i] = execution.model_dump(mode="json")
-                updated = True
-                break
+            for i, exec_dict in enumerate(executions):
+                if exec_dict["execution_id"] == execution.execution_id:
+                    executions[i] = execution.model_dump(mode="json")
+                    updated = True
+                    break
 
-        if not updated:
-            raise ValueError(f"Execution {execution.execution_id} not found")
+            if not updated:
+                raise ValueError(f"Execution {execution.execution_id} not found")
 
-        self._write_executions(executions)
-        return execution
+            self._write_executions(executions)
+            return execution
 
     def list_by_task(
         self,
@@ -183,16 +193,17 @@ class ExecutionStorage:
 
     def delete_by_task(self, task_id: str) -> int:
         """删除任务的所有执行记录"""
-        executions = self._read_executions()
-        original_len = len(executions)
+        with ExecutionStorage._LOCK:
+            executions = self._read_executions()
+            original_len = len(executions)
 
-        executions = [e for e in executions if e["task_id"] != task_id]
-        deleted_count = original_len - len(executions)
+            executions = [e for e in executions if e["task_id"] != task_id]
+            deleted_count = original_len - len(executions)
 
-        if deleted_count > 0:
-            self._write_executions(executions)
+            if deleted_count > 0:
+                self._write_executions(executions)
 
-        return deleted_count
+            return deleted_count
 
     def get_statistics(self, task_id: Optional[str] = None, days: int = 7) -> dict:
         """获取统计信息"""

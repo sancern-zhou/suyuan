@@ -11,7 +11,7 @@ in ``app/services/smart_event_db.py`` (``_event_row_values`` /
 uses ``data["review_id"].astext`` and ``jsonb_extract_path_text``. Reconcile
 against the developer's original before further schema changes.
 """
-from sqlalchemy import Boolean, Column, DateTime, Index, String
+from sqlalchemy import Boolean, Column, DateTime, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db.database import Base
@@ -46,6 +46,10 @@ class SmartEventDB(Base):
 
     __table_args__ = (
         Index("ix_smart_events_time", latest_occurrence_time.desc(), event_start_time.desc()),
+        # 列表接口按 coalesce(latest_occurrence_time, event_start_time) 过滤排序
+        # （smart_event_db._time_column），与 migration 027 同款。
+        Index("ix_smart_events_effective_time",
+              func.coalesce(latest_occurrence_time, event_start_time).desc().nullslast()),
     )
 
 

@@ -194,8 +194,8 @@ class ScheduledTaskExecutor:
             event_attributes=event.attributes if event else {},
         )
 
-        # 保存执行记录
-        self.execution_storage.create(execution)
+        # 保存执行记录（执行存储走 run_db 阻塞等待，下放线程避免卡住 worker 事件循环）
+        await asyncio.to_thread(self.execution_storage.create, execution)
         logger.info(
             f"Started execution: {execution.execution_id} for task: {task.name}, "
             f"session_id: {task_session_id}"
@@ -204,7 +204,7 @@ class ScheduledTaskExecutor:
         # 历史执行记忆：任务专属案例库 + 长期记忆（不跨任务共享）
         case_storage = self._get_case_storage(task)
         history_section = (
-            build_history_section(task, case_storage, event=event)
+            await asyncio.to_thread(build_history_section, task, case_storage, event=event)
             if case_storage is not None else None
         )
         runtime_extra_tool_names = self._runtime_extra_tool_names(task)
@@ -246,7 +246,7 @@ class ScheduledTaskExecutor:
                     "workflow_result": workflow_result,
                     "tool_calls": execution.steps[-1].tool_calls,
                 })
-                self.execution_storage.update(execution)
+                await asyncio.to_thread(self.execution_storage.update, execution)
                 # 只有工作流正常返回且未抛异常时才算执行成功。
                 if execution.status == ExecutionStatus.RUNNING:
                     execution.status = ExecutionStatus.SUCCESS
@@ -297,7 +297,7 @@ class ScheduledTaskExecutor:
                     )
                 execution.steps.append(self._result_to_execution(result, prompt, "task"))
                 execution.completed_steps += 1
-                self.execution_storage.update(execution)
+                await asyncio.to_thread(self.execution_storage.update, execution)
 
                 # 只有工作流或 Agent 正常返回且未抛异常时才算执行成功。
                 if execution.status == ExecutionStatus.RUNNING:
@@ -365,7 +365,8 @@ class ScheduledTaskExecutor:
             # 结构化执行结论入库：时间/城市/站点/污染物/结论/图片/文档路径。
             # 写入失败只降级记录，不影响执行状态。
             try:
-                self._persist_task_result(
+                await asyncio.to_thread(
+                    self._persist_task_result,
                     task=task,
                     execution=execution,
                     event=event,
@@ -381,11 +382,12 @@ class ScheduledTaskExecutor:
                 )
 
             # 保存最终状态
-            self.execution_storage.update(execution)
+            await asyncio.to_thread(self.execution_storage.update, execution)
 
             # 更新任务统计
             if update_stats:
-                self.task_storage.update_run_stats(
+                await asyncio.to_thread(
+                    self.task_storage.update_run_stats,
                     task_id=task.task_id,
                     success=(execution.status == ExecutionStatus.SUCCESS),
                     next_run_at=None  # 由调度器更新

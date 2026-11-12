@@ -60,7 +60,8 @@ async def _consume_feedback(review_id, task, storage=None, feedback_id=None):
                     break
 
     storage = storage or TaskCaseStorage(task.task_id)
-    review = load_review(review_id)
+    # 全部 DB/文件操作经 to_thread 下放，避免阻塞 worker 事件循环（run_db 是阻塞等待）。
+    review = await asyncio.to_thread(load_review, review_id)
     if feedback_id:
         review = next((candidate for candidate in [review, *review.get('history', [])]
                        if (candidate.get('human_feedback') or {}).get('feedback_id') == feedback_id), None)
@@ -68,54 +69,62 @@ async def _consume_feedback(review_id, task, storage=None, feedback_id=None):
     if feedback.get('status') == 'completed' or not feedback:
         return
     feedback_id = feedback['feedback_id']
-    with storage._lock():
-        cases = storage.read_cases()
-        if not any(item.get('feedback_id') == feedback_id for item in cases):
-            related = [item.get('execution_id') for item in cases if any(
-                review_id in str(output.get('ref', '')) for output in item.get('outputs', []))]
-            case = {
-                'feedback_id': feedback_id, 'status': 'success',
-                'started_at': feedback['occurred_at'], 'related_execution_ids': related,
-                'trigger': {'type': 'human_feedback', 'event_id': feedback.get('event_id')},
-                'summary': f"事项 {feedback['subject_id']} 人工结论 {feedback['human']['decision']}："
-                           + (feedback['comment'] or '确认 AI 建议'),
-                'human_feedback': deepcopy(feedback),
-            }
-            with storage.cases_file.open('a', encoding='utf-8') as stream:
-                stream.write(json.dumps(case, ensure_ascii=False) + '\n')
-            storage._prune_cases()
-        meta = storage.read_meta()
-        version = int(meta.get('version', 0))
-        memory = storage.read_memory()
+
+    def prepare_case():
+        with storage._lock():
+            cases = storage.read_cases()
+            if not any(item.get('feedback_id') == feedback_id for item in cases):
+                related = [item.get('execution_id') for item in cases if any(
+                    review_id in str(output.get('ref', '')) for output in item.get('outputs', []))]
+                case = {
+                    'feedback_id': feedback_id, 'status': 'success',
+                    'started_at': feedback['occurred_at'], 'related_execution_ids': related,
+                    'trigger': {'type': 'human_feedback', 'event_id': feedback.get('event_id')},
+                    'summary': f"事项 {feedback['subject_id']} 人工结论 {feedback['human']['decision']}："
+                               + (feedback['comment'] or '确认 AI 建议'),
+                    'human_feedback': deepcopy(feedback),
+                }
+                with storage.cases_file.open('a', encoding='utf-8') as stream:
+                    stream.write(json.dumps(case, ensure_ascii=False) + '\n')
+                storage._prune_cases()
+            meta = storage.read_meta()
+            version = int(meta.get('version', 0))
+            memory = storage.read_memory()
+            return version, memory, meta.get('last_human_feedback_id')
+
+    version, memory, last_feedback_id = await asyncio.to_thread(prepare_case)
     try:
         # A retry after committing memory must not apply the same feedback again.
-        if meta.get('last_human_feedback_id') != feedback_id:
+        if last_feedback_id != feedback_id:
             distilled, updated_memory = await asyncio.wait_for(
                 _distill(task, memory, review),
                 timeout=task.history_learning.consolidation_timeout_seconds,
             )
-            with storage._lock():
-                latest_meta = storage.read_meta()
-                if int(latest_meta.get('version', 0)) != version:
-                    raise MemoryVersionConflictError('任务记忆已更新，反馈将在下次重新合并')
-                cases = storage.read_cases()
-                for case in cases:
-                    if case.get('feedback_id') == feedback_id:
-                        case['distilled'] = distilled
-                temporary = storage.cases_file.with_suffix('.feedback.tmp')
-                temporary.write_text(''.join(json.dumps(case, ensure_ascii=False) + '\n' for case in cases), encoding='utf-8')
-                temporary.replace(storage.cases_file)
-                storage._write_memory_unlocked(updated_memory, {
-                    **latest_meta, 'version': version + 1,
-                    'last_human_feedback_id': feedback_id,
-                    'last_consolidation_status': 'success',
-                    'updated_at': datetime.now().astimezone().isoformat(),
-                })
-                feedback.update(status='completed', completed_at=datetime.now().astimezone().isoformat())
-                feedback.pop('error', None)
-                feedback.pop('retry_after', None)
-                save_review(review)
-                return
+
+            def commit():
+                with storage._lock():
+                    latest_meta = storage.read_meta()
+                    if int(latest_meta.get('version', 0)) != version:
+                        raise MemoryVersionConflictError('任务记忆已更新，反馈将在下次重新合并')
+                    cases = storage.read_cases()
+                    for case in cases:
+                        if case.get('feedback_id') == feedback_id:
+                            case['distilled'] = distilled
+                    temporary = storage.cases_file.with_suffix('.feedback.tmp')
+                    temporary.write_text(''.join(json.dumps(case, ensure_ascii=False) + '\n' for case in cases), encoding='utf-8')
+                    temporary.replace(storage.cases_file)
+                    storage._write_memory_unlocked(updated_memory, {
+                        **latest_meta, 'version': version + 1,
+                        'last_human_feedback_id': feedback_id,
+                        'last_consolidation_status': 'success',
+                        'updated_at': datetime.now().astimezone().isoformat(),
+                    })
+                    feedback.update(status='completed', completed_at=datetime.now().astimezone().isoformat())
+                    feedback.pop('error', None)
+                    feedback.pop('retry_after', None)
+                    save_review(review)
+            await asyncio.to_thread(commit)
+            return
         feedback.update(status='completed', completed_at=datetime.now().astimezone().isoformat())
         feedback.pop('error', None)
         feedback.pop('retry_after', None)
@@ -123,7 +132,7 @@ async def _consume_feedback(review_id, task, storage=None, feedback_id=None):
         attempts = feedback.get('attempts', 0) + 1
         feedback.update(status='failed', attempts=attempts, error=str(exc)[:500],
                         retry_after=(datetime.now().astimezone() + timedelta(minutes=min(60, 2 ** min(attempts, 6)))).isoformat())
-    save_review(review)
+    await asyncio.to_thread(save_review, review)
 
 
 async def consume_pending_feedback():
@@ -132,8 +141,8 @@ async def consume_pending_feedback():
 
     now = datetime.now().astimezone().isoformat()
     processed = 0
-    for review in pending_feedback_reviews():
-        task = TaskStorage().get(review['task_id'])
+    for review in await asyncio.to_thread(pending_feedback_reviews):
+        task = await asyncio.to_thread(TaskStorage().get, review['task_id'])
         if task is None or not task.history_learning.enabled:
             continue
         for candidate in [*review.get('history', []), review]:

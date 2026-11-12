@@ -3,6 +3,7 @@
 """
 import json
 import os
+import threading
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -14,42 +15,50 @@ from app.utils.path_config import get_data_registry
 class TaskStorage:
     """任务存储"""
 
+    # 进程内可能存在多个实例指向同一 tasks.json；存储操作下放线程后不再被
+    # 事件循环天然串行化，必须用类级锁保证读改写原子。
+    _LOCK = threading.RLock()
+
     def __init__(self, storage_dir: str = None):
         self.storage_dir = Path(storage_dir) if storage_dir else get_data_registry() / "scheduled_tasks"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.tasks_file = self.storage_dir / "tasks.json"
 
         # 初始化文件
-        if not self.tasks_file.exists():
-            self._write_tasks([])
+        with TaskStorage._LOCK:
+            if not self.tasks_file.exists():
+                self._write_tasks([])
 
     def _read_tasks(self) -> List[dict]:
         """读取所有任务"""
         try:
-            with open(self.tasks_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with TaskStorage._LOCK:
+                with open(self.tasks_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return []
 
     def _write_tasks(self, tasks: List[dict]):
         """写入所有任务"""
-        with open(self.tasks_file, "w", encoding="utf-8") as f:
-            json.dump(tasks, f, ensure_ascii=False, indent=2, default=str)
+        with TaskStorage._LOCK:
+            with open(self.tasks_file, "w", encoding="utf-8") as f:
+                json.dump(tasks, f, ensure_ascii=False, indent=2, default=str)
 
     def create(self, task: ScheduledTask) -> ScheduledTask:
         """创建任务"""
-        tasks = self._read_tasks()
+        with TaskStorage._LOCK:
+            tasks = self._read_tasks()
 
-        # 检查ID是否已存在
-        if any(t["task_id"] == task.task_id for t in tasks):
-            raise ValueError(f"Task ID {task.task_id} already exists")
+            # 检查ID是否已存在
+            if any(t["task_id"] == task.task_id for t in tasks):
+                raise ValueError(f"Task ID {task.task_id} already exists")
 
-        # 添加任务
-        task_dict = task.model_dump(mode="json")
-        tasks.append(task_dict)
-        self._write_tasks(tasks)
+            # 添加任务
+            task_dict = task.model_dump(mode="json")
+            tasks.append(task_dict)
+            self._write_tasks(tasks)
 
-        return task
+            return task
 
     def get(self, task_id: str) -> Optional[ScheduledTask]:
         """获取任务"""
@@ -84,35 +93,37 @@ class TaskStorage:
 
     def update(self, task: ScheduledTask) -> ScheduledTask:
         """更新任务"""
-        tasks = self._read_tasks()
-        updated = False
+        with TaskStorage._LOCK:
+            tasks = self._read_tasks()
+            updated = False
 
-        for i, task_dict in enumerate(tasks):
-            if task_dict["task_id"] == task.task_id:
-                # 更新时间戳
-                task.updated_at = datetime.now()
-                tasks[i] = task.model_dump(mode="json")
-                updated = True
-                break
+            for i, task_dict in enumerate(tasks):
+                if task_dict["task_id"] == task.task_id:
+                    # 更新时间戳
+                    task.updated_at = datetime.now()
+                    tasks[i] = task.model_dump(mode="json")
+                    updated = True
+                    break
 
-        if not updated:
-            raise ValueError(f"Task {task.task_id} not found")
+            if not updated:
+                raise ValueError(f"Task {task.task_id} not found")
 
-        self._write_tasks(tasks)
-        return task
+            self._write_tasks(tasks)
+            return task
 
     def delete(self, task_id: str) -> bool:
         """删除任务"""
-        tasks = self._read_tasks()
-        original_len = len(tasks)
+        with TaskStorage._LOCK:
+            tasks = self._read_tasks()
+            original_len = len(tasks)
 
-        tasks = [t for t in tasks if t["task_id"] != task_id]
+            tasks = [t for t in tasks if t["task_id"] != task_id]
 
-        if len(tasks) == original_len:
-            return False
+            if len(tasks) == original_len:
+                return False
 
-        self._write_tasks(tasks)
-        return True
+            self._write_tasks(tasks)
+            return True
 
     def update_run_stats(
         self,
@@ -121,22 +132,23 @@ class TaskStorage:
         next_run_at: Optional[datetime] = None
     ):
         """更新运行统计"""
-        task = self.get(task_id)
-        if not task:
-            raise ValueError(f"Task {task_id} not found")
+        with TaskStorage._LOCK:
+            task = self.get(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
 
-        task.last_run_at = datetime.now()
-        task.total_runs += 1
+            task.last_run_at = datetime.now()
+            task.total_runs += 1
 
-        if success:
-            task.success_runs += 1
-        else:
-            task.failed_runs += 1
+            if success:
+                task.success_runs += 1
+            else:
+                task.failed_runs += 1
 
-        if next_run_at:
-            task.next_run_at = next_run_at
+            if next_run_at:
+                task.next_run_at = next_run_at
 
-        self.update(task)
+            self.update(task)
 
     def get_enabled_tasks(self) -> List[ScheduledTask]:
         """获取所有启用的任务"""

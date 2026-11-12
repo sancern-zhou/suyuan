@@ -15,6 +15,7 @@ task_review_learning）独占处理，本模块不重复写入。
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from contextlib import contextmanager
@@ -313,7 +314,8 @@ async def consume_pending_feedback(*, limit: int = MAX_ENTRIES_PER_RUN) -> dict[
         entries = pending_entries(root, limit=limit)
         stats["pending"] = len(entries)
         for entry in entries:
-            session_id = resolve_entry_session_id(entry)
+            # get_execution 走 run_db 阻塞等待，下放线程避免卡住 worker 事件循环。
+            session_id = await asyncio.to_thread(resolve_entry_session_id, entry)
             if not session_id:
                 stats["failed"] += 1
                 _finish_entry(entry, "failed", error="original_session_not_found", finished_at=_now_iso())
