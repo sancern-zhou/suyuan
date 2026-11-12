@@ -209,6 +209,8 @@ backend:
       - validate_pptx
       # DOCX/XLSX 自由创作（技能 docx_authoring/xlsx_authoring）的验收闭环
       - validate_office
+      # 交互式 HTML 报告成稿（技能 interactive_html_report）：展示主体
+      - create_html_artifact
       - create_report_package
       - run_agent_workflow
       - list_skills
