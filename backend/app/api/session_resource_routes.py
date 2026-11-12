@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from app.agent.resources.actions import (
@@ -33,6 +33,7 @@ from app.auth.share_access import (
 )
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
+from app.services.html_preview_runtime import inject_html_runtime
 from app.services.quarto_report_renderer import (
     ReportRenderError,
     quarto_report_renderer,
@@ -396,6 +397,46 @@ def _content_target(
     return registered, media_type
 
 
+# text/html 预览运行在 opaque sandbox origin：默认只放行同源资源与内联脚本/样式，
+# 外链（fetch/XHR/WS/CDN）全部被拦。需要外部脚本的交互报告通过资源 metadata 的
+# csp_profile 选择放宽档位；生成侧仍应坚持自包含（禁 CDN），放宽档位只服务
+# 既有地图类报告的兼容。
+HTML_CSP_PROFILES = {
+    "default": (
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+        "object-src 'none'; base-uri 'none'"
+    ),
+    "amap": (
+        "default-src 'self'; img-src 'self' data: blob: https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+        "https://webapi.amap.com https://restapi.amap.com https://a.amap.com; "
+        "connect-src 'self' https:; font-src 'self' data: https:; "
+        "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+    ),
+}
+# 历史兼容：旧版日报生成器（xuchang 分支）不写 metadata，按文件名前缀识别。
+LEGACY_AMAP_REPORT_PREFIX = "xuchang_air_quality_daily_review_"
+
+
+def _html_content_security_policy(
+    resource: StoredResource, filename: str
+) -> tuple[str, bool]:
+    """Return (CSP header value, no_store) for an inline HTML document."""
+    profile_name = str((resource.metadata or {}).get("csp_profile") or "").strip()
+    if not profile_name and filename.startswith(LEGACY_AMAP_REPORT_PREFIX):
+        profile_name = "amap"
+    if profile_name not in HTML_CSP_PROFILES:
+        # 未知档位一律回落最严档，避免 metadata 注入放宽策略。
+        profile_name = "default"
+    return HTML_CSP_PROFILES[profile_name], profile_name == "amap"
+
+
+def _read_html_text(path: Path) -> str:
+    return path.read_bytes().decode("utf-8", errors="replace")
+
+
 @router.get("/{session_id}/resources/{resource_id}/content/{asset_path:path}")
 @router.get("/{session_id}/resources/{resource_id}/content")
 async def get_session_resource_content(
@@ -453,32 +494,31 @@ async def get_session_resource_content(
         "Access-Control-Allow-Origin": "*",
     }
     if media_type == "text/html":
-        if target.name.startswith("xuchang_air_quality_daily_review_"):
-            # This standalone report embeds AMap JSAPI and an inline timeline.
-            # Keep the relaxation scoped to its generated report filename.
+        csp, no_store = _html_content_security_policy(resource, target.name)
+        headers["Content-Security-Policy"] = csp
+        if no_store:
             headers["Cache-Control"] = "private, no-store"
-            headers["Content-Security-Policy"] = (
-                "default-src 'self'; img-src 'self' data: blob: https:; "
-                "style-src 'self' 'unsafe-inline' https:; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-                "https://webapi.amap.com https://restapi.amap.com https://a.amap.com; "
-                "connect-src 'self' https:; font-src 'self' data: https:; "
-                "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
-            )
-        else:
-            headers["Content-Security-Policy"] = (
-                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-                "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
-                "object-src 'none'; base-uri 'none'"
-            )
     filename = target.name if asset_path is not None else (resource.label or target.name)
-    response = FileResponse(
-        path=target,
-        media_type=media_type,
-        filename=filename,
-        content_disposition_type=disposition,
-        headers=headers,
-    )
+    if disposition == "inline" and media_type == "text/html":
+        # Interactive HTML previews are sized by the host from content-reported
+        # height, so inject the runtime that reports it (idempotent).
+        html = await asyncio.to_thread(_read_html_text, target)
+        response = Response(
+            content=inject_html_runtime(html),
+            media_type=media_type,
+            headers={
+                **headers,
+                "Content-Disposition": f"inline; filename*=utf-8''{quote(filename, safe='')}",
+            },
+        )
+    else:
+        response = FileResponse(
+            path=target,
+            media_type=media_type,
+            filename=filename,
+            content_disposition_type=disposition,
+            headers=headers,
+        )
     if ticket_valid and request is not None:
         response.set_cookie(
             RESOURCE_PREVIEW_COOKIE,
