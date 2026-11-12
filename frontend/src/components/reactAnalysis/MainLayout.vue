@@ -33,6 +33,7 @@
         :is="TaskSchedulerCenter"
         v-else-if="workspace === 'task-center' && TaskSchedulerCenter"
         :running-modes="runningAgentModes"
+        :conversation-state="reviewConversationState"
         @select-task="handleTaskWorkspaceSelect"
         @select-review="$emit('select-review', $event)"
         @open-review-detail="$emit('open-review-detail', $event)"
@@ -138,6 +139,7 @@
           <SmartEventCenterPanel
             v-else-if="managementPanel === 'smart-events'"
             :workspace-command="smartEventCommand"
+            :conversation-state="reviewConversationState"
             @close="$emit('close-smart-event-management-panel')"
             @open-task="$emit('open-smart-event-task', $event)"
             @open-judgment-conversation="$emit('open-judgment-conversation', $event)"
@@ -252,6 +254,7 @@
         :human-feedback-error="humanFeedbackError"
         :knowledge-sources="knowledgeSources"
         :smart-event-command="smartEventCommand"
+        :review-conversation-state="reviewConversationState"
         :work-order-review-command="workOrderReviewCommand"
         :device-control-command="deviceControlCommand"
         @tab-change="handleTabChange"
@@ -371,6 +374,7 @@ const props = defineProps({
   smartEventCommand: { type: Object, default: null },
   workOrderReviewCommand: { type: Object, default: null },
   deviceControlCommand: { type: Object, default: null },
+  reviewConversationState: { type: Object, default: () => ({ reviewId: '', busy: false, error: '' }) },
   workspace: {
     type: String,
     default: 'platform'

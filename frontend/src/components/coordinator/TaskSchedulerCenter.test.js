@@ -26,6 +26,56 @@ test('scheduler center renders only the structured review list', async () => {
   assert.doesNotMatch(source, /fetchRecentExecutions|listJiangsuSmartEventTasks|executionToAttentionItem|smartEventTasks/)
 })
 
+test('review conversation handler resolves one session and serializes clicks', async () => {
+  const source = await readFile(new URL('../../views/ReactAnalysisView.vue', import.meta.url), 'utf8')
+  const body = source.match(/const handleReviewConversationOpen = async \(review, \{ returnToTaskCenter = false \} = \{\}\) => \{([\s\S]*?)\r?\n\}/)[1]
+  const state = { value: { reviewId: '', busy: false, error: '' } }
+  let resolveCalls = 0
+  let restoreCalls = 0
+  const run = new Function('reviewConversationState', 'resolveReviewSession', 'restoreReviewConversation', 'focusEventEvidenceInRightPanel', 'openSmartEventDetail', 'console',
+    `return async review => {${body}}`)(state, async reviewId => {
+      resolveCalls += 1
+      assert.equal(reviewId, 'review-target')
+      await new Promise(resolve => setTimeout(resolve, 10))
+      return 'session-target'
+    }, async sessionId => { assert.equal(sessionId, 'session-target'); restoreCalls += 1; return true }, () => {}, () => assert.fail('work order must not open smart event'), console)
+
+  await Promise.all([run({ review_id: 'review-target', category: '工单审核' }), run({ review_id: 'review-target', category: '工单审核' })])
+
+  assert.equal(resolveCalls, 1)
+  assert.equal(restoreCalls, 1)
+  assert.deepEqual(state.value, { reviewId: 'review-target', busy: false, error: '' })
+})
+
+test('review conversation failure stays a work-order error instead of opening an event', async () => {
+  const source = await readFile(new URL('../../views/ReactAnalysisView.vue', import.meta.url), 'utf8')
+  const body = source.match(/const handleReviewConversationOpen = async \(review, \{ returnToTaskCenter = false \} = \{\}\) => \{([\s\S]*?)\r?\n\}/)[1]
+  const state = { value: { reviewId: '', busy: false, error: '' } }
+  const run = new Function('reviewConversationState', 'resolveReviewSession', 'restoreReviewConversation', 'focusEventEvidenceInRightPanel', 'openSmartEventDetail', 'console',
+    `return async review => {${body}}`)(state, async () => { throw new Error('Failed to fetch task review') }, () => assert.fail('must not restore'), () => {}, () => assert.fail('must not request FA as a smart event'), console)
+
+  await run({ review_id: 'review-target', category: '工单审核', subject_id: 'FA261107179401929027665' })
+
+  assert.equal(state.value.busy, false)
+  assert.equal(state.value.error, 'Failed to fetch task review')
+})
+
+test('review list fits its container and shows only the completion timestamp', async () => {
+  const source = await readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
+  assert.match(source, /table-layout: fixed/)
+  assert.doesNotMatch(source, /min-width:\s*980px/)
+  assert.doesNotMatch(source, /review-list-wrap\s*\{[^}]*overflow-x:\s*auto/)
+  assert.match(source, /review-row-actions \.row-action\s*\{[^}]*width:\s*100%/)
+  assert.match(source, /overflow-wrap:\s*anywhere/)
+  assert.match(source, /return Number\.isNaN\(date\.getTime\(\)\) \? String\(value\) : date\.toLocaleString/)
+  assert.doesNotMatch(source, /完成于/)
+  // 窄屏不隐藏字段，改为带字段名的卡片行，避免以横向滚动承载表格。
+  for (const label of ['状态', '审核建议', '数据处置', '审核结论', '完成时间']) {
+    assert.match(source, new RegExp(`data-label="${label}"`))
+  }
+  assert.match(source, /@media \(max-width: 1100px\)/)
+})
+
 test('review list keeps conversation entry, detail dialog and shared emits', async () => {
   const source = await readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
   assert.match(source, /emit\('select-review', task\)/)
@@ -41,6 +91,15 @@ test('review list keeps conversation entry, detail dialog and shared emits', asy
   const view = await readFile(new URL('../../views/ReactAnalysisView.vue', import.meta.url), 'utf8')
   assert.match(view, /@select-review="handleTodoReviewOpen"/)
   assert.match(view, /suppressSmartEventCommandOpen/)
+  assert.match(view, /:review-conversation-state="reviewConversationState"/)
+  assert.match(view, /handleTodoReviewOpen = review => handleReviewConversationOpen\(review, \{ returnToTaskCenter: true \}\)/)
+  // 工单审核失败只在原列表报错，不能把 FA 工单号送到智能事件详情。
+  assert.match(view, /原审核对话不可用，请通过“查看详情”查看审核依据。/)
+  assert.match(view, /if \(isEventReview\) \{\s*openSmartEventDetail\(review\?\.subject_id, \{ returnToTaskCenter \}\)/)
+  assert.doesNotMatch(view, /else \{\s*openSmartEventDetail/)
+  assert.match(source, /:disabled="conversationState\.busy"/)
+  assert.match(source, /conversationState\.busy && conversationState\.reviewId === task\.review_id \? '打开中…' : '进入对话区'/)
+  assert.match(source, /conversationState\.error \|\| loadError/)
   assert.match(view, /@open-review-detail="handleTodoReviewDetailOpen"/)
   // 直达详情复用工单审核工作台命令契约，整页管理面板直显（同智能事件中心），不进对话不出右侧 tab。
   assert.match(view, /WORK_ORDER_REVIEW_COMMANDS\.OPEN, working_order_code: code/)

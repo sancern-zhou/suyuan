@@ -23,7 +23,7 @@ test('generic review renders and persists human decision without a business rend
   await page.route('**/__task_review_test__', route => route.fulfill({ contentType: 'text/html', body: `<div id="app" style="height:900px"></div><script type="module" src="/e2e/taskReviewHarness.js"></script>` }))
   await page.goto('/__task_review_test__')
   await expect(page.getByRole('heading', { name: '故障处理需确认' })).toBeVisible()
-  await page.getByLabel('审核意见', { exact: true }).fill('核验完成')
+  await page.getByLabel('审核意见（退回工单必填，说明原因）', { exact: true }).fill('核验完成')
   await page.getByRole('button', { name: '确认归档' }).click()
   await expect(page.getByRole('heading', { name: '人工处理记录' })).toBeVisible()
   await expect(page.getByRole('button', { name: '确认归档' })).toHaveCount(0)
@@ -71,7 +71,7 @@ test('scheduler classifies generic todos by task type and keeps archived items v
   await expect(reviewRows).toHaveCount(2)
   // 查看详情在宿主里直达整页工作台（本 harness 不挂宿主）；人工处理表单走快速审核弹窗。
   await page.getByRole('button', { name: '快速审核' }).first().click()
-  await page.getByLabel('审核意见', { exact: true }).fill('已核验')
+  await page.getByLabel('审核意见（退回工单必填，说明原因）', { exact: true }).fill('已核验')
   await page.getByRole('button', { name: '确认归档' }).click()
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   // 归档后记录保留在列表中并显示"已归档"徽章；状态筛选可聚焦待办/已归档。
@@ -93,6 +93,45 @@ test('scheduler classifies generic todos by task type and keeps archived items v
   await expect(page.getByRole('button', { name: '确认归档' })).toHaveCount(0)
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   expect(errors).toEqual([])
+})
+
+test('scheduler fits long records and all row actions without horizontal scrolling', async ({ page }) => {
+  const record = {
+    ...structuredClone(base),
+    title: '兴化人武部 NO 自动质控跨度不合格工单审核（FA261107179401929027665）',
+    summary: '建议退回（修正剔除申报）：首检跨度不合格经核验需要修正申报，长结论应在限定列宽内完整换行。',
+    decision: 'reject',
+    updated_at: '2026-11-09T09:14:55+08:00',
+    data_impact: [
+      { pollutant: 'NO', decision: 'keep' },
+      { pollutant: 'NO2', decision: 'keep' },
+      { pollutant: 'NOx', decision: 'keep' },
+    ],
+  }
+  await page.route('**/api/**', route => {
+    const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/task-reviews')) return route.fulfill({ json: { reviews: [record], total: 1 } })
+    return route.fulfill({ status: 404, json: { detail: 'unexpected request' } })
+  })
+  await page.route('**/__scheduler_responsive__', route => route.fulfill({ contentType: 'text/html', body: '<div id="app" data-scheduler="true" style="height:100vh"></div><script type="module" src="/e2e/taskReviewHarness.js"></script>' }))
+  await page.goto('/__scheduler_responsive__')
+  await expect(page.locator('.col-time')).toHaveText('2026/11/9 09:14:55')
+  await expect(page.locator('.col-time')).not.toContainText('完成于')
+  for (const width of [1920, 1440, 1280, 1024, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    const overflow = await page.evaluate(() => [...document.querySelectorAll('body, .task-scheduler-center, .center-content, .review-list-wrap, .review-list')].map(element => ({
+      className: element.className,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    })).filter(element => element.scrollWidth > element.clientWidth))
+    expect(overflow, `horizontal overflow at ${width}px`).toEqual([])
+    for (const button of await page.locator('.review-row-actions button').all()) {
+      await expect(button).toBeVisible()
+      const box = await button.boundingBox()
+      expect(box.x).toBeGreaterThanOrEqual(0)
+      expect(box.x + box.width).toBeLessThanOrEqual(width)
+    }
+  }
 })
 
 test('scheduler defaults completion-date filter to the last three days', async ({ page }) => {

@@ -18,7 +18,7 @@
         </div>
       </header>
 
-      <div v-if="loadError" class="load-note">{{ loadError }}</div>
+      <div v-if="loadError || conversationState.error" class="load-note">{{ conversationState.error || loadError }}</div>
 
       <section class="task-list-section" aria-label="审核结果">
         <template v-if="todoTasks.length">
@@ -55,6 +55,15 @@
           </div>
           <div v-if="filteredTasks.length" class="review-list-wrap">
             <table class="review-list">
+              <colgroup>
+                <col class="col-status-width" />
+                <col />
+                <col class="col-decision-width" />
+                <col class="col-impact-width" />
+                <col />
+                <col class="col-time-width" />
+                <col class="col-actions-width" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>状态</th>
@@ -68,15 +77,15 @@
               </thead>
               <tbody>
                 <tr v-for="task in pagedTasks" :key="task.review_id">
-                  <td><span :class="['review-status', `status-${task.status}`]">{{ formatTodoStatus(task) }}</span></td>
+                  <td data-label="状态"><span :class="['review-status', `status-${task.status}`]">{{ formatTodoStatus(task) }}</span></td>
                   <td class="col-title">
                     <strong>{{ task.title }}</strong>
                     <small>{{ task.category }} · {{ task.taskName }}</small>
                   </td>
-                  <td><span :class="['decision-badge', decisionClass(task)]">{{ decisionLabel(task) }}</span></td>
-                  <td class="col-impact">{{ formatDataImpact(task) }}</td>
-                  <td class="col-summary"><span class="review-summary">{{ task.summary }}</span></td>
-                  <td class="col-time">{{ formatTodoTime(task.occurredAt) }}</td>
+                  <td data-label="审核建议"><span :class="['decision-badge', decisionClass(task)]">{{ decisionLabel(task) }}</span></td>
+                  <td class="col-impact" data-label="数据处置">{{ formatDataImpact(task) }}</td>
+                  <td class="col-summary" data-label="审核结论"><span class="review-summary">{{ task.summary }}</span></td>
+                  <td class="col-time" data-label="完成时间">{{ formatTodoTime(task.occurredAt) }}</td>
                   <td class="review-row-actions">
                     <!-- 两类行操作区一致：查看详情直达整页工作台（工单=证据包工作台，智能事件=事件详情工作台），均无需进入对话 -->
                     <button type="button" class="row-action primary" @click="openRowDetail(task)">
@@ -85,7 +94,9 @@
                     </button>
                     <!-- 快速审核弹窗保留人工确认/归档表单；完整审核依据与证据数据在详情工作台查看 -->
                     <button type="button" class="row-action" @click="selectedReviewId = task.review_id">快速审核</button>
-                    <button type="button" class="row-action" @click="emit('select-review', task)">进入对话区</button>
+                    <button type="button" class="row-action" :disabled="conversationState.busy" @click="emit('select-review', task)">
+                      {{ conversationState.busy && conversationState.reviewId === task.review_id ? '打开中…' : '进入对话区' }}
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -123,7 +134,8 @@ import { listTaskReviews } from '@/services/taskReviewsApi.js'
 import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 
 defineProps({
-  runningModes: { type: Array, default: () => [] }
+  runningModes: { type: Array, default: () => [] },
+  conversationState: { type: Object, default: () => ({ reviewId: '', busy: false, error: '' }) }
 })
 const emit = defineEmits(['select-task', 'select-review', 'open-review-detail', 'open-event-detail'])
 const loading = ref(false)
@@ -151,7 +163,7 @@ const formatTodoStatus = task => jiangsuReviewStatus(task) || ({
 const formatTodoTime = value => {
   if (!value) return '完成时间未知'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? String(value) : `完成于 ${date.toLocaleString('zh-CN', { hour12: false })}`
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 const DECISION_LABELS = { approve: '建议通过', reject: '建议退回', needs_evidence: '需要补证', needs_action: '需要处置' }
@@ -249,10 +261,12 @@ onMounted(loadTasks)
   --teal-500: #14a0ae;
   --cyan-400: #3fc8d4;
   position: relative;
+  flex: 1 1 0%;
   width: 100%;
   height: 100%;
   min-width: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   isolation: isolate;
   color: var(--ink);
   background: #edf3f5;
@@ -260,9 +274,10 @@ onMounted(loadTasks)
 .ambient { position: fixed; width: 420px; height: 420px; border-radius: 50%; pointer-events: none; filter: blur(12px); opacity: .3; }
 .ambient-one { top: -220px; right: 5%; background: radial-gradient(circle, rgba(63, 200, 212, .5), transparent 68%); }
 .ambient-two { bottom: -270px; left: 12%; background: radial-gradient(circle, rgba(242, 169, 59, .35), transparent 68%); }
-.center-content { position: relative; z-index: 1; width: min(1180px, calc(100% - 56px)); margin: 0 auto; padding: 26px 0 44px; }
+.center-content { position: relative; z-index: 1; width: calc(100% - 48px); max-width: 1440px; margin: 0 auto; padding: 26px 0 44px; }
 
 .scheduler-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+.scheduler-header > div:first-child { min-width: 0; }
 .scheduler-kicker { margin: 0 0 7px; color: var(--teal-600); font-size: 12px; font-weight: 700; letter-spacing: .12em; }
 .scheduler-header h1 { margin: 0; font-size: clamp(29px, 3vw, 38px); line-height: 1.15; letter-spacing: .04em; color: var(--ink); }
 .scheduler-description { margin: 9px 0 0; color: var(--muted); font-size: 13px; }
@@ -279,17 +294,23 @@ onMounted(loadTasks)
 .empty-state strong { color: var(--ink); font-size: 13px; }
 .empty-state span { font-size: 11px; }
 
-.review-list-wrap { overflow-x: auto; border: 1px solid rgba(207, 224, 226, .88); border-radius: 14px; background: rgba(255, 255, 255, .86); box-shadow: 0 6px 18px rgba(26, 69, 78, .04); }
+.review-list-wrap { min-width: 0; border: 1px solid rgba(207, 224, 226, .88); border-radius: 14px; background: rgba(255, 255, 255, .86); box-shadow: 0 6px 18px rgba(26, 69, 78, .04); }
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 12px; padding: 11px 14px; border: 1px solid rgba(207, 224, 226, .88); border-radius: 14px; background: rgba(255, 255, 255, .86); }
-.filter-item { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
-.filter-item input[type="date"], .filter-item select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-container); color: var(--ink); font: inherit; font-size: 12px; }
+.filter-item { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; color: var(--muted); font-size: 11px; font-weight: 700; }
+.filter-item input[type="date"], .filter-item select { min-width: 0; max-width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-container); color: var(--ink); font: inherit; font-size: 12px; box-sizing: border-box; }
+.filter-item input[type="date"] { flex: 1 1 132px; }
 .filter-item em { font-style: normal; color: var(--faint); }
-.pagination-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 11px 14px; border-top: 1px solid rgba(217, 230, 234, .6); }
-.page-note { color: var(--muted); font-size: 11px; }
+.pagination-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding: 11px 14px; border-top: 1px solid rgba(217, 230, 234, .6); }
+.page-note { margin-right: auto; color: var(--muted); font-size: 11px; }
 .row-action:disabled { opacity: .45; cursor: not-allowed; }
-.review-list { width: 100%; min-width: 980px; border-collapse: collapse; font-size: 12px; }
-.review-list th { padding: 11px 14px; border-bottom: 1px solid var(--line); background: rgba(237, 243, 245, .72); color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-align: left; white-space: nowrap; }
-.review-list td { padding: 13px 14px; border-bottom: 1px solid rgba(217, 230, 234, .6); vertical-align: middle; }
+.review-list { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
+.col-status-width { width: 100px; }
+.col-decision-width { width: 88px; }
+.col-impact-width { width: 160px; }
+.col-time-width { width: 148px; }
+.col-actions-width { width: 108px; }
+.review-list th { padding: 11px 10px; border-bottom: 1px solid var(--line); background: rgba(237, 243, 245, .72); color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-align: left; white-space: nowrap; }
+.review-list td { min-width: 0; padding: 13px 10px; border-bottom: 1px solid rgba(217, 230, 234, .6); vertical-align: middle; overflow-wrap: anywhere; word-break: break-word; }
 .review-list tbody tr:last-child td { border-bottom: none; }
 .review-list tbody tr { transition: background .15s ease; }
 .review-list tbody tr:hover { background: color-mix(in srgb, var(--teal-500) 6%, transparent); }
@@ -300,19 +321,20 @@ onMounted(loadTasks)
 .review-status.status-archived { border-color: rgba(35, 139, 96, .3); background: rgba(35, 139, 96, .1); color: #238b60; }
 .review-status.status-rejected { border-color: rgba(200, 60, 60, .3); background: rgba(200, 60, 60, .08); color: #b34040; }
 .mono { font-family: Consolas, 'Courier New', monospace; font-size: 11px; color: var(--lake-700); white-space: nowrap; }
-.col-title { min-width: 180px; }
+.col-title { width: auto; }
 .col-title strong { display: block; color: var(--ink); font-size: 12.5px; line-height: 1.4; }
 .col-title small { display: block; margin-top: 3px; color: var(--faint); font-size: 10px; }
-.decision-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.decision-badge { display: inline-block; justify-self: start; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .decision-badge.decision-approve { border-color: rgba(35, 139, 96, .3); background: rgba(35, 139, 96, .1); color: #238b60; }
 .decision-badge.decision-reject { border-color: rgba(200, 60, 60, .3); background: rgba(200, 60, 60, .08); color: #b34040; }
 .decision-badge.decision-needs_evidence { border-color: rgba(222, 146, 32, .32); background: rgba(242, 169, 59, .12); color: #a3660a; }
 .decision-badge.decision-needs_action { border-color: rgba(17, 96, 134, .3); background: rgba(17, 96, 134, .08); color: #116086; }
-.col-impact { max-width: 170px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.review-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.col-impact { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.review-summary { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
 .col-time { color: var(--muted); font-size: 11px; white-space: nowrap; }
-.review-row-actions { white-space: nowrap; }
-.row-action { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; margin-right: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-container); color: var(--lake-600); font: inherit; font-size: 11px; cursor: pointer; transition: all .2s ease; }
+.review-row-actions .row-action { display: flex; width: 100%; justify-content: center; margin: 0 0 6px; white-space: nowrap; }
+.review-row-actions .row-action:last-child { margin-bottom: 0; }
+.row-action { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-container); color: var(--lake-600); font: inherit; font-size: 11px; cursor: pointer; transition: all .2s ease; }
 .row-action:hover { border-color: color-mix(in srgb, var(--teal-500) 55%, var(--line)); color: var(--teal-600); }
 .row-action.primary { border-color: color-mix(in srgb, var(--teal-600) 45%, var(--line)); color: var(--teal-600); font-weight: 700; }
 .row-action.primary svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s ease; }
@@ -320,13 +342,33 @@ onMounted(loadTasks)
 
 button:focus-visible { outline: 3px solid rgba(76, 202, 198, .35); outline-offset: 2px; }
 
+@media (max-width: 1100px) {
+  .review-list, .review-list tbody, .review-list tr, .review-list td { display: block; }
+  .review-list colgroup, .review-list thead { display: none; }
+  .review-list tbody tr { position: relative; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .review-list tbody tr:last-child { border-bottom: none; }
+  .review-list td { padding: 0; border: 0; }
+  .review-list td[data-label] { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; margin-top: 9px; }
+  .review-list td[data-label]::before { content: attr(data-label); color: var(--faint); font-size: 11px; font-weight: 700; }
+  .review-list td.col-title { margin: 0 0 12px; padding-right: 108px; }
+  .review-list td:first-child { position: absolute; top: 14px; right: 16px; }
+  .review-row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .review-row-actions .row-action { width: auto; margin: 0; }
+}
 @media (max-width: 820px) {
-  .center-content { width: min(100% - 32px, 720px); }
+  .center-content { width: calc(100% - 32px); }
   .scheduler-header { align-items: flex-start; flex-direction: column; }
   .header-actions { margin-left: 0; }
 }
 @media (max-width: 700px) {
   .center-content { width: calc(100% - 28px); padding-top: 18px; }
   .scheduler-description { display: none; }
+  .filter-bar { align-items: stretch; }
+  .filter-item { width: 100%; }
+  .filter-item > span { flex: 0 0 52px; }
+  .filter-item input[type="date"] { flex-basis: 140px; }
+  .filter-item select { flex: 1 1 160px; }
+  .pagination-bar { justify-content: center; }
+  .page-note { flex-basis: 100%; text-align: center; }
 }
 </style>

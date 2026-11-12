@@ -267,6 +267,7 @@
         :category="smartEventCategory"
         class="panel-content"
         :workspace-command="smartEventCommand"
+        :conversation-state="reviewConversationState"
         :show-list-actions="false"
         @close="$emit('close-smart-event-panel')"
         @open-task="$emit('open-smart-event-task', $event)"
@@ -386,6 +387,10 @@ const props = defineProps({
   deviceControlCommand: {
     type: Object,
     default: null
+  },
+  reviewConversationState: {
+    type: Object,
+    default: () => ({ reviewId: '', busy: false, error: '' })
   }
 })
 

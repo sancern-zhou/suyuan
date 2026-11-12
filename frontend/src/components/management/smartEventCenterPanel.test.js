@@ -28,37 +28,39 @@ test('event list exposes a manual AI judgment dispatch action', () => {
 })
 
 test('event list links judged events to their judgment conversation', () => {
-  // 「进入对话区」与任务调度中心同链路：按事件自带 review_id 取研判记录，
-  // 交宿主按 execution_id→session_id 恢复研判执行会话；无 review_id 的行不显示入口。
-  // 按钮名对齐任务调度中心：查看详情 / 进入对话区。
+  // 两个入口共用审核详情中的授权会话字段；不在列表重复解析执行映射。
   assert.match(source, /defineEmits\(\['close', 'open-task', 'open-judgment-conversation'\]\)/)
   assert.match(source, /v-if="event\.review_id"/)
   assert.match(source, /@click\.stop="openJudgmentConversation\(event\)"/)
-  assert.match(source, /'打开中…' : '进入对话区'/)
+  assert.match(source, /isConversationOpening\(event\.event_id\) \? '打开中…' : '进入对话区'/)
   assert.match(source, /@click\.stop="openDetail\(event\.event_id\)">查看详情</)
-  assert.match(source, /const \{ review \} = await getTaskReview\(reviewId\)/)
-  assert.match(source, /emit\('open-judgment-conversation', review\)/)
-  assert.match(source, /isConversationBusy/)
+  assert.match(source, /emit\('open-judgment-conversation', \{ review_id: reviewId, category: '智能事件', subject_id: eventId \}\)/)
+  assert.match(source, /:disabled="conversationState\.busy"/)
+  assert.doesNotMatch(source, /conversationBusyIds/)
+  assert.match(source, /actionMessage\.value = state\?\.error \|\| ''/)
 })
 
 test('hosts forward judgment conversation requests and restore the review session', () => {
   const view = fs.readFileSync(path.join(import.meta.dirname, '../../views/ReactAnalysisView.vue'), 'utf8')
-  // 宿主复用任务调度中心的会话恢复链路：execution→session 反查 + suppress 防消息回放拉起面板
+  // 宿主从审核详情取得已授权会话，保留 suppress 防消息回放拉起面板。
   assert.match(view, /@open-judgment-conversation="handleEventConversationOpen"/)
-  assert.match(view, /const handleEventConversationOpen = async \(review\) =>/)
-  assert.match(view, /const resolveReviewSession = async \(review\) =>/)
-  assert.match(view, /fetchTaskExecutions\(review\.task_id/)
+  assert.match(view, /const handleReviewConversationOpen = async \(review, \{ returnToTaskCenter = false \} = \{\}\) =>/)
+  assert.match(view, /const resolveReviewSession = async reviewId =>/)
+  assert.match(view, /getTaskReview\(reviewId\)/)
+  assert.match(view, /review\?\.conversation_session_id \|\| null/)
+  assert.doesNotMatch(view, /fetchTaskExecutions\(review\.task_id/)
   // rightTab 挂载前就位：恢复会话时直接带目标 tab，避免可用性回退竞态抢切 trajectory
   assert.match(view, /const restoreReviewConversation = async \(sessionId, \{ rightTab = 'files' \} = \{\}\) =>/)
-  assert.match(view, /restoreReviewConversation\(sessionId, \{ rightTab: 'smart-event' \}\)/)
+  assert.match(view, /restoreReviewConversation\(sessionId, \{ rightTab: isEventReview \? 'smart-event' : 'files' \}\)/)
   assert.match(view, /rightTab: isEventReview \? 'smart-event' : 'files'/)
   // 进入对话区后右侧面板直显该事件证据包工作台：覆写回放命令为 open_event_detail 并切智能事件 tab
   assert.match(view, /const focusEventEvidenceInRightPanel = \(review\) =>/)
   assert.match(view, /open_event_detail', event_id: eventId \}\r?\n  smartEventCommand\.value = command/)
   assert.match(view, /const isEventReview = review\?\.category === '智能事件'/)
   assert.match(view, /if \(isEventReview\) focusEventEvidenceInRightPanel\(review\)/)
-  // 事件中心入口的回退打开事件详情但不置任务调度中心返回标记（关闭详情仍回事件中心列表）
-  assert.match(view, /openSmartEventDetail\(review\?\.subject_id\)\r?\n\}/)
+  // 仅智能事件且会话确实不可用时保留详情降级，失败由共享状态回传原面板。
+  assert.match(view, /if \(isEventReview\) \{\s*\r?\n\s*openSmartEventDetail\(review\?\.subject_id, \{ returnToTaskCenter \}\)/)
+  assert.match(view, /reviewConversationState\.value = \{ \.\.\.reviewConversationState\.value, busy: false \}/)
   const layout = fs.readFileSync(path.join(import.meta.dirname, '../reactAnalysis/MainLayout.vue'), 'utf8')
   assert.match(layout, /@open-judgment-conversation="\$emit\('open-judgment-conversation', \$event\)"/)
   assert.match(layout, /'open-judgment-conversation'/)
@@ -282,6 +284,13 @@ test('category entry filters event types on the server instead of in the browser
   assert.match(body, /event_types: selectedEventTypes\.value\.length \? selectedEventTypes\.value : undefined/)
   assert.doesNotMatch(body, /event_type:/)
   assert.match(source, /const filteredEvents = computed\(\(\) => events\.value\)/)
+})
+
+test('summary cards use full filtered result stats from the list response', () => {
+  assert.match(source, /listStats\.value = payload\.stats \|\| \{ total: totalEvents\.value, pending: 0, stations: 0 \}/)
+  assert.match(source, /const pendingCount = computed\(\(\) => listStats\.value\.pending\)/)
+  assert.match(source, /const stationCount = computed\(\(\) => listStats\.value\.stations\)/)
+  assert.match(source, /class="metric-total"><i><\/i><span>事件总数<\/span><strong>\{\{ listStats\.total \}\}/)
 })
 
 test('entry preselects the whole category so the UI matches the queried scope', () => {

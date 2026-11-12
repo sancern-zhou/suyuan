@@ -64,6 +64,7 @@
       :session-history-loading="sessionHistoryLoading"
       :conversation-read-only="currentConversationPolicy.readOnly"
       :conversation-read-only-notice="currentConversationPolicy.notice"
+      :review-conversation-state="reviewConversationState"
       @update:active-module="handleAssistantSelect"
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="layoutRef = $event"
@@ -185,6 +186,7 @@ import {
 import { extractSmartEventWorkspaceCommand } from '@/services/jiangsuSmartEventWorkspace.js'
 import { extractWorkOrderReviewCommand, WORK_ORDER_REVIEW_COMMANDS } from '@/services/jiangsuWorkOrderReviewWorkspace.js'
 import { extractDeviceControlWorkspaceCommand } from '@/services/jiangsuDeviceControlWorkspace.js'
+import { getTaskReview } from '@/services/taskReviewsApi.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -221,6 +223,7 @@ const workOrderReviewCommand = ref(null)
 const lastWorkOrderReviewCommandKey = ref('')
 const deviceControlCommand = ref(null)
 const lastDeviceControlCommandKey = ref('')
+const reviewConversationState = ref({ reviewId: '', busy: false, error: '' })
 const taskWorkspaceEntries = computed(() => scheduledTasksStore.tasks.filter(task => task.workspace_entry?.enabled))
 
 // ========== 使用Composables ==========
@@ -652,16 +655,10 @@ const handleTodoEventDetailOpen = (review) => {
   openSmartEventDetail(review?.subject_id, { returnToTaskCenter: true })
 }
 
-// 研判记录→执行会话：review 带 execution_id/task_id，反查任务执行记录取 session_id
-const resolveReviewSession = async (review) => {
-  if (!review?.execution_id || !review?.task_id) return null
-  try {
-    const { executions } = await scheduledTasksStore.fetchTaskExecutions(review.task_id, { page: 1, pageSize: 50 })
-    return executions.find(item => item.execution_id === review.execution_id)?.session_id || null
-  } catch (error) {
-    console.warn('[ReactAnalysisView] 研判执行记录获取失败:', error)
-    return null
-  }
+// 审核详情在服务端解析执行会话，并按会话目录权限裁剪；前端不加载整页执行记录。
+const resolveReviewSession = async reviewId => {
+  const { review } = await getTaskReview(reviewId)
+  return review?.conversation_session_id || null
 }
 
 // 恢复研判执行会话并展开对话区；suppressSmartEventCommandOpen 防止会话消息回放重新拉起智能事件面板。
@@ -693,29 +690,39 @@ const focusEventEvidenceInRightPanel = (review) => {
   activeRightTab.value = 'smart-event'
 }
 
-const handleTodoReviewOpen = async (review) => {
+const handleReviewConversationOpen = async (review, { returnToTaskCenter = false } = {}) => {
+  const reviewId = String(review?.review_id || '')
+  if (!reviewId || reviewConversationState.value.busy) return
   const isEventReview = review?.category === '智能事件'
-  const sessionId = await resolveReviewSession(review)
-  if (sessionId && await restoreReviewConversation(sessionId, { rightTab: isEventReview ? 'smart-event' : 'files' })) {
-    // 智能事件研判对话进入后直显证据包工作台；工单审核对话保持默认文件 tab
-    if (isEventReview) focusEventEvidenceInRightPanel(review)
-    return
+  reviewConversationState.value = { reviewId, busy: true, error: '' }
+  let sessionId = null
+  try {
+    sessionId = await resolveReviewSession(reviewId)
+    if (!sessionId) {
+      if (isEventReview) {
+        openSmartEventDetail(review?.subject_id, { returnToTaskCenter })
+      } else {
+        reviewConversationState.value.error = '原审核对话不可用，请通过“查看详情”查看审核依据。'
+      }
+      return
+    }
+    if (await restoreReviewConversation(sessionId, { rightTab: isEventReview ? 'smart-event' : 'files' })) {
+      if (isEventReview) focusEventEvidenceInRightPanel(review)
+      return
+    }
+    reviewConversationState.value.error = '对话恢复失败，请稍后重试；审核依据可通过“查看详情”查看。'
+  } catch (error) {
+    console.warn('[ReactAnalysisView] 审核会话解析失败:', error)
+    reviewConversationState.value.error = error?.message || '审核会话读取失败，请稍后重试。'
+  } finally {
+    reviewConversationState.value = { ...reviewConversationState.value, busy: false }
   }
-  // 找不到执行会话时回退：打开智能事件工作区并聚焦该事件（仍从任务调度中心进入，关闭时回列表）
-  openSmartEventDetail(review?.subject_id, { returnToTaskCenter: true })
 }
 
-// 智能事件中心列表「进入对话区」：与任务调度中心「进入对话区」共用同一恢复链路，进入后
-// 右侧面板直显该事件证据包；回退差异在于不置任务调度中心返回标记——从事件中心进入，
-// 关闭详情仍回事件中心列表
-const handleEventConversationOpen = async (review) => {
-  const sessionId = await resolveReviewSession(review)
-  if (sessionId && await restoreReviewConversation(sessionId, { rightTab: 'smart-event' })) {
-    focusEventEvidenceInRightPanel(review)
-    return
-  }
-  openSmartEventDetail(review?.subject_id)
-}
+const handleTodoReviewOpen = review => handleReviewConversationOpen(review, { returnToTaskCenter: true })
+
+// 智能事件中心与任务中心共用同一恢复状态，忙态持续到实际会话恢复结束。
+const handleEventConversationOpen = review => handleReviewConversationOpen(review)
 
 let routeSessionRestoreQueue = Promise.resolve()
 const queueRouteSessionRestore = (sessionId) => {

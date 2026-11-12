@@ -81,8 +81,8 @@
                   {{ isAiBusy(event.event_id) ? '研判中…' : 'AI研判' }}
                 </button>
                 <!-- 按钮名对齐任务调度中心：查看详情直达整页工作台，进入对话区恢复研判执行会话 -->
-                <button v-if="event.review_id" type="button" class="detail-button" :disabled="isConversationBusy(event.event_id)" @click.stop="openJudgmentConversation(event)">
-                  {{ isConversationBusy(event.event_id) ? '打开中…' : '进入对话区' }}
+                <button v-if="event.review_id" type="button" class="detail-button" :disabled="conversationState.busy" @click.stop="openJudgmentConversation(event)">
+                  {{ isConversationOpening(event.event_id) ? '打开中…' : '进入对话区' }}
                 </button>
                 <button type="button" class="detail-button" @click.stop="openDetail(event.event_id)">查看详情</button>
               </td>
@@ -493,6 +493,7 @@ const props = defineProps({
   initialEventId: { type: String, default: '' },
   workspaceCommand: { type: Object, default: null },
   category: { type: String, default: 'all' },
+  conversationState: { type: Object, default: () => ({ reviewId: '', busy: false, error: '' }) },
   // 对话右侧 tab 置 false：定位是当前事件的证据包展示，隐藏顶栏「返回列表」；
   // 整页管理面板保持默认 true，返回列表仍是常规导航
   showListActions: { type: Boolean, default: true }
@@ -587,7 +588,9 @@ const viewMode = ref(props.initialEventId ? 'detail' : 'list')
 const workbenchActive = computed(() => viewMode.value === 'detail' && !detailLoading.value && workspaceMode.value === 'detail' && Boolean(selectedEvent.value))
 const evidenceBusy = ref(false)
 const aiBusyIds = ref(new Set())
-const conversationBusyIds = ref(new Set())
+watch(() => props.conversationState, state => {
+  actionMessage.value = state?.error || ''
+})
 const activeEvidenceKey = ref('event')
 const evidenceContent = ref(null)
 const videoImageUrls = ref({})
@@ -1432,26 +1435,16 @@ const dispatchAiJudgment = async event => {
   }
 }
 
-// 列表「查看对话」：事件自带 review_id，取研判记录后交宿主恢复研判执行会话
-// （execution_id→session_id 链路在宿主 ReactAnalysisView，与任务调度中心「进入对话区」同源）
-const isConversationBusy = eventId => conversationBusyIds.value.has(String(eventId))
-const openJudgmentConversation = async event => {
+// 详情由宿主统一解析授权会话，并等待实际恢复完成，列表仅负责发起请求。
+const isConversationOpening = eventId => props.conversationState.busy
+  && props.conversationState.reviewId === events.value.find(item => String(item.event_id) === String(eventId))?.review_id
+const openJudgmentConversation = event => {
   const eventId = String(event?.event_id || '')
   const reviewId = event?.review_id
-  if (!eventId || !reviewId || isConversationBusy(eventId)) return
-  conversationBusyIds.value = new Set(conversationBusyIds.value).add(eventId)
+  if (!eventId || !reviewId || props.conversationState.busy) return
   error.value = ''
   actionMessage.value = ''
-  try {
-    const { review } = await getTaskReview(reviewId)
-    emit('open-judgment-conversation', review)
-  } catch (err) {
-    actionMessage.value = err?.message || '研判对话打开失败，记录可能已清理'
-  } finally {
-    const next = new Set(conversationBusyIds.value)
-    next.delete(eventId)
-    conversationBusyIds.value = next
-  }
+  emit('open-judgment-conversation', { review_id: reviewId, category: '智能事件', subject_id: eventId })
 }
 
 const backToList = () => {

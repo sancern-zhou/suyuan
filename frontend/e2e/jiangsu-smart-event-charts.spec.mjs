@@ -98,6 +98,58 @@ test('event list requests ten summaries and pages without waiting for background
   await expect(page.getByRole('button', { name: '下一页' })).toBeDisabled()
   expect(requests.filter(url => url.pathname.endsWith('/smart-events')).every(url => url.searchParams.get('limit') === '10')).toBe(true)
 })
+test('summary cards follow filtered results and stay full-set totals across pages', async ({ page }) => {
+  const queries = []
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url())
+    if (!url.pathname.endsWith('/smart-events')) {
+      await route.fulfill({ json: {} })
+      return
+    }
+    const keyword = url.searchParams.get('keyword') || ''
+    const current = Number(url.searchParams.get('page') || 1)
+    queries.push({ keyword, page: current, start: url.searchParams.get('start_time'), end: url.searchParams.get('end_time') })
+    const payload = keyword === '波动'
+      ? { events: Array.from({ length: current === 2 ? 1 : 10 }, (_, index) => ({
+          event_id: `filtered-${current}-${index}`, event_name: `筛选波动${current}-${index}`,
+          site_id: current === 2 ? '第二页站点' : `第一页站点${index}`,
+        })), page: current, total: 11, stats: { total: 11, pending: 6, stations: 4 },
+        filters: { statuses: ['待研判'], types: ['数据'], levels: ['P1'] } }
+      : { events: [{ event_id: 'all', event_name: '全部事件' }], page: 1, total: 100,
+        stats: { total: 100, pending: 30, stations: 20 },
+        filters: { statuses: ['待研判'], types: ['数据'], levels: ['P1'] } }
+    await route.fulfill({ json: payload })
+  })
+  await page.route('**/__jiangsu_stats_test__', route => route.fulfill({
+    contentType: 'text/html',
+    body: `<div id="app"></div><script type="module">
+      import { createApp } from '/node_modules/.vite/deps/vue.js'
+      import Panel from '/src/components/management/SmartEventCenterPanel.vue'
+      createApp(Panel).mount('#app')
+    </script>`,
+  }))
+  await page.goto('/__jiangsu_stats_test__')
+  await expect(page.locator('.metric-total strong')).toHaveText('100')
+  await expect(page.locator('.metric-pending strong')).toHaveText('30')
+  await expect(page.locator('.metric-station strong')).toHaveText('20')
+
+  await page.getByRole('searchbox', { name: '关键词' }).fill('波动')
+  await page.getByLabel('事件开始时间筛选').fill('2026-09-09T00:00')
+  await page.getByLabel('事件结束时间筛选').fill('2026-09-11T00:00')
+  await page.getByRole('button', { name: '查询', exact: true }).click()
+  await expect(page.locator('.metric-total strong')).toHaveText('11')
+  await expect(page.locator('.metric-pending strong')).toHaveText('6')
+  await expect(page.locator('.metric-station strong')).toHaveText('4')
+
+  await page.getByRole('button', { name: '下一页' }).click()
+  await expect(page.locator('.event-table tbody tr')).toHaveCount(1)
+  await expect(page.locator('.metric-total strong')).toHaveText('11')
+  await expect(page.locator('.metric-pending strong')).toHaveText('6')
+  await expect(page.locator('.metric-station strong')).toHaveText('4')
+  expect(queries).toContainEqual({ keyword: '波动', page: 1, start: '2026-09-09T00:00', end: '2026-09-11T00:00' })
+  expect(queries).toContainEqual({ keyword: '波动', page: 2, start: '2026-09-09T00:00', end: '2026-09-11T00:00' })
+})
+
 
 test('event detail appears while its task request is still pending', async ({ page }) => {
   let releaseTasks
