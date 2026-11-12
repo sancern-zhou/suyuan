@@ -18,6 +18,7 @@ import structlog
 from .graph import WorkflowConcurrencyGovernor, WorkflowGraph
 from .lineage import build_node_lineage, validate_node_lineage
 from .model_failure_policy import resolve_model_failure_policy, transient_backoff_seconds
+from ..runtime.time_budget import NON_RETRYABLE_TERMINATIONS, TERMINATION_EXTENDED_TIMEOUT
 from .runtime import TERMINAL_STATUSES, WorkflowRuntime
 from .routing import validate_condition, evaluate_condition
 from .stall_watch import WorkflowStallWatch
@@ -51,7 +52,14 @@ class WorkflowNodeSpec:
     MAX_TIMEOUT_SECONDS_CAP = 3600.0
 
     def expanded_budget(self, attempt: int) -> "WorkflowNodeSpec":
-        """返回第 attempt 次尝试（attempt 从 1 计）使用的预算副本。"""
+        """返回第 attempt 次尝试（attempt 从 1 计）使用的预算副本。
+
+        iteration_cap/timeout_cap 由 project_policy 写入，语义是项目政策
+        治理硬顶（重试扩容不得越过；要放宽改 project.yaml 策略值，见
+        jiangsu-ops project.yaml 数据域注释）。真失败重试放宽受 cap 封顶；
+        预算耗尽类失败在 v3（2026-11-12）后不再走重试——自由节点由
+        子 Agent 时间预算原地续跑，此处仅服务真失败重试路径。
+        """
         if attempt <= 1:
             return self
         factor = 1.0 + self.RETRY_BUDGET_STEP * (attempt - 1)
@@ -81,7 +89,7 @@ class WorkflowNodeSpec:
         payload = dict(value.get("payload") or {})
         # Allow concise node definitions while keeping the coordinator's
         # execution contract stable.
-        for key in ("target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage", "phase", "iteration_cap", "timeout_cap"):
+        for key in ("target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage", "phase", "iteration_cap", "timeout_cap", "time_budget"):
             if key in value and key not in payload:
                 payload[key] = value[key]
         raw_phase = str(value.get("phase") or "").strip()
@@ -226,6 +234,10 @@ class WorkflowCoordinator:
         self.node_decisions: Dict[str, Dict[str, Any]] = {}
         self.node_input_gaps: Dict[str, List[Dict[str, Any]]] = {}
         self.node_retryable: Dict[str, bool] = {}
+        # 时间预算终态留档（extended_timeout / stalled_no_progress）：
+        # 预算耗尽 ≠ 失败——不安排重试（重试是给真失败的保险丝），
+        # 错误文案与 delivery gap 据此区分"预算耗尽"与"真失败"。
+        self.node_termination: Dict[str, str] = {}
         # 字段级结构化校验错误留档：节点因结果协议校验失败时保存明细，
         # 重试上下文带给子 Agent 自纠（摘要句只有"未通过"，修不了字段）。
         self.node_validation_errors: Dict[str, List[Dict[str, Any]]] = {}
@@ -669,7 +681,8 @@ class WorkflowCoordinator:
             "node_lineage": dict(self.node_lineage),
             "node_decisions": dict(self.node_decisions),
             "node_input_gaps": dict(self.node_input_gaps),
-            "node_retryable": dict(self.node_retryable),
+                "node_retryable": dict(self.node_retryable),
+                "node_termination": dict(self.node_termination),
             "node_usage": dict(self.node_usage),
             "node_failure_policies": dict(self.node_failure_policies),
             "node_findings": {
@@ -777,10 +790,22 @@ class WorkflowCoordinator:
                         return await result
                     return result
 
-                if effective_node.timeout_seconds is None:
+                # 外层墙钟是最后防线：时间预算节点内层会先续跑/熔断/收尾
+                # （软预算+续跑到 hard，再给 90s 收尾窗口），外层必须高于内层
+                # 全程（hard + 120s 余量），否则续跑会被外层提前取消。
+                outer_timeout = effective_node.timeout_seconds
+                budget_cfg = effective_node.payload.get("time_budget")
+                if outer_timeout is not None and isinstance(budget_cfg, dict):
+                    try:
+                        hard_seconds = float(budget_cfg.get("hard_seconds") or 0)
+                    except (TypeError, ValueError):
+                        hard_seconds = 0.0
+                    if hard_seconds > 0:
+                        outer_timeout = max(outer_timeout, hard_seconds + 120.0)
+                if outer_timeout is None:
                     result = await execute_node()
                 else:
-                    async with asyncio.timeout(effective_node.timeout_seconds):
+                    async with asyncio.timeout(outer_timeout):
                         result = await execute_node()
             metadata = result.get("metadata") if isinstance(result, dict) else None
             child_session_id = metadata.get("session_id") if isinstance(metadata, dict) else None
@@ -808,6 +833,10 @@ class WorkflowCoordinator:
                     self.node_validation_errors[task_id] = [
                         item for item in validation_errors if isinstance(item, Mapping)
                     ][:20]
+                # 时间预算终态留档：预算耗尽（extended_timeout / stalled_no_progress）
+                # 不安排重试——重试给真失败，预算耗尽要么已续跑到底、要么空转无意义。
+                if isinstance(data, Mapping) and data.get("termination_reason"):
+                    self.node_termination[task_id] = str(data["termination_reason"])
                 raise RuntimeError(self._result_error(result))
             self.node_results[task_id] = result
             lineage = build_node_lineage(
@@ -839,6 +868,7 @@ class WorkflowCoordinator:
             self.node_errors.pop(task_id, None)
             self.node_validation_errors.pop(task_id, None)
             self.node_retryable.pop(task_id, None)
+            self.node_termination.pop(task_id, None)
             self.graph.set_status(task_id, "succeeded")
             self.runtime.transition(node_run.run_id, "succeeded")
             self._journal_event(
@@ -858,11 +888,12 @@ class WorkflowCoordinator:
                 self._persist_snapshot({})
             raise
         except Exception as exc:
-            error = (
-                f"workflow node timed out after {effective_node.timeout_seconds:g}s"
-                if isinstance(exc, TimeoutError) and effective_node.timeout_seconds is not None
-                else str(exc)
-            )
+            if isinstance(exc, TimeoutError) and effective_node.timeout_seconds is not None:
+                # 外层兜底墙钟触发 = 预算耗尽（内层时间预算未正常收尾的极端情形）。
+                self.node_termination[task_id] = TERMINATION_EXTENDED_TIMEOUT
+                error = f"workflow node timed out after {outer_timeout:g}s"
+            else:
+                error = str(exc)
             self.node_errors[task_id] = error
             self.runtime.transition(node_run.run_id, "failed", payload={"error": error})
             # 模型错误走统一策略表（单一判定源）：配额/鉴权/无效请求/上下文超限
@@ -875,6 +906,11 @@ class WorkflowCoordinator:
                 and not local_non_retryable
                 and (policy is None or policy.retryable)
             )
+            # 预算耗尽（extended_timeout / stalled_no_progress）不重试：
+            # 内层已续跑到底或已判定空转，重跑同预算只会原样再死一遍；
+            # 重试留给真失败（异常/校验失败）。
+            if self.node_termination.get(task_id) in NON_RETRYABLE_TERMINATIONS:
+                retrying = False
             self.node_retryable[task_id] = retrying
             if policy is not None and not policy.retryable:
                 self.node_failure_policies[task_id] = {
@@ -948,6 +984,7 @@ class WorkflowCoordinator:
             if isinstance(items, list)
         }
         self.node_retryable = dict(snapshot.get("node_retryable") or {})
+        self.node_termination = dict(snapshot.get("node_termination") or {})
         self.node_usage = {
             str(key): dict(value)
             for key, value in (snapshot.get("node_usage") or {}).items()

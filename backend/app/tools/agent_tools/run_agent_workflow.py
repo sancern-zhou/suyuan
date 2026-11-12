@@ -48,6 +48,13 @@ _FIXED_QUERY_NODE_MODES = frozenset({
 # 且 submit_result 之后仍需一轮收尾（理想路径实测 5 轮）。
 _QUERY_NODE_MIN_ITERATIONS = 8
 
+# 自由 agent 节点（无固定阶段工作流、无专家默认预算，如数据准备域）走墙钟时间预算
+# 模式（2026-11-12 v3 方案）：轮次不是工作量单位（同 10 轮实测 115-290s），取消轮次
+# 硬限；软预算到点且有进展由子 Agent 原地续跑（上下文不动），空转熔断与硬上限兜底。
+# 420s 下限依据：取数+核对+统计表+图+交付全链 10 轮实测 115-290s，留足收尾。
+_FREE_NODE_MIN_TIMEOUT_SECONDS = 420.0
+_FREE_NODE_HARD_TIMEOUT_SECONDS = 900.0
+
 # 专家分析类节点默认超时（2026-11-05 上调）：跨节点数据分析实测 8–12 分钟
 # （清远 10 月溯源：expert_meteorology 493s、expert_analysis 705s 成功），
 # 旧默认 300/360s 在分析中途即被取消，重试扩档（×1.5）也覆盖不了。
@@ -106,6 +113,12 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "任务书写清时间范围、区域与指标口径即可，不要教写 SQL。"
     "一个专家节点只回答一个独立问题，多个问题拆成多个并行节点。"
     "专家分析类节点 timeout 下限 900s（跨节点数据分析实测 8–12 分钟），声明更小值也会被抬到 900s。"
+    "数据准备等自由 agent 节点按墙钟时间预算运行：不设轮次上限，超时声明为软预算（下限 420s），"
+    "到点仍有进展会自动续跑（上限 900s），空转（连续无工具调用）会被提示并强制收尾交付——"
+    "预算写 420s 以上即可，无需为轮次预留。"
+    "节点数较多（>8）或单次生成 JSON 被拒（超长截断）时，先提交数据准备等核心节点，"
+    "工作流跑完后再用 extension（expected_revision 填返回的 revision）追加分析节点——"
+    "已成功节点会按结果缓存复用，不会重跑，分段提交比一次性生成超长 JSON 更可靠。"
     "节点视图 published_charts 列出子代理已产出并发布到本会话的图表（resource_id/label/path）："
     "聊天答复中用 [[chart:<resource_id>]] 引用即可渲染；成稿作为 create_report_package 的 image assets。"
     "报告需要的分析图表必须在对应子节点的 goal 中要求随节点产出，"
@@ -686,6 +699,21 @@ class RunAgentWorkflowTool(LLMTool):
                     except (TypeError, ValueError):
                         configured = _QUERY_NODE_MIN_ITERATIONS
                     node["max_iterations"] = max(configured, _QUERY_NODE_MIN_ITERATIONS)
+                node_mode = str(node.get("target_mode") or "")
+                if node_mode not in _DEFAULT_EXPERT_NODE_LIMITS and node_mode not in _FIXED_QUERY_NODE_MODES:
+                    # 自由 agent 节点：墙钟下限 420s；执行时切换时间预算模式
+                    # （取消轮次硬限、软预算续跑、空转熔断，见 execute_node 下发）。
+                    try:
+                        authored_timeout = float(node.get("timeout_seconds") or 0)
+                    except (TypeError, ValueError):
+                        authored_timeout = 0.0
+                    node["timeout_seconds"] = max(authored_timeout, _FREE_NODE_MIN_TIMEOUT_SECONDS)
+                    # 预算配置随节点定义走：coordinator 据此放宽外层兜底墙钟
+                    # （hard + 120s），子 Agent 运行时据此切换时间预算模式。
+                    node["time_budget"] = {
+                        "soft_seconds": node["timeout_seconds"],
+                        "hard_seconds": max(node["timeout_seconds"], _FREE_NODE_HARD_TIMEOUT_SECONDS),
+                    }
             # 报告编排只暴露领域取数与专家节点，禁止综合模式或产出型模式越权。
             runtime_mode = str(
                 getattr(context, "runtime_mode", None)
@@ -822,6 +850,11 @@ class RunAgentWorkflowTool(LLMTool):
                             )
                             + "\n"
                         )
+                # 自由 agent 节点：下发墙钟时间预算（软=节点超时，硬=900s 封顶，
+                # 配置在 normalize 阶段写入节点定义，单一来源）。
+                # 子 Agent 运行时据此切换时间预算模式：取消轮次硬限、软预算到点
+                # 且有进展原地续跑、空转熔断、硬上限前收尾交付；预算耗尽不占重试预算。
+                node_time_budget = payload.get("time_budget")
                 result = await sub_agent_tool.execute(
                     context=context,
                     target_mode=payload["target_mode"],
@@ -849,6 +882,7 @@ class RunAgentWorkflowTool(LLMTool):
                     # 渐进发现（report_finding）：中间结论实时进 journal/快照，
                     # 前端实时可见，节点失败后随 salvage 保留。
                     _finding_observer=coordinator.record_finding,
+                    _time_budget=node_time_budget,
                 )
                 return result
 

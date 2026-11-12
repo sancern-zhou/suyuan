@@ -24,6 +24,7 @@ from .cancellation import AgentRunCancelled, cancellation_registry
 from .mode_capabilities import supports_native_multimodal
 from .ownership import run_ownership_registry
 from .steering import steering_registry
+from .time_budget import TimeBudget
 from ..context.context_diagnostics import ContextDiagnostics
 from ..workflow.mode_workflows import (
     allowed_tools as fixed_workflow_allowed_tools,
@@ -164,12 +165,41 @@ class AgentRuntime:
             yield self.events.start(state)
 
             workflow_definition = get_mode_workflow(state.mode)
-            iteration_limit = min(
-                self.config.max_iterations,
-                workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+            # 时间预算模式（自由 agent 工作流节点，runtime_metadata.time_budget 下发）：
+            # 轮次不是工作量单位，取消轮次硬限，墙钟时间 + 空转熔断接管预算；
+            # 预算耗尽原地续跑（同实例、上下文不动），不打断进行中的工具调用。
+            time_budget = TimeBudget.from_runtime_metadata(self.config.runtime_metadata)
+            if time_budget is not None:
+                logger.info(
+                    "time_budget_enabled",
+                    session_id=state.session_id,
+                    soft_seconds=time_budget.spec.soft_seconds,
+                    hard_seconds=time_budget.spec.hard_seconds,
+                )
+            iteration_limit = (
+                None
+                if time_budget is not None
+                else min(
+                    self.config.max_iterations,
+                    workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+                )
             )
-            while state.iteration < iteration_limit and not state.task_completed:
+            while (iteration_limit is None or state.iteration < iteration_limit) and not state.task_completed:
                 self._raise_if_cancelled()
+                if time_budget is not None:
+                    decision = time_budget.check()
+                    if decision.prompt:
+                        # 预算提示以用户消息注入下一轮上下文（续跑/收尾/推进指令）
+                        self.writer.add_user_message(decision.prompt)
+                    if decision.action == "stop":
+                        state.budget_termination = decision.reason
+                        logger.info(
+                            "time_budget_terminated",
+                            session_id=state.session_id,
+                            reason=decision.reason,
+                            iterations=state.iteration,
+                        )
+                        break
                 state.iteration += 1
                 try:
                     async for event in self._apply_steering_inputs(state):
@@ -177,6 +207,8 @@ class AgentRuntime:
                     async for event in self._run_iteration(state):
                         self._raise_if_cancelled()
                         yield event
+                    if time_budget is not None:
+                        time_budget.on_turn_end(had_tool_call=state.last_turn_tool_calls > 0)
                     deterministic_error_count = 0
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
@@ -241,7 +273,7 @@ class AgentRuntime:
                     async for event in self.finalizer.fatal_error(state, error):
                         yield event
                 else:
-                    async for event in self.finalizer.timeout(state):
+                    async for event in self.finalizer.timeout(state, reason=state.budget_termination):
                         yield event
 
         except Exception as exc:
@@ -288,6 +320,8 @@ class AgentRuntime:
             )
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
+        # 时间预算空转检测输入：本轮工具调用数（各分支覆写）
+        state.last_turn_tool_calls = 0
         context_result, conversation_history = await self._build_context(state)
         attachments = self._effective_attachments(state)
         self._record_visual_context(state, attachments)
@@ -322,6 +356,7 @@ class AgentRuntime:
         action_type = action.get("type", "ERROR")
 
         if streaming_tool_executor.total_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
+            state.last_turn_tool_calls = streaming_tool_executor.total_count
             async for event in self._handle_streamed_tools(state, planner_result, streaming_tool_executor):
                 self._raise_if_cancelled()
                 yield event
@@ -374,6 +409,7 @@ class AgentRuntime:
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
+            state.last_turn_tool_calls = 1
             suppressed_observation = (
                 self._fixed_workflow_blocked_observation(state, action)
                 or self._suppressed_housekeeping_observation(state, action)

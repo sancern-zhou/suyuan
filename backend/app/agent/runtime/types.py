@@ -96,6 +96,11 @@ class RunState:
     # 只记账遥测，不参与预算判定）
     tokens_spent: int = 0
     last_turn_usage: Optional[Dict[str, Any]] = None
+    # 时间预算模式（自由 agent 节点）：本轮工具调用数（空转检测输入）
+    last_turn_tool_calls: int = 0
+    # 时间预算终止原因（extended_timeout / stalled_no_progress）；
+    # 供 finalizer 与 complete 事件透出，coordinator 据此区分预算耗尽与真失败
+    budget_termination: Optional[str] = None
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

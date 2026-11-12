@@ -165,13 +165,13 @@ def test_coordinator_times_out_node_and_records_clear_error():
         result = await coordinator.run()
         assert result["status"] == "failed"
         assert result["graph"]["expert"]["status"] == "failed"
-        # 默认 max_attempts=2：最终错误来自扩容后的第 2 次尝试（0.01×1.5）
-        assert "timed out after 0.015s" in result["node_errors"]["expert"]
+        # 2026-11-12 语义变更：超时=预算耗尽（extended_timeout），不安排重试——
+        # 同预算重试只会原样再死一遍；错误文案带实际外层墙钟值。
+        assert "timed out after 0.01s" in result["node_errors"]["expert"]
         assert result["definition"]["nodes"][0]["timeout_seconds"] == 0.01
-        # 两次尝试：首试原预算，重试扩容且携带失败原因与子会话续跑信息
-        assert attempts[0] == (1, 0.01, None)
-        assert attempts[1][0] == 2 and attempts[1][1] == 0.015
-        assert attempts[1][2] is not None
+        assert attempts == [(1, 0.01, None)]
+        assert result["node_termination"]["expert"] == "extended_timeout"
+        assert result["node_retryable"]["expert"] is False
 
     asyncio.run(run())
 
@@ -545,5 +545,94 @@ def test_coordinator_lineage_bookkeeping_anomaly_keeps_node_result(monkeypatch):
         warnings = [e for e in journal.events if e["event_type"] == "node.lineage_warning"]
         assert len(warnings) == 1
         assert warnings[0]["task_id"] == "source"
+
+    asyncio.run(run())
+
+
+def test_expanded_budget_respects_policy_caps():
+    """iteration_cap/timeout_cap 是 project_policy 写入的治理硬顶：重试放宽受封顶。
+
+    2026-11-13 更正：曾误判 min() 为 bug 改成 max(cap, scaled)，被
+    project_policy_test 揭示破坏政策语义（政策上限 6 重试变 12）后恢复。
+    政策要放宽改 project.yaml 策略值，不是运行时越顶。
+    """
+    from app.agent.workflow.coordinator import WorkflowNodeSpec
+
+    node = WorkflowNodeSpec.from_mapping({
+        "task_id": "d_alarm",
+        "max_iterations": 10,
+        "timeout_seconds": 300.0,
+        "iteration_cap": 10,
+        "timeout_cap": 300.0,
+    })
+    attempt2 = node.expanded_budget(2)
+    attempt3 = node.expanded_budget(3)
+    # 放宽计算值 15/20 被 cap=10 封顶；timeout 450/600 被 300 封顶
+    assert attempt2.max_iterations == 10
+    assert attempt3.max_iterations == 10
+    assert attempt2.timeout_seconds == 300.0
+    assert attempt3.timeout_seconds == 300.0
+    # 无政策 cap（字段缺省 120/3600）时放宽生效
+    free = WorkflowNodeSpec.from_mapping({
+        "task_id": "free", "max_iterations": 10, "timeout_seconds": 300.0,
+    })
+    assert free.expanded_budget(2).max_iterations == 15
+    assert free.expanded_budget(2).timeout_seconds == 450.0
+    # 首试保持原设定
+    assert node.expanded_budget(1) is node
+
+
+def test_budget_exhaustion_does_not_consume_retry_budget():
+    """预算耗尽（extended_timeout/stalled_no_progress）不重试：重试留给真失败。"""
+    from app.agent.workflow.coordinator import WorkflowCoordinator
+
+    async def run():
+        attempts = []
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            attempts.append(attempt)
+            return {
+                "status": "failed",
+                "success": False,
+                "result": "子Agent时间预算耗尽",
+                "data": {"termination_reason": "extended_timeout"},
+            }
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "budget-1", "nodes": [{"task_id": "d_rates", "max_attempts": 2}]},
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "failed"
+        assert attempts == [1]  # 未发生重试
+        assert result["node_retryable"]["d_rates"] is False
+        assert result["node_errors"]["d_rates"]
+        # 终态留档随快照透出，delivery 可区分预算耗尽与真失败
+        assert result["node_termination"]["d_rates"] == "extended_timeout"
+
+    asyncio.run(run())
+
+
+def test_real_failure_still_retries():
+    """真失败（无预算终态）保持既有重试语义。"""
+    from app.agent.workflow.coordinator import WorkflowCoordinator
+
+    async def run():
+        attempts = []
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            attempts.append(attempt)
+            if attempt == 1:
+                return {"status": "failed", "success": False, "result": "boom", "data": {}}
+            return {"status": "success", "success": True, "data": {}}
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "retry-2", "nodes": [{"task_id": "d_qc", "max_attempts": 2}]},
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "succeeded"
+        assert attempts == [1, 2]
+        assert "d_qc" not in result.get("node_termination", {})
 
     asyncio.run(run())

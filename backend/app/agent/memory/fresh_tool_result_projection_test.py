@@ -65,8 +65,8 @@ def _tool_result_contents(messages):
 
 def test_fresh_tool_result_projected_verbatim_in_current_run(tmp_path):
     session = _make_session(tmp_path)
-    # 小于单结果上限：当前轮工具结果原样投影
-    full_text = "环境空气质量标准正文。" + ("GB 3095 " * 2000)
+    # 小于单结果上限：当前轮工具结果原样投影（2026-11-13 预算 24k→8k，尺度同步缩小）
+    full_text = "环境空气质量标准正文。" + ("GB 3095 " * 700)
     assert len(full_text) < MAX_FRESH_SINGLE_TOOL_RESULT_CHARS
     session.add_user_message("读取文档全文")
     _add_tool_result(session, "call_read_1", _reader_result(full_text))
@@ -128,7 +128,10 @@ def test_stale_result_stub_preserves_nested_data_id():
 
 def test_budget_downgrades_oldest_result_first(tmp_path):
     session = _make_session(tmp_path)
-    text = "X" * 20_000  # 单个不超上限，靠总预算触发降级
+    # 2026-11-13 预算 48k→16k：三个 ~7k 序列化的结果中最新两个进预算 verbatim 注入、
+    # 最旧的超出总预算不注入（保持压缩存储形态）。压缩形态在中等结果下与 raw 近似，
+    # 故直接断言注入计划（本质行为）：预算从最新 turn 向旧分配。
+    text = "X" * 5_000
 
     session.add_user_message("读取三份文档")
     _add_tool_result(session, "call_old", _reader_result(text, chunk_index=0))
@@ -137,18 +140,11 @@ def test_budget_downgrades_oldest_result_first(tmp_path):
     session.add_assistant_message("第二份已读取")
     _add_tool_result(session, "call_new", _reader_result(text, chunk_index=2))
 
-    messages = session.get_messages_for_llm()
-    contents = _tool_result_contents(messages)
-    assert len(contents) == 3
-    payloads = [json.loads(item) for item in contents]
-    # 分配从最新 turn 开始：最新两个在预算内原样投影；最旧的超出总预算，
-    # 且其压缩存储块也超过存根阈值 → 收缩为存根（保留 summary/file_path）
-    assert payloads[2]["data"]["chunks"][0]["content"] == text
-    assert payloads[1]["data"]["chunks"][0]["content"] == text
-    assert payloads[0]["tool_result_truncated"] is True
-    assert payloads[0]["summary"] == "已读取文档并登记原文资源"
-    assert payloads[0]["file_path"] == "backend_data_registry/sessions/doc_001.txt"
-    assert text not in contents[0]
+    plan = session._plan_fresh_raw_injection(session.conversation_history)
+    injected_ids = {tid for mapping in plan.values() for tid in mapping}
+    assert "call_new" in injected_ids
+    assert "call_mid" in injected_ids
+    assert "call_old" not in injected_ids  # 总预算耗尽，最旧的不做 verbatim 投影
 
 
 def test_todowrite_result_excluded_from_fresh_projection(tmp_path):

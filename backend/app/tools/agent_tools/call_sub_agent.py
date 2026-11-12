@@ -29,6 +29,7 @@ from app.agent.session.workspace_routing import (
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
+from app.agent.runtime.time_budget import NON_RETRYABLE_TERMINATIONS
 from app.agent.workflow.delegation import is_leaf_mode, delegation_error
 from app.agent.workflow import route_decisions
 
@@ -505,6 +506,7 @@ class CallSubAgentTool(LLMTool):
         _on_session_started: Optional[Callable[[str], None]] = None,
         _escalation_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
         _finding_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
+        _time_budget: Optional[Dict[str, Any]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -1146,6 +1148,10 @@ class CallSubAgentTool(LLMTool):
                     "max_agent_depth": max_agent_depth,
                     "workflow_run_id": workflow_run.run_id,
                 }
+                if _time_budget:
+                    # 墙钟时间预算（自由 agent 工作流节点）：子 Agent 运行时取消轮次
+                    # 硬限，按时间续跑/熔断/收尾（app.agent.runtime.time_budget）。
+                    turn_runtime_metadata["time_budget"] = dict(_time_budget)
                 if fixed_workflow_progress is not None:
                     turn_runtime_metadata["fixed_workflow_progress"] = dict(fixed_workflow_progress)
                 turn_events: List[Dict[str, Any]] = []
@@ -1321,6 +1327,15 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            # 时间预算终态透出：coordinator 据此把预算耗尽（extended_timeout /
+            # stalled_no_progress）标记为不可重试，与真失败（异常/校验失败）区分。
+            _termination_reason = (
+                (final_result.get("data") or {}).get("termination_reason")
+                if isinstance(final_result.get("data"), dict)
+                else None
+            )
+            if _termination_reason:
+                structured_data["termination_reason"] = _termination_reason
             if handoff_resource_service is None:
                 from app.agent.resources.resource_service import SessionResourceService
 
@@ -1816,6 +1831,24 @@ class CallSubAgentTool(LLMTool):
 
     def _extract_final_result(self, events: list) -> Dict:
         """从事件流中提取最终结果"""
+        # 时间预算终态（extended_timeout / stalled_no_progress）：没有 agent_finish，
+        # complete(incomplete) 事件携带原因——区分"预算耗尽（不重试）"与"真失败"，
+        # coordinator 据此决定是否安排重试。
+        for event in reversed(events):
+            if event.get("type") != "complete":
+                continue
+            data = event.get("data") or {}
+            reason = str(data.get("reason") or "")
+            if reason in NON_RETRYABLE_TERMINATIONS:
+                return {
+                    "status": "failed",
+                    "answer": str(data.get("answer") or "子Agent时间预算耗尽，未形成交付。"),
+                    "data": {
+                        "termination_reason": reason,
+                        "iterations": data.get("iterations"),
+                    },
+                }
+            break
         # ✅ 优先查找agent_finish事件（包含完整的answer）
         for event in reversed(events):
             if event.get("type") == "agent_finish":

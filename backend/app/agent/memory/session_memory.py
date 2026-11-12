@@ -35,8 +35,8 @@ MAX_TOOL_RESULT_JSON_CHARS = 20_000
 # to the model verbatim (the tool's own output limits bound them). Only stale
 # turns fall back to the compacted history form. A per-request budget keeps
 # multi-read runs from flooding the context; oldest results downgrade first.
-MAX_FRESH_TOOL_RESULT_CHARS = 48_000
-MAX_FRESH_SINGLE_TOOL_RESULT_CHARS = 24_000
+MAX_FRESH_TOOL_RESULT_CHARS = 16_000
+MAX_FRESH_SINGLE_TOOL_RESULT_CHARS = 10_000
 # 新鲜窗口之外（历史更早处）的超大工具结果块收缩为存根的阈值
 STALE_RESULT_KEEP_CHARS = 4_000
 

@@ -752,12 +752,12 @@ class Settings(BaseSettings):
         description="Max silent wait for the first streaming chunk from an LLM provider; also the per-chunk idle gap for streams"
     )
     llm_fresh_tool_result_budget_chars: int = Field(
-        default=48_000,
-        description="Char budget for projecting the current run's raw tool results into LLM history; lower values cut per-round latency for multi-iteration agents"
+        default=16_000,
+        description="Char budget for projecting the current run's raw tool results into LLM history; lower values cut per-round latency for multi-iteration agents. 2026-11-13 48k→16k: repeated verbatim projection was the dominant token sink (qc domain 16 turns/942k input, ~19s per turn); older results degrade to summary+file_path stubs the model re-reads on demand"
     )
     llm_fresh_tool_result_single_max_chars: int = Field(
-        default=24_000,
-        description="Per-result char cap above which a tool result falls back to its compacted history form instead of verbatim projection"
+        default=10_000,
+        description="Per-result char cap above which a tool result falls back to its compacted history form instead of verbatim projection; paired with the 16k budget this keeps 1-2 most recent results fully visible (serialized JSON adds ~30% over raw text)"
     )
     llm_fallbacks: str = Field(
         default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
