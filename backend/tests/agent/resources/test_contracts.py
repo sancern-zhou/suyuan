@@ -88,6 +88,42 @@ def test_metadata_size_limit_remains_enforced():
         })
 
 
+def test_docx_renderer_declarations_are_accepted():
+    # cf05c53a 五处声明（generated_file_products、report_package renditions、
+    # validate_office、QMD 渲染挂载、attach_document_resources）统一 renderer='docx'，
+    # 枚举漏登记会把整条 durable 发布链炸成 resource_declaration_invalid。
+    primary = ResourceDeclaration.model_validate({
+        "kind": "file",
+        "group_key": "report:jsops-risk-report",
+        "resource_key": "docx",
+        "relation": "primary",
+        "role": "report",
+        "label": "report.docx",
+        "locator": {"path": "/tmp/report.docx"},
+        "format": "docx",
+        "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "renderer": "docx",
+        "capabilities": ["preview", "download", "edit"],
+    })
+    rendition = ResourceDeclaration.model_validate({
+        "kind": "file",
+        "group_key": "report:jsops-risk-report",
+        "resource_key": "docx",
+        "parent_key": "qmd",
+        "relation": "rendition",
+        "role": "report",
+        "label": "report.docx",
+        "locator": {"path": "/tmp/report.docx"},
+        "format": "docx",
+        "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "renderer": "docx",
+        "capabilities": ["download"],
+    })
+
+    assert primary.renderer.value == "docx"
+    assert rendition.renderer.value == "docx"
+
+
 def test_legacy_presentation_contract_is_rejected():
     with pytest.raises(ValidationError):
         ResourceDeclaration.model_validate({

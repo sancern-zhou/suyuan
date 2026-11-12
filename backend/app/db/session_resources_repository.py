@@ -369,7 +369,7 @@ class SessionResourcesRepository:
     async def resource_counts(self, session_id: str) -> ResourceCounts:
         page = await self.list_resources(session_id, status="active", limit=100000)
         document_renderers = {
-            "pdf", "html", "markdown", "spreadsheet", "presentation", "image"
+            "pdf", "html", "markdown", "spreadsheet", "presentation", "image", "docx"
         }
         return ResourceCounts(
             total=len(page.resources),

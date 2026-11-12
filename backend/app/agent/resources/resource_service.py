@@ -576,7 +576,7 @@ class SessionResourceService:
             return await self._repository.resource_counts(session_id)
         resources = (await self.list_resources(session_id)).resources
         document_renderers = {
-            "pdf", "html", "markdown", "spreadsheet", "presentation", "image"
+            "pdf", "html", "markdown", "spreadsheet", "presentation", "image", "docx"
         }
         return ResourceCounts(
             total=len(resources),

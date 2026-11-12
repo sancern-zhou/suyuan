@@ -51,6 +51,7 @@ class ResourceRenderer(str, Enum):
     IMAGE = "image"
     CHART = "chart"
     BOARD = "board"
+    DOCX = "docx"
 
 
 class ResourceCapability(str, Enum):
