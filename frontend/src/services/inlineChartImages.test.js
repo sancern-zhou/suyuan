@@ -124,3 +124,28 @@ test('interactive chart exclusion preserves static images in mixed results', () 
   assert.deepEqual(images.map(image => image.visual_id), ['static'])
   assert.equal(renderChartPlaceholders(content, images, resources).content, '\n![static](/static.png)')
 })
+
+test('inline references resolve generated image file products by visual_id', () => {
+  // execute_python 生成的 PNG 文件资源（primary:png，renderer=image）带
+  // metadata.visual_id 透出的视觉身份后，与 chart-image 同等参与内联渲染。
+  const user = { id: 'user', type: 'user' }
+  const tool = { id: 'tool', type: 'tool_result', data: {
+    tool_name: 'execute_python', result: { visuals: [{ id: 'matplotlib_x1', type: 'image' }] }
+  } }
+  const final = { id: 'final', type: 'final' }
+  const pngResource = {
+    resource_id: 'png-a', resource_key: 'primary:png', renderer: 'image',
+    visual_id: 'matplotlib_x1', status: 'active', label: 'AQI预报区间', content_url: '/aqi.png'
+  }
+  const noVisualId = {
+    resource_id: 'png-b', resource_key: 'primary:png', renderer: 'image',
+    status: 'active', content_url: '/b.png'
+  }
+  const content = '官方AQI预报区间：\n\n[[chart:matplotlib_x1]]'
+  const images = inlineChartImages(final, [user, tool, final], [pngResource, noVisualId], content)
+  assert.deepEqual(images, [pngResource])
+  assert.equal(
+    renderChartPlaceholders(content, images).content,
+    '官方AQI预报区间：\n\n![AQI预报区间](/aqi.png)'
+  )
+})

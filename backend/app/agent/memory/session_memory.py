@@ -72,6 +72,24 @@ def _strip_read_state_content_for_llm(value: Any) -> Any:
     return {**value, "metadata": {**metadata, "read_state": read_state}}
 
 
+def _strip_server_resource_ids_for_llm(value: Any) -> Any:
+    """LLM 注入前剥离 resource_tracking 中的资源目录主键。
+
+    resource_id/group_id/focus_resource_id 是服务端资源目录与前端产物卡片
+    的内部主键，不属于 ``[[chart:...]]`` 协议（协议只接受 visual_id 与
+    会话短别名 chart_N）。历史教训：模型把它们当图表 ID 抄进占位符，前端
+    按 visual_id 匹配不到导致图表不渲染，产物卡片还被标记文本抑制。模型
+    视野只保留 durable 状态；SSE 事件与落库消息仍携带完整 tracking。
+    """
+    if not isinstance(value, dict):
+        return value
+    tracking = value.get("resource_tracking")
+    if not isinstance(tracking, dict):
+        return value
+    slim = {key: val for key, val in tracking.items() if key == "durable"}
+    return {**value, "resource_tracking": slim}
+
+
 def _todo_status_counts(items: Any) -> Dict[str, int]:
     if not isinstance(items, list):
         return {
@@ -483,7 +501,7 @@ def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
         )
         return compacted_todo
 
-    compacted = _compact_tool_result_value(result)
+    compacted = _strip_server_resource_ids_for_llm(_compact_tool_result_value(result))
     if isinstance(compacted, dict) and _tool_result_value_was_truncated(compacted):
         compacted = dict(compacted)
         compacted["tool_result_truncated"] = True
@@ -1698,7 +1716,9 @@ class SessionMemory:
                     continue
                 try:
                     serialized = _serialize_tool_result_json(
-                        _strip_read_state_content_for_llm(raw)
+                        _strip_read_state_content_for_llm(
+                            _strip_server_resource_ids_for_llm(raw)
+                        )
                     )
                 except Exception:
                     continue
