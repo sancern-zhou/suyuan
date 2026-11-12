@@ -259,28 +259,28 @@ async def query_events_overview_async(
             ))
         where = and_(*clauses) if clauses else None
 
-        count_stmt = select(func.count(SmartEventDB.event_id))
         event_stmt = select(SmartEventDB.data)
+        filtered_stmt = select(
+            SmartEventDB.event_id,
+            SmartEventDB.data["ai_judgment"]["final_response"].astext.label("final_response"),
+            func.nullif(func.coalesce(
+                func.nullif(SmartEventDB.site_id, ""), SmartEventDB.site_name
+            ), "").label("station"),
+        )
         if review_join is not None:
             join_condition = SmartEventDB.data["review_id"].astext == TaskReviewDB.review_id
-            count_stmt = count_stmt.outerjoin(review_join, join_condition)
             event_stmt = event_stmt.outerjoin(review_join, join_condition)
-        total = (await session.execute(count_stmt.where(where))).scalar_one()
+            filtered_stmt = filtered_stmt.outerjoin(review_join, join_condition)
+        filtered = filtered_stmt.where(where).subquery()
+        stats_total, pending, stations = (await session.execute(select(
+            func.count(filtered.c.event_id),
+            func.sum(case((func.coalesce(filtered.c.final_response, "") == "", 1), else_=0)),
+            func.count(distinct(filtered.c.station)),
+        ))).one()
+        total = stats_total
         stmt = event_stmt.where(where)
         stmt = stmt.order_by(_time_column(SmartEventDB).desc().nullslast()).offset(offset).limit(limit)
         events = [row[0] for row in (await session.execute(stmt)).all()]
-
-        stats_total = (await session.execute(
-            select(func.count(SmartEventDB.event_id))
-        )).scalar_one()
-        pending = (await session.execute(
-            select(func.count(SmartEventDB.event_id)).where(
-                func.coalesce(SmartEventDB.data["ai_judgment"]["final_response"].astext, "") == ""
-            )
-        )).scalar_one()
-        stations = (await session.execute(
-            select(func.count(distinct(SmartEventDB.site_id)))
-        )).scalar_one()
         statuses = sorted({row for row in (await session.execute(
             select(SmartEventDB.event_status).where(SmartEventDB.event_status.isnot(None))
         )).scalars()})
@@ -296,7 +296,7 @@ async def query_events_overview_async(
     return {
         "events": events,
         "total": total,
-        "stats": {"total": stats_total, "pending": pending, "stations": stations},
+        "stats": {"total": stats_total, "pending": pending or 0, "stations": stations},
         "filters": {"statuses": statuses, "types": types, "levels": levels},
         "last_sync": last_sync_row,
     }

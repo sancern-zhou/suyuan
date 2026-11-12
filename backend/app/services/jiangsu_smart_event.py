@@ -1849,6 +1849,7 @@ class JiangsuSmartEventService:
             search_fields = ("event_id", "event_name", "initial_event_name", "site_name", "site_id", "primary_clue_tag", "source_alarm_rule_type")
             events = [item for item in events if needle in " ".join(str(item.get(key) or "") for key in search_fields).lower()]
         total = len(events)
+        filtered_events = events
         page = max(1, min(page, max(1, (total + limit - 1) // limit)))
         events = events[(page - 1) * limit:page * limit]
         if summary:
@@ -1859,9 +1860,9 @@ class JiangsuSmartEventService:
             "page": page,
             "page_size": limit,
             "stats": {
-                "total": len(all_events),
-                "pending": sum(not item.get("has_judgment", bool((item.get("ai_judgment") or {}).get("final_response"))) for item in all_events),
-                "stations": len({item.get("site_id") or item.get("site_name") for item in all_events}),
+                "total": len(filtered_events),
+                "pending": sum(not item.get("has_judgment", bool((item.get("ai_judgment") or {}).get("final_response"))) for item in filtered_events),
+                "stations": len({station for item in filtered_events if (station := item.get("site_id") or item.get("site_name"))}),
             },
             "filters": {
                 "statuses": sorted({item["event_status"] for item in all_events if item.get("event_status")}),

@@ -1544,9 +1544,9 @@ async def test_bulk_evidence_repairs_missing_failed_and_stale_packages_only(tmp_
 async def test_list_pages_are_small_and_filter_before_pagination(tmp_path, monkeypatch):
     service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
     events = [{"event_id": str(i), "event_name": f"事件{i}", "event_status": "待研判",
-               "event_type": "数据" if i % 2 else "运维", "site_id": "station",
+               "event_type": "数据" if i % 2 else "运维", "site_id": f"station-{i % 3}",
                "evidence_package": {"large": "x" * 10000},
-               "ai_judgment": {"final_response": "x" * 10000}}
+               "ai_judgment": {"final_response": "" if i % 3 == 0 else "x" * 10000}}
               for i in range(23)]
     service._save_store({"events": events, "tasks": []})
     window = {"start_time": "2026-09-10", "end_time": "2026-09-11", "refresh": False}
@@ -1562,12 +1562,59 @@ async def test_list_pages_are_small_and_filter_before_pagination(tmp_path, monke
     filtered = await service.list_events(**window, limit=10, page=2, summary=True, event_type="数据")
     assert filtered["total"] == 11
     assert [item["event_id"] for item in filtered["events"]] == ["21"]
-    assert filtered["stats"]["total"] == 23
+    assert filtered["stats"] == {"total": 11, "pending": 4, "stations": 3}
+    assert filtered["filters"]["types"] == ["数据", "运维"]
+    first_filtered = await service.list_events(**window, limit=10, page=1, summary=True, event_type="数据")
+    assert first_filtered["stats"] == filtered["stats"]
     assert filtered["filters"]["types"] == ["数据", "运维"]
     multi = await service.list_events(**window, limit=10, page=1, summary=True, event_types=["数据", "不存在"])
     assert multi["total"] == 11
+    assert multi["stats"] == filtered["stats"]
     detail = await service.get_event("21", **window)
     assert detail["evidence_package"]["large"] == "x" * 10000
+
+
+@pytest.mark.asyncio
+async def test_file_list_stats_follow_filters_when_db_is_unavailable(tmp_path, monkeypatch):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    service._save_store({"events": [
+        {"event_id": "a", "event_name": "目标事件甲", "event_type": "数据", "event_status": "待研判",
+         "site_id": "A", "latest_occurrence_time": "2026-09-09T08:00:00", "has_judgment": True},
+        {"event_id": "b", "event_name": "目标事件乙", "event_type": "数据", "event_status": "待研判",
+         "site_id": "B", "latest_occurrence_time": "2026-09-10T08:00:00"},
+        {"event_id": "c", "event_name": "其他事件", "event_type": "数据", "event_status": "待研判",
+         "site_id": "C", "latest_occurrence_time": "2026-09-10T08:00:00"},
+        {"event_id": "d", "event_name": "目标历史事件", "event_type": "数据", "event_status": "待研判",
+         "site_id": "D", "latest_occurrence_time": "2026-09-01T08:00:00"},
+    ], "tasks": []})
+
+    from app.services import smart_event_db as db_module
+
+    async def immediate(coro, timeout=30.0):
+        return await coro
+
+    async def unavailable(**kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(db_module, "smart_event_db_enabled", lambda: True)
+    monkeypatch.setattr("app.db.sync_bridge.run_db_async", immediate)
+    monkeypatch.setattr(db_module, "query_events_overview_async", unavailable)
+    monkeypatch.setattr(service, "_db_mode", lambda: False)
+    window = {"start_time": "2026-09-09T00:00:00", "end_time": "2026-09-11T00:00:00", "refresh": False}
+
+    first = await service.list_events(**window, limit=1, page=1, summary=True,
+                                      keyword="目标事件", event_types=["数据", "不存在"])
+    second = await service.list_events(**window, limit=1, page=2, summary=True,
+                                       keyword="目标事件", event_types=["数据", "不存在"])
+
+    assert [item["event_id"] for item in first["events"]] == ["b"]
+    assert [item["event_id"] for item in second["events"]] == ["a"]
+    assert first["total"] == second["total"] == 2
+    assert first["stats"] == second["stats"] == {"total": 2, "pending": 1, "stations": 2}
+    assert first["filters"]["types"] == ["数据"]
+
+    unmatched = await service.list_events(**window, summary=True, keyword="不存在")
+    assert unmatched["stats"] == {"total": 0, "pending": 0, "stations": 0}
 
 
 @pytest.mark.asyncio
@@ -1578,9 +1625,9 @@ async def test_db_list_syncs_review_archive_state_and_filters_by_effective_statu
     reviews = {archived_id: {"status": "archived"}, pending_id: {"status": "pending_review"}}
     events = [
         {"event_id": "alarm:1", "event_name": "已归档事件", "event_status": "待复核",
-         "review_id": archived_id, "archived": False},
+         "review_id": archived_id, "archived": False, "site_id": "A"},
         {"event_id": "alarm:2", "event_name": "待复核事件", "event_status": "待复核",
-         "review_id": pending_id, "archived": False},
+         "review_id": pending_id, "archived": False, "site_id": "B"},
     ]
 
     from app.services import smart_event_db as db_module
@@ -1608,7 +1655,8 @@ async def test_db_list_syncs_review_archive_state_and_filters_by_effective_statu
         offset, limit = kwargs.get("offset", 0), kwargs.get("limit")
         return {"events": matched[offset:offset + limit] if limit is not None else matched[offset:],
                 "total": total,
-                "stats": {"total": len(events), "pending": 0, "stations": 1},
+                "stats": {"total": total, "pending": 0,
+                          "stations": len({event["site_id"] for event in matched})},
                 "filters": {"statuses": ["待复核"], "types": [], "levels": []}, "last_sync": None}
 
     monkeypatch.setattr(db_module, "query_events_overview_async", fake_overview)
@@ -1623,6 +1671,7 @@ async def test_db_list_syncs_review_archive_state_and_filters_by_effective_statu
     archived_only = await service.list_events(**window, limit=10, page=1, summary=True, status="已归档")
     assert [item["event_id"] for item in archived_only["events"]] == ["alarm:1"]
     assert archived_only["total"] == 1
+    assert archived_only["stats"] == {"total": 1, "pending": 0, "stations": 1}
 
     pending_only = await service.list_events(**window, limit=10, page=1, summary=True, status="待复核")
     assert [item["event_id"] for item in pending_only["events"]] == ["alarm:2"]

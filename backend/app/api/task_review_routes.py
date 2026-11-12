@@ -1,6 +1,7 @@
 """Authenticated, task-independent human-review endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
@@ -9,6 +10,7 @@ from app.services.task_review import (
     decide_review,
     list_reviews_payload,
     load_review,
+    resolve_review_conversation_session_id,
 )
 from app.utils.path_config import get_data_registry, is_path_within, resolve_agent_path
 
@@ -39,8 +41,19 @@ def index(pending_only: bool = True, category: str | None = None,
 
 
 @router.get("/{review_id}")
-def detail(review_id: str, user: CurrentUser = Depends(require_current_user)):
-    return {"review": get_record(review_id)}
+async def detail(review_id: str, user: CurrentUser = Depends(require_current_user)):
+    record = await run_in_threadpool(get_record, review_id)
+    from app.conversations.dependencies import get_conversation_catalog
+
+    session_id = await resolve_review_conversation_session_id(record)
+    if session_id:
+        try:
+            await get_conversation_catalog().require_read(session_id, user)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            session_id = None
+    return {"review": {**record, "conversation_session_id": session_id}}
 
 
 @router.post("/{review_id}/decision")

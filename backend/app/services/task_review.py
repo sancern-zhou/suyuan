@@ -601,9 +601,9 @@ async def _db_review_execution_session_id(execution_id: str) -> str | None:
     from sqlalchemy import select
 
     from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB
-    from app.db.sync_bridge import bridge_session
+    from app.db.sync_bridge import session_db_session
 
-    async with bridge_session() as session:
+    async with session_db_session() as session:
         row = await session.execute(
             select(ScheduledTaskExecutionDB.session_id)
             .where(ScheduledTaskExecutionDB.execution_id == execution_id)
@@ -612,6 +612,28 @@ async def _db_review_execution_session_id(execution_id: str) -> str | None:
         if not value or len(value) > 255 or any(ch in value for ch in "/\\"):
             return None
         return value
+
+
+async def resolve_review_conversation_session_id(record: dict) -> str | None:
+    """Resolve the source conversation without loading a page of execution transcripts."""
+    if not (os.getenv("SESSION_DATABASE_URL") or os.getenv("DATABASE_URL")):
+        return None
+    execution_id = str(record.get("execution_id") or "").strip()
+    if not execution_id:
+        return None
+    if execution_id.startswith("chat-"):
+        session_id, separator, nonce = execution_id[5:].rpartition("-")
+        if not separator or len(nonce) != 12 or any(ch not in "0123456789abcdef" for ch in nonce):
+            return None
+    else:
+        from app.db.sync_bridge import run_db_async
+
+        session_id = await run_db_async(_db_review_execution_session_id(execution_id))
+    if not session_id:
+        return None
+    from app.db.session_repository import SessionRepository
+
+    return session_id if await SessionRepository().get_session(session_id) is not None else None
 
 
 async def _db_append_review_session_message(session_id: str, message: dict) -> None:

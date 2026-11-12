@@ -63,6 +63,47 @@ async def test_submit_tool_conversational_context_creates_review():
 
 
 @pytest.mark.asyncio
+async def test_review_conversation_resolver_reuses_execution_mapping_and_checks_session(monkeypatch):
+    queries = []
+    async def scheduled_session(execution_id):
+        queries.append(execution_id)
+        return 'scheduled-session'
+    async def existing_session(self, session_id):
+        return SimpleNamespace(session_id=session_id)
+    from app.db.session_repository import SessionRepository
+
+    from app.db import sync_bridge
+    bridge_calls = []
+    async def bridge_query(coro):
+        bridge_calls.append(True)
+        return await coro
+
+    monkeypatch.setenv('SESSION_DATABASE_URL', 'postgresql://test')
+    monkeypatch.setattr(service, '_use_db', lambda: False)
+    monkeypatch.setattr(service, '_db_review_execution_session_id', scheduled_session)
+    monkeypatch.setattr(sync_bridge, 'run_db_async', bridge_query)
+    monkeypatch.setattr(SessionRepository, 'get_session', existing_session)
+
+    assert await service.resolve_review_conversation_session_id({'execution_id': 'exec-target'}) == 'scheduled-session'
+    assert await service.resolve_review_conversation_session_id({'execution_id': 'chat-ops-session-a1b2c3d4e5f6'}) == 'ops-session'
+    assert queries == ['exec-target']
+    assert bridge_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_review_conversation_resolver_hides_missing_session(monkeypatch):
+    async def missing_session(self, session_id):
+        return None
+    from app.db.session_repository import SessionRepository
+
+    monkeypatch.setenv('SESSION_DATABASE_URL', 'postgresql://test')
+    monkeypatch.setattr(SessionRepository, 'get_session', missing_session)
+
+    assert await service.resolve_review_conversation_session_id({'execution_id': 'chat-gone-a1b2c3d4e5f6'}) is None
+    assert await service.resolve_review_conversation_session_id({'execution_id': 'chat-invalid'}) is None
+
+
+@pytest.mark.asyncio
 async def test_conversational_submit_writes_work_order_review_judgment(tmp_path, monkeypatch):
     from config.settings import settings
     from app.services.jiangsu_work_order_review import get_order, save_evidence
