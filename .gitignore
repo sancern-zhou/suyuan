@@ -38,12 +38,19 @@ data/
 *.jpeg
 # 前端源码资产不属临时文件，显式放行（打包进 bundle 的二维码等）
 !frontend/src/assets/*.png
+!frontend/public/*.png
+!android-native/app/src/main/res/**/*.png
 *.html
 *.tmp
 nul
+# 前端构建入口与图表调试页是仓库文件，不放行会被新同名文件静默忽略
+!frontend/index.html
+!frontend/chart.html
 
 # Root-level Markdown documents may contain local notes or sensitive details.
 /*.md
+!AGENTS.md
+!CLAUDE.md
 
 # Process artifacts: keep repository focused on runnable app code and runtime docs.
 .claude/
@@ -53,11 +60,16 @@ app_backup_*/
 logs/
 reports/
 games/
-docs/
+# docs/ 目录内容默认忽略（superpowers 会话计划/规格等过程产物）；
+# 顶层正式文档显式放行。
+docs/*
+!docs/*.md
 frontend/.vite/
 !backend/app/services/ops_audit/semantic/test_reviewer.py
 !backend/app/utils/path_config_test.py
 **/*.test.mjs
+!frontend/src/**/*.test.mjs
+!frontend/scripts/**/*.test.mjs
 *.backup*
 *.bak
 *.tmp
@@ -92,6 +104,10 @@ backend/app/**/*.md
 !backend/app/tools/utility/execute_python_manual.md
 !backend/app/tools/utility/read_excel_charts_examples.md
 !backend/app/tools/utility/read_file_excel_enhancement.md
+# 代码目录内的正式说明文档（README/编排/数据采集说明）
+!backend/app/**/README.md
+!backend/app/agent/workflow/ORCHESTRATION.md
+!backend/app/fetchers/consultation/月度数据补充脚本说明.md
 backend/config/chart_templates/
 backend/*_result.txt
 backend/tool_summaries_*.txt
@@ -107,6 +123,7 @@ backend/recreate*
 backend/run*
 backend/simple*
 backend/start*
+!backend/start.sh
 backend/update*
 backend/cleanup*
 backend/search*
@@ -114,8 +131,11 @@ backend/comprehensive_test*.py
 backend/comprehensive_test*.txt
 backend/*_game.py
 frontend/start.*
+!frontend/start.sh
+!frontend/start.bat
 frontend/test-*
 frontend/*.md
+!frontend/图表显示指南.md
 station_info.json
 
 # OS
@@ -154,29 +174,31 @@ unpacked_pm25_doc*/
 !backend/app/services/ops_audit/rules/test_rf_position_rules.py
 !backend/app/services/ops_audit/rules/test_rf_formula_rules.py
 !backend/app/services/ops_audit/semantic/test_reviewer.py
-debug_*.py
-analyze_*.py
-extract_*.py
-record_*.py
-simulate_*.py
-verify_*.py
-check_*.py
-run_*.py
+# 后端根目录临时排查/调试脚本（锚定到 backend 根，避免任意深度匹配误伤
+# backend/app 内生产代码——曾命中 simple_scheduler.py、run_agent_workflow.py 等）
+backend/debug_*.py
+backend/analyze_*.py
+backend/extract_*.py
+backend/record_*.py
+backend/simulate_*.py
+backend/verify_*.py
+backend/check_*.py
+backend/run_*.py
 !backend/app/fetchers/base/run_log.py
-simple_*.py
-ultimate_*.py
-deep_*.py
-interactive_*.py
-manual_*.py
-final_*.py
+backend/simple_*.py
+backend/ultimate_*.py
+backend/deep_*.py
+backend/interactive_*.py
+backend/manual_*.py
+backend/final_*.py
 !backend/app/services/ops_audit/final_issue_list.py
-find_*.py
-correct_*.py
-refactored_*.py
-expand_*.py
-click_*.py
-start_*.py
-auto_*.py
+backend/find_*.py
+backend/correct_*.py
+backend/refactored_*.py
+backend/expand_*.py
+backend/click_*.py
+backend/start_*.py
+backend/auto_*.py
 
 # Standalone executors (not for version control)
 backend/app/agent/executors/quick_trace_executor.py
@@ -224,15 +246,17 @@ playwright-*/
 参考/
 报告模板/
 doc/
-docs/
+# （根 docs/ 的忽略与白名单见上方 Process artifacts 一节，此处不再重复忽略）
 # Shared work-order audit skill is runtime configuration and must be versioned.
 !backend/docs/
 backend/docs/*
+!backend/docs/ops-audit-self-iteration.md
 !backend/docs/skills/
 backend/docs/skills/*
 !backend/docs/skills/ops_work_order_audit.md
 !backend/docs/skills/ops_work_order_audit/
 !backend/docs/skills/ops_work_order_audit/**
+!backend/docs/skills/ops_audit_retrospective.md
 !backend/docs/skills/archify.md
 !backend/docs/skills/xuchang_city_exceedance_source_report.md
 !backend/docs/skills/SKILLS_INDEX.md
@@ -247,7 +271,16 @@ backend/docs/skills/*
 !backend/docs/skills/xlsx_authoring.md
 !backend/docs/skills/xlsx_authoring/
 !backend/docs/skills/xlsx_authoring/**
-scripts/
+!backend/docs/skills/routine_monitoring_analysis_expert.md
+!backend/docs/skills/weather_analysis_expert.md
+!backend/docs/skills/xuchang_station_daily_source_report.md
+# 已入库的正式设计与运维文档（此前靠强制添加维持，补白名单防止新同名文件静默丢失）
+!backend/docs/*.md
+!backend/docs/third_party/
+!backend/docs/skills/station-operation-daily/
+# scripts/ 锚定到仓库根：原规则任意深度匹配，曾命中 frontend/scripts 构建工具
+# 与 Bidding-Information-Crawling/scripts
+/scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py
 # backend/scripts/ holds committed operational scripts (init_db, kb maintenance)

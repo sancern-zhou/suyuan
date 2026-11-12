@@ -28,7 +28,7 @@ single-chart specifications selected by the routing table below.
 - Generate one main chart per image. For dashboards, subplots, or several
   analyses, make separate chart calls unless a documented chart type combines
   the series directly. Nested `charts` requests are not accepted.
-- This tool only accepts the six business types below. Generic bar, line,
+- This tool only accepts the seven business types below. Generic bar, line,
   scatter, distribution, correlation and combination charts are not supported.
   Use `execute_echarts_python` for query-mode interactive charts and
   `execute_python` for static analysis and report charts.
@@ -78,8 +78,11 @@ single-chart specifications selected by the routing table below.
   on a continuous time axis. Do not overlay pollutants or overlap daily curves.
 - Henan province city-level AQI or pollutant map: read `henan-city-map.md` and
   use `chart_type: "henan_city_map"`.
+- City-level choropleth for any other Chinese region (cross-province,
+  national, or ring/grouped cities): read `city-boundary-map.md` and use
+  `chart_type: "city_boundary_map"`.
 
-First match the six supported business types. In every mode, these types MUST
+First match the seven supported business types. In every mode, these types MUST
 use `create_business_chart`; do not reimplement their templates in Python or
 ECharts. This requirement takes precedence over mode defaults. Python may
 prepare input data, and report compositions may reuse business chart images.

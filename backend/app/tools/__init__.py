@@ -228,6 +228,45 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_pm25_crustal", error=str(e))
 
+    # ========================================
+    # Super-station Component Query Tools (Phase 2: species/OFP/recovery/trace)
+    # ========================================
+
+    try:
+        from app.tools.query.get_vocs_species.tool import GetVOCsSpeciesTool
+        registry.register(GetVOCsSpeciesTool(), priority=66)
+        logger.info("tool_loaded", tool="get_vocs_species")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_vocs_species", error=str(e))
+
+    try:
+        from app.tools.query.get_vocs_ofp.tool import GetVOCsOFPTool
+        registry.register(GetVOCsOFPTool(), priority=67)
+        logger.info("tool_loaded", tool="get_vocs_ofp")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_vocs_ofp", error=str(e))
+
+    try:
+        from app.tools.query.get_ofp_top10.tool import GetOFPTop10Tool
+        registry.register(GetOFPTop10Tool(), priority=68)
+        logger.info("tool_loaded", tool="get_ofp_top10")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_ofp_top10", error=str(e))
+
+    try:
+        from app.tools.query.get_pm25_recovery.tool import GetPM25RecoveryTool
+        registry.register(GetPM25RecoveryTool(), priority=69)
+        logger.info("tool_loaded", tool="get_pm25_recovery")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_pm25_recovery", error=str(e))
+
+    try:
+        from app.tools.query.get_pm25_trace.tool import GetPM25TraceTool
+        registry.register(GetPM25TraceTool(), priority=71)
+        logger.info("tool_loaded", tool="get_pm25_trace")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_pm25_trace", error=str(e))
+
     try:
         from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
         registry.register(GetNearbyStationsTool(), priority=70)
@@ -264,6 +303,28 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             logger.info("tool_loaded", tool="analyze_city_pollutant_rankings")
         except ImportError as e:
             logger.warning("tool_import_failed", tool="analyze_city_pollutant_rankings", error=str(e))
+
+    # 广东省 Suncere API 查询工具（项目专属，默认不注册；
+    # 需要的项目在 manifest 的 modules 中启用 legacy 并在 backend.tools 中声明）
+    gd_suncere_tool_registrations = (
+        ("query_gd_suncere_city_hour", "QueryGDSuncereCityHourTool", 32),
+        ("query_gd_suncere_station_hour_new", "QueryGDSuncereStationHourTool", 33),
+        ("query_gd_suncere_station_day_new", "QueryGDSuncereStationDayTool", 34),
+        ("query_gd_suncere_regional_comparison", "QueryGDSuncereRegionalComparisonTool", 35),
+        ("query_gd_suncere_city_day", "QueryGDSuncereCityDayTool", 36),
+        ("query_gd_suncere_district_day", "QueryGDSuncereDistrictDayTool", 36),
+        ("query_gd_suncere_district_report", "QueryGDSuncereDistrictReportTool", 37),
+        ("query_gd_suncere_report_compare", "QueryGDSuncereReportCompareTool", 38),
+    )
+    gd_legacy_module = "app.tools.query.query_gd_suncere.tool_wrapper"
+    if is_project_tool_enabled(context, "legacy", "query_gd_suncere"):
+        for tool_name, class_name, priority in gd_suncere_tool_registrations:
+            try:
+                module = __import__(gd_legacy_module, fromlist=[class_name])
+                registry.register(getattr(module, class_name)(), priority=priority)
+                logger.info("tool_loaded", tool=tool_name)
+            except ImportError as e:
+                logger.warning("tool_import_failed", tool=tool_name, error=str(e))
 
     # 全国省份/城市空气质量查询工具（GDQFWS参考项目）
     try:
@@ -630,6 +691,106 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             logger.warning("tool_import_failed", tool="jiangsu_ops_audit_tools", error=str(e))
 
     try:
+        from app.tools.analysis.ops_audit_retrospective.tool import (
+            OpsAuditReconcileChecklistTool,
+            OpsAuditRetrospectiveStatsTool,
+        )
+        registry.register(OpsAuditReconcileChecklistTool(), priority=51)
+        logger.info("tool_loaded", tool="ops_audit_reconcile_checklist")
+        registry.register(OpsAuditRetrospectiveStatsTool(), priority=52)
+        logger.info("tool_loaded", tool="ops_audit_retrospective_stats")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="ops_audit_retrospective_tools", error=str(e))
+
+    # 广东运维工单数据集 SQL 查询 + 指标语义层（guangdong 分支专属模块，仅 guangdong 项目加载）
+    if getattr(context.manifest, "project", "") == "guangdong":
+        try:
+            from app.tools.query.guangdong_ops_sql_query.tool import ExecuteGuangdongMartSQLTool
+            registry.register(ExecuteGuangdongMartSQLTool(), priority=47)
+            logger.info("tool_loaded", tool="execute_guangdong_mart_sql")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="execute_guangdong_mart_sql", error=str(e))
+        try:
+            from app.tools.query.guangdong_cube_metrics.tool import GuangdongQueryMetricsTool
+            registry.register(GuangdongQueryMetricsTool(), priority=47)
+            logger.info("tool_loaded", tool="guangdong_query_metrics")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="guangdong_query_metrics", error=str(e))
+
+    # 广东站点目录查询（provider + tool 成对注册进共享站点目录服务，模式同许昌）
+    if is_project_tool_enabled(context, "legacy", "guangdong_station_catalog"):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.guangdong.station_catalog.provider import (
+                GuangdongStationCatalogProvider,
+            )
+            from app.tools.guangdong.station_catalog.tool import GuangdongStationCatalogTool
+
+            station_provider = GuangdongStationCatalogProvider()
+            get_station_directory_registry().register(
+                station_provider, projects=["guangdong"]
+            )
+            registry.register(
+                GuangdongStationCatalogTool(provider=station_provider), priority=47
+            )
+            logger.info("tool_loaded", tool="guangdong_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="guangdong_station_catalog",
+                error=str(e),
+            )
+
+    # 广东监测体系站点地理目录（与运维台账/组分体系并列的第三套站点体系，
+    # 复用 station_directory 底座；按名注册，不改写项目的目录绑定）
+    if is_project_tool_enabled(context, "legacy", "monitoring_station_catalog"):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.guangdong.monitoring_station_catalog.provider import (
+                MonitoringStationCatalogProvider,
+            )
+            from app.tools.guangdong.monitoring_station_catalog.tool import (
+                MonitoringStationCatalogTool,
+            )
+
+            monitoring_provider = MonitoringStationCatalogProvider()
+            get_station_directory_registry().register(monitoring_provider)
+            registry.register(
+                MonitoringStationCatalogTool(provider=monitoring_provider), priority=47
+            )
+            logger.info("tool_loaded", tool="monitoring_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="monitoring_station_catalog",
+                error=str(e),
+            )
+
+    # 广东组分体系站点地理目录（geo_mappings + 城市归属，服务 query_component）
+    if is_project_tool_enabled(context, "legacy", "component_station_catalog"):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.guangdong.component_station_catalog.provider import (
+                ComponentStationCatalogProvider,
+            )
+            from app.tools.guangdong.component_station_catalog.tool import (
+                ComponentStationCatalogTool,
+            )
+
+            component_provider = ComponentStationCatalogProvider()
+            get_station_directory_registry().register(component_provider)
+            registry.register(
+                ComponentStationCatalogTool(provider=component_provider), priority=47
+            )
+            logger.info("tool_loaded", tool="component_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="component_station_catalog",
+                error=str(e),
+            )
+
+    try:
         from app.tools.knowledge.knowledge_graph_query.tool import KnowledgeGraphQueryTool
         registry.register(KnowledgeGraphQueryTool(), priority=51)
         logger.info("tool_loaded", tool="knowledge_graph_query")
@@ -643,12 +804,30 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="knowledge_graph_build", error=str(e))
 
+    # 城市标准报表工具（直接调用统计查询 API，不本地重算）
     try:
-        from app.tools.query.resolve_station_geo.tool import ResolveStationGeoTool
-        registry.register(ResolveStationGeoTool(), priority=54)
-        logger.info("tool_loaded", tool="resolve_station_geo")
+        from app.tools.query.query_city_standard_report.tool import (
+            QueryCityStandardReportTool,
+            QueryCityStandardYoyReportTool,
+        )
+        registry.register(QueryCityStandardReportTool(), priority=47)
+        registry.register(QueryCityStandardYoyReportTool(), priority=47)
+        logger.info("tool_loaded", tool="query_city_standard_report")
+        logger.info("tool_loaded", tool="query_city_standard_yoy_report")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="resolve_station_geo", error=str(e))
+        logger.warning("tool_import_failed", tool="query_city_standard_report", error=str(e))
+
+    try:
+        from app.tools.query.query_station_standard_report.tool import (
+            QueryStationStandardReportTool,
+            QueryStationStandardYoyReportTool,
+        )
+        registry.register(QueryStationStandardReportTool(), priority=47)
+        registry.register(QueryStationStandardYoyReportTool(), priority=47)
+        logger.info("tool_loaded", tool="query_station_standard_report")
+        logger.info("tool_loaded", tool="query_station_standard_yoy_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_station_standard_report", error=str(e))
 
     # 5分钟数据查询工具（项目专属，默认不注册）
     if is_project_tool_enabled(context, "legacy", "get_5min_data"):
@@ -1321,13 +1500,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # ========================================
     # Workflow Tools（工作流工具 - 统一架构）
     # ========================================
-
-    try:
-        from app.tools.workflow.quick_trace_workflow import QuickTraceWorkflow
-        registry.register(QuickTraceWorkflow(), priority=45)
-        logger.info("tool_loaded", tool="quick_trace_workflow")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="quick_trace_workflow", error=str(e))
 
     try:
         from app.tools.workflow.deep_trace_workflow import DeepTraceWorkflow

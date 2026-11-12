@@ -26,10 +26,6 @@ from app.agent.context.data_shape import compact_shape
 # 单一工具注册源
 from app.tools import global_tool_registry
 
-# 导入观察天气工具（特殊的工具，从独立的 observed_tool_registry）
-from app.tools.observed_weather_tool import observed_tool_registry
-from app.tools.openmeteo_current_tool import openmeteo_current_tool
-from app.tools.weatherapi_com_tool import weatherapi_com_tool
 from app.agent.runtime.mode_capabilities import supports_native_multimodal
 
 logger = structlog.get_logger()
@@ -527,14 +523,12 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "source_file_paths",
             "source_report_file_path",
             "source_report_file_paths",
-
             "visual_ids",
             "data_shape",
             "data_shapes",
             # Jiangsu workspace commands must survive result normalization.
             "ui_command",
         )
-
         for key in passthrough_fields:
             if key not in result:
                 continue
@@ -590,121 +584,6 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             },
             "summary": f"❌ {tool_name} 格式转换失败: {str(e)[:50]}"
         }
-
-
-# ========================================
-# 天气观测工具适配器（额外的工具）
-# ========================================
-
-async def get_observed_weather(
-    lat: float,
-    lon: float,
-    station_id: Optional[str] = None,
-    preferred_source: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    获取实时天气观测数据（使用ObservedWeatherToolRegistry）
-
-    Args:
-        lat: 纬度
-        lon: 经度
-        station_id: 站点ID（可选）
-        preferred_source: 优先数据源（可选）
-
-    Returns:
-        标准化结果
-    """
-    try:
-        # 使用工具注册表获取数据
-        result = await observed_tool_registry.fetch_current(
-            lat=lat,
-            lon=lon,
-            station_id=station_id,
-            preferred_tool=preferred_source
-        )
-
-        if result is None:
-            return {
-                "status": "failed",
-                "success": False,
-                "error": "无法获取天气观测数据",
-                "data": [],
-                "metadata": {
-                    "tool_name": "get_observed_weather",
-                    "location": f"({lat}, {lon})"
-                },
-                "summary": f"❌ 获取 ({lat}, {lon}) 天气观测数据失败"
-            }
-
-        # 转换为字典格式
-        data_dict = result.to_dict()
-
-        return {
-            "status": "success",
-            "success": True,
-            "data": data_dict,
-            "metadata": {
-                "tool_name": "get_observed_weather",
-                "location": f"({lat}, {lon})",
-                "data_source": result.data_source,
-                "temperature_2m": result.temperature_2m,
-                "wind_speed_10m": result.wind_speed_10m
-            },
-            "summary": (
-                f"✅ 获取天气观测数据成功: "
-                f"温度 {result.temperature_2m}°C, "
-                f"风速 {result.wind_speed_10m} km/h, "
-                f"数据源 {result.data_source}"
-            )
-        }
-
-    except Exception as e:
-        logger.error(
-            "get_observed_weather_failed",
-            lat=lat,
-            lon=lon,
-            error=str(e),
-            exc_info=True
-        )
-
-        return {
-            "status": "failed",
-            "success": False,
-            "error": str(e),
-            "data": [],
-            "metadata": {
-                "tool_name": "get_observed_weather",
-                "location": f"({lat}, {lon})",
-                "error_type": type(e).__name__
-            },
-            "summary": f"❌ 获取天气观测数据失败: {str(e)[:50]}"
-        }
-
-
-# ========================================
-# 工具注册初始化
-# ========================================
-
-def register_observed_weather_tools():
-    """
-    注册所有天气观测工具到 ObservedWeatherToolRegistry
-    """
-    # 注册 OpenMeteo 工具（优先级最高）
-    observed_tool_registry.register(
-        tool=openmeteo_current_tool,
-        priority=10
-    )
-
-    # 注册 WeatherAPI.com 工具（次优先级）
-    observed_tool_registry.register(
-        tool=weatherapi_com_tool,
-        priority=20
-    )
-
-    logger.info(
-        "observed_weather_tools_registered",
-        tools=observed_tool_registry.list_tools()
-    )
 
 
 # ========================================
@@ -777,9 +656,6 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
     Returns:
         工具字典 {"tool_name": async_function}
     """
-    # 确保天气观测工具已注册
-    register_observed_weather_tools()
-
     tool_registry = {}
 
     # ========================================
@@ -817,21 +693,6 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
 
         tool_wrapper = make_tool_wrapper(tool_name)
         tool_registry[tool_name] = tool_wrapper
-
-    # ========================================
-    # 2. 天气观测工具（特殊的独立工具）
-    # ========================================
-    # 包装 get_observed_weather 以支持 context 参数
-    async def get_observed_weather_wrapper(**kwargs):
-        """包装器：支持context参数但不使用它"""
-        kwargs.pop("__execution_context", None)
-        return await get_observed_weather(**kwargs)
-
-    get_observed_weather_wrapper.__name__ = "get_observed_weather"
-    get_observed_weather_wrapper.__doc__ = get_observed_weather.__doc__
-    get_observed_weather_wrapper.is_read_only = lambda _args=None: True
-    get_observed_weather_wrapper.concurrency_policy = "parallel_read"
-    tool_registry["get_observed_weather"] = get_observed_weather_wrapper
 
     # 🔍 调试日志：输出最终工具注册表
     final_tools = list(tool_registry.keys())
@@ -894,37 +755,6 @@ def get_tool_schemas(
             if mode in QUERY_WORKFLOW_MODES and tool.name in QUERY_WORKFLOW_SQL_TOOLS:
                 schema = _query_mode_sql_query_schema(schema)
             schemas.append(schema)
-
-    # ========================================
-    # 2. 添加天气观测工具 schema（特殊工具）
-    # ========================================
-    if allowed_tools is None or "get_observed_weather" in allowed_tools:
-        schemas.append({
-        "name": "get_observed_weather",
-        "description": "获取指定位置的实时天气观测数据（原始观测数据，非预报），包括温度、湿度、风速、风向、气压等信息",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "lat": {
-                    "type": "number",
-                    "description": "纬度，范围 -90 到 90"
-                },
-                "lon": {
-                    "type": "number",
-                    "description": "经度，范围 -180 到 180"
-                },
-                "station_id": {
-                    "type": "string",
-                    "description": "站点ID（可选），用于标识和记录"
-                },
-                "preferred_source": {
-                    "type": "string",
-                    "description": "优先数据源（可选），如 'openmeteo_current' 或 'weatherapi_com'"
-                }
-            },
-            "required": ["lat", "lon"]
-        }
-        })
 
     if allowed_tool_names is not None:
         schemas_by_name = {schema["name"]: schema for schema in schemas}

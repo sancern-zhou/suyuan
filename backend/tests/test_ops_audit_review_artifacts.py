@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services.ops_audit import feedback_ledger
 from app.services.ops_audit.final_issue_list import ensure_issue_ids
 from app.services.ops_audit.review_artifacts import (
     apply_review_decisions,
@@ -13,6 +14,18 @@ from app.services.ops_audit.review_artifacts import (
     issue_list_sha256,
     persist_report_input,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_feedback_ledger(tmp_path_factory, monkeypatch):
+    """Human feedback now appends to the ledger; keep test records out of it."""
+
+    ledger_dir = tmp_path_factory.mktemp("feedback_ledger")
+    monkeypatch.setattr(
+        feedback_ledger,
+        "default_ledger_path",
+        lambda: ledger_dir / feedback_ledger.LEDGER_FILENAME,
+    )
 
 
 def _final_issue_list() -> dict:
