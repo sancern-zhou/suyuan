@@ -28,6 +28,8 @@ CONFIG_PATH = BASE_DIR / "config.toml"
 DATA_DIR = BASE_DIR / "data"
 LOG_PATH = DATA_DIR / "agent.log"
 SENT_MARKERS_PATH = DATA_DIR / "sent_markers.json"
+# 存活心跳：每轮轮询、每条消息处理前 touch，供看门狗识别"进程在但已冻结"
+LIVENESS_PATH = DATA_DIR / "agent_liveness"
 
 # 本地已发送标记上限：防止 ack 丢失导致重复发送，同时控制文件体积
 SENT_MARKERS_LIMIT = 500
@@ -62,6 +64,14 @@ def log(message: str) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
+    except OSError:
+        pass
+
+
+def touch_liveness() -> None:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        LIVENESS_PATH.touch()
     except OSError:
         pass
 
@@ -285,6 +295,9 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
     if messages is None:
         return
     for msg in messages:
+        # 长积压时整轮可能远超看门狗检查周期：逐条打心跳，
+        # 冻结判定只针对"单条消息处理内"超过阈值的情况
+        touch_liveness()
         message_id = str(msg.get("id") or "")
         raw_text = str(msg.get("text") or "")
         # 场景前缀由后端写在文案首行（如【污染原因分析】）；仅当文案不带
@@ -323,6 +336,8 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
         media = msg.get("media") or []
         failed_media: list[int] = []
         for index in range(len(media)):
+            # 附图下载（每张最多 2×30s）+发送（3 次重试）也较长，逐张打心跳
+            touch_liveness()
             local_path = fetch_media(cfg, message_id, index)
             if local_path is None:
                 failed_media.append(index)
@@ -406,6 +421,7 @@ def main() -> int:
     markers = load_markers()
     sender: WeChatSender | None = None
     while True:
+        touch_liveness()
         if not args.dry_run:
             sender = ensure_sender(cfg, sender)
         try:
