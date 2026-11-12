@@ -4,7 +4,7 @@ Metrics Collector - 工具执行指标收集器
 Phase 3.2: 订阅 EventBus 事件，收集工具执行指标
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 import structlog
