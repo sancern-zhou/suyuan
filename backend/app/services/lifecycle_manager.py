@@ -52,7 +52,10 @@ from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDai
 from app.fetchers.xuchang_weather_situation import (
     XuchangAirQualityForecastFetcher, XuchangWeatherSituationEvidenceFetcher,
 )
-from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+try:
+    from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+except ImportError:  # 抓取器文件当前仅在 xuchang 分支(4acfe3086)，未随 main 发布
+    XuchangTownFiveMinuteFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -153,7 +156,8 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
-        "xuchang_town_five_minute_fetcher": XuchangTownFiveMinuteFetcher,
+        **({"xuchang_town_five_minute_fetcher": XuchangTownFiveMinuteFetcher}
+           if XuchangTownFiveMinuteFetcher is not None else {}),
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
     from app.services.station_operation_monitor.runtime import config_path
