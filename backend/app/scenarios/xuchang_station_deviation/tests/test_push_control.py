@@ -192,6 +192,54 @@ def test_recovery_counter_resets_on_rebound(tmp_path):
     assert state["recover_cnt"] == 0
 
 
+def test_priority_falls_through_when_higher_rule_gated(tmp_path):
+    # #24 新语义：组内逐条过闸门。DS 被防抖拦下时，同窗口的 OL（未受闸门
+    # 约束）应顶上推送，不再连坐静默。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    ds_again = _alert(occurred_at="2026-11-02T09:15:00+08:00")
+    ds_again["event_id"] = "e-ds-again"
+    ol = _alert(rule_type="spatial_outlier", occurred_at="2026-11-02T09:15:00+08:00")
+    ol["event_id"] = "e-ol-fresh"
+    pushed, suppressed, _summary = _chain(
+        [ds_again, ol], store, tmp_path, datetime(2026, 11, 2, 9, 15, tzinfo=TZ)
+    )
+    assert [a["rule_type"] for a in pushed] == ["spatial_outlier"]
+    assert [(item["alert"]["rule_type"], item["reason"]) for item in suppressed] == [
+        ("sudden_rise", "hysteresis")
+    ]
+    state = store.instance("5min", "a", "PM10", "spatial_outlier")
+    assert state["armed"] is False and state["last_air_level"] == "良"
+
+
+def test_upgrade_penetrates_quiet_hours(tmp_path):
+    # #23 + 产品定版：夜间（免打扰时段）污染等级升高必须叫人，升级穿透免打扰。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert(rule_type="spatial_outlier")], store, tmp_path, datetime(2026, 11, 2, 21, 30, tzinfo=TZ))
+    escalated = _alert(
+        rule_type="spatial_outlier", air_quality_level="轻度污染",
+        occurred_at="2026-11-02T23:30:00+08:00",
+    )
+    escalated["event_id"] = "e-ol-night-upgrade"
+    pushed, suppressed, _summary = _chain([escalated], store, tmp_path, datetime(2026, 11, 2, 23, 30, tzinfo=TZ))
+    assert len(pushed) == 1 and suppressed == []
+    assert pushed[0]["is_upgrade"] is True
+    assert pushed[0]["upgrade_from_level"] == "良"
+    state = store.instance("5min", "a", "PM10", "spatial_outlier")
+    assert state["last_air_level"] == "轻度污染"
+
+
+def test_quiet_hours_still_suppresses_non_upgrade_outlier(tmp_path):
+    # 免打扰仍拦常规再报：夜间同级 OL（非升级）照常静默。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert(rule_type="spatial_outlier")], store, tmp_path, datetime(2026, 11, 2, 21, 30, tzinfo=TZ))
+    again = _alert(rule_type="spatial_outlier", occurred_at="2026-11-02T23:30:00+08:00")
+    again["event_id"] = "e-ol-night-again"
+    pushed, suppressed, _summary = _chain([again], store, tmp_path, datetime(2026, 11, 2, 23, 30, tzinfo=TZ))
+    assert pushed == []
+    assert suppressed[0]["reason"] == "quiet_hours"
+
+
 def test_site_daily_quota_and_global_cap(tmp_path):
     # 站点日上限 8 条、全局日上限 40 条（不再区分告警级别）。
     store = AlertStateStore(tmp_path)

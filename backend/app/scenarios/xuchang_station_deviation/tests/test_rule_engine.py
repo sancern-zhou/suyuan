@@ -10,6 +10,7 @@ O3 不判、限值突破不保留、无告警级别。
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -478,6 +479,33 @@ def test_regional_rise_merged_to_single_primary():
     assert {item["station_id"] for item in primary["detail"]["region_stations"]} == {"b", "c", "d"}
     assert len(outcome.region_merged) == 3
     assert all(item["station_id"] in {"b", "c", "d"} for item in outcome.region_merged)
+
+
+def test_regional_merge_suppressed_candidates_logged_to_push_log(tmp_path):
+    # 被合并站点的通报内容由主告警（region_stations 清单）承载，但流水必须
+    # 可审计：reason=regional_merge，且 merged_into_event_id 指回主告警。
+    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 40.0, "f": 40.0})
+    primary = next(c for c in outcome.candidates if c["rule_type"] == "continuous_rise")
+    pre = []
+    for alert in outcome.region_merged:
+        alert["suppress_reason"] = "regional_merge"
+        alert["merged_into_event_id"] = primary["event_id"]
+        pre.append({"alert": alert, "reason": "regional_merge"})
+    store = AlertStateStore(tmp_path)
+    log_store = PushLogStore(tmp_path)
+    pushed, suppressed, _summary = apply_push_chain(
+        list(outcome.candidates), store=store, config=AirAlertRuleConfig(),
+        now=datetime(2026, 9, 12, 8, 40, tzinfo=TZ), log_store=log_store,
+        recovery_metrics=outcome.recovery_metrics, pre_suppressed=pre,
+    )
+    assert len(pushed) == 1 and pushed[0]["event_id"] == primary["event_id"]
+    assert [item["reason"] for item in suppressed] == ["regional_merge"] * 3
+    log_file = next(iter((tmp_path / "push_log").glob("*.jsonl")))
+    entries = [json.loads(line) for line in log_file.read_text(encoding="utf-8").strip().splitlines()]
+    merge_entries = [e for e in entries if e["reason"] == "regional_merge"]
+    assert len(merge_entries) == 3
+    assert all(e["merged_into_event_id"] == primary["event_id"] for e in merge_entries)
+    assert {e["station_id"] for e in merge_entries} == {"b", "c", "d"}
 
 
 def test_regional_rise_not_triggered_below_threshold_sites():

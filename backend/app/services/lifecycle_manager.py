@@ -203,6 +203,14 @@ def _configured_fetchers(project_context):
     else:
         selected = configured
 
+    # 许昌场景三 NOAA 后向轨迹 fetcher 运行开关（默认开启保持既有行为；部署侧可在
+    # .env 设 XUCHANG_TRANSPORT_ANALYSIS_ENABLED=false 关闭）。2026-11-11 该任务因
+    # NOAA 证书链错误全天空转（约 2.1 万次失败/日），且单轮拖到 15+ 分钟与下一轮
+    # 重叠、挤占 ssfb/Crawler MySQL 错峰窗口，先停调度止血，SSL 修复后再开启。
+    if os.getenv("XUCHANG_TRANSPORT_ANALYSIS_ENABLED", "true").lower() != "true":
+        selected = [name for name in selected if name != "xuchang_transport_analysis_fetcher"]
+        logger.info("xuchang_transport_analysis_fetcher_disabled_by_env")
+
     unknown = [name for name in selected if name not in factories]
     if unknown:
         raise ValueError("unknown project fetchers: " + ", ".join(unknown))

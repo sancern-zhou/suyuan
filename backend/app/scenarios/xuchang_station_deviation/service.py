@@ -922,9 +922,25 @@ class XuchangStationDeviationAlertService:
             recovery_metrics.update(pm25_outcome.recovery_metrics)
             checks.extend(pm25_outcome.checks)
             region_merged.extend(pm25_outcome.region_merged)
-        # CL 区域合并的其余站点：以 regional_merge 抑制留痕（不推送、不占冷却）。
+        # CL 区域合并的其余站点：以 regional_merge 抑制留痕（不推送、不占
+        # 冷却），其通报内容已由主告警（region_stations 清单）承载——流水里
+        # 用 merged_into_event_id 指回主告警，保证事后可审计。
+        merged_into: dict[tuple[str, str, str], str] = {}
+        for alert in candidates:
+            stations = (alert.get("detail") or {}).get("region_stations") or []
+            for item in stations:
+                merged_into[(
+                    str(alert.get("measurement_granularity")),
+                    str(item.get("station_id")),
+                    str(alert.get("target_pollutant")),
+                )] = str(alert.get("event_id"))
         for alert in region_merged:
             alert["suppress_reason"] = "regional_merge"
+            alert["merged_into_event_id"] = merged_into.get((
+                str(alert.get("measurement_granularity")),
+                str(alert.get("station_id")),
+                str(alert.get("target_pollutant")),
+            ))
         suppressed_pre = [{"alert": alert, "reason": "regional_merge"} for alert in region_merged]
 
         pushed, suppressed, window_summary = apply_push_chain(
@@ -934,8 +950,8 @@ class XuchangStationDeviationAlertService:
             now=now,
             log_store=self.push_log_store,
             recovery_metrics=recovery_metrics,
+            pre_suppressed=suppressed_pre,
         )
-        suppressed = suppressed_pre + suppressed
 
         minute_trend_rows = self._minute_trend_rows(rows, target_slot) if granularity == "5min" else []
         events = []

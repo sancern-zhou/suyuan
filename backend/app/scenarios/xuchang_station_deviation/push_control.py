@@ -4,9 +4,10 @@
 恢复防抖、免打扰、日限额、同站合并，并按新口径改造：
 
 - 冷却期按规则类型 + 因子：DS 60/30、CL 120/60、OL 60/30 分钟；
-- 升级例外（#23）：冷却期内污染等级升高立即再报，挂到首条事件上；
-- 优先级排序（#24）：DS > CL > OL，同一站同一因子同一窗口只推最高
-  优先级一条；
+- 升级例外（#23）：污染等级升高立即再报，穿透防抖/冷却/免打扰（夜间
+  升级也必须叫人），挂到首条事件上；
+- 优先级排序（#24）：DS > CL > OL，同一站同一因子同一窗口按优先级逐条
+  过闸门、取第一条能推送的；高优先级被拦截时低优先级可顶上，不再连坐；
 - 不再有告警级别；所有状态、流水和通报只记录规则类型 + 污染等级。
 """
 
@@ -246,27 +247,6 @@ def recovery_pass(
     return rearmed
 
 
-def select_by_priority(
-    candidates: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """#24：同一站同一因子同一窗口只保留最高优先级一条（DS > CL > OL）。"""
-    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    for alert in candidates:
-        grouped[(
-            str(alert.get("measurement_granularity")),
-            str(alert.get("station_id")),
-            str(alert.get("target_pollutant")),
-        )].append(alert)
-    kept: list[dict[str, Any]] = []
-    suppressed: list[dict[str, Any]] = []
-    for items in grouped.values():
-        items.sort(key=lambda a: (int(a.get("rule_priority") or 9), str(a.get("event_id"))))
-        kept.append(items[0])
-        for item in items[1:]:
-            suppressed.append({"alert": item, "reason": "priority"})
-    return kept, suppressed
-
-
 def merge_by_station(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """同站合并：按站点 + 粒度合并为一条通报，跨因子只影响通报组织，
     不改变 #24 已完成的优先级选择。"""
@@ -342,8 +322,14 @@ def apply_push_chain(
     now: datetime,
     log_store: PushLogStore | None = None,
     recovery_metrics: dict[tuple[str, str, str, str], float] | None = None,
+    pre_suppressed: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
-    """推送管控主链：恢复防抖 → #24 优先级 → 免打扰/闸门/限额 → 合并 → 推送。"""
+    """推送管控主链：引擎抑制留痕 → 恢复防抖 → #24 优先级逐条过闸门
+    （升级穿透免打扰/防抖/冷却）→ 同站合并 → 推送。
+
+    ``pre_suppressed`` 是引擎层（如 CL 区域合并）已决定抑制的候选，本链只
+    负责把它们与链内抑制一并写入推送流水（不推送、不占冷却、不占限额）。
+    """
     now = now.astimezone(TZ_SHANGHAI)
     day = now.date().isoformat()
     suppressed: list[dict[str, Any]] = []
@@ -366,56 +352,79 @@ def apply_push_chain(
         }
         log_entries.append(entry)
 
+    # 0) 引擎层抑制留痕（CL 区域合并等）：只写流水，不进推送闸门。
+    for item in pre_suppressed or []:
+        alert = item["alert"]
+        alert.setdefault("suppress_reason", item["reason"])
+        merged_into = alert.get("merged_into_event_id")
+        _log(
+            alert,
+            "suppress",
+            item["reason"],
+            **({"merged_into_event_id": merged_into} if merged_into else {}),
+        )
+        suppressed.append(item)
+
     # 1) 恢复防抖检查。
     if recovery_metrics:
         recovery_pass(store, recovery_metrics, config)
 
-    # 2) #24 优先级：同一站同一因子同一窗口只保留最高优先级。
-    kept, priority_suppressed = select_by_priority(candidates)
-    for item in priority_suppressed:
-        alert = item["alert"]
-        alert["suppress_reason"] = "priority"
-        suppressed.append(item)
-        _log(alert, "suppress", "priority")
-
-    # 3) 免打扰 → 闸门 + 限额（判定不落状态，只有最终推送才落）。
+    # 2) #24 优先级 + 闸门：同站同因子同窗口的候选按 DS>CL>OL 逐条过闸门，
+    #    取第一条能推送的；其余候选以 priority 抑制留痕。全部被闸门拦截时，
+    #    各自保留真实抑制原因（高优先级被拦不再连坐低优先级）。
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for alert in candidates:
+        grouped[(
+            str(alert.get("measurement_granularity")),
+            str(alert.get("station_id")),
+            str(alert.get("target_pollutant")),
+        )].append(alert)
     pending: list[dict[str, Any]] = []
-    for alert in kept:
-        rule_type = str(alert.get("rule_type") or "")
-        pollutant = str(alert.get("target_pollutant") or "")
-        station_id = str(alert.get("station_id") or "")
-        state = store.instance(
-            str(alert.get("measurement_granularity")), station_id, pollutant, rule_type
-        )
-        upgrade = upgrade_info(state, alert.get("air_quality_level"))
-        if upgrade:
-            alert.update(upgrade)
-            alert["upgrade_of_event_id"] = state.get("first_event_id")
-        if config.quiet_suppresses(rule_type) and config.in_quiet_hours(now.hour):
-            alert["suppress_reason"] = "quiet_hours"
-            suppressed.append({"alert": alert, "reason": "quiet_hours"})
-            _log(alert, "suppress", "quiet_hours")
-            continue
-        reason = evaluate_gate(
-            state,
-            rule_type=rule_type,
-            pollutant=pollutant,
-            air_quality_level=alert.get("air_quality_level"),
-            now=now,
-            config=config,
-        )
-        if reason:
-            alert["suppress_reason"] = reason
-            suppressed.append({"alert": alert, "reason": reason})
-            _log(alert, "suppress", reason)
-            continue
-        reason = quota_reason(store, station_id, day, config)
-        if reason:
-            alert["suppress_reason"] = reason
-            suppressed.append({"alert": alert, "reason": reason})
-            _log(alert, "suppress", reason)
-            continue
-        pending.append(alert)
+    for items in grouped.values():
+        items.sort(key=lambda a: (int(a.get("rule_priority") or 9), str(a.get("event_id"))))
+        for index, alert in enumerate(items):
+            rule_type = str(alert.get("rule_type") or "")
+            pollutant = str(alert.get("target_pollutant") or "")
+            station_id = str(alert.get("station_id") or "")
+            state = store.instance(
+                str(alert.get("measurement_granularity")), station_id, pollutant, rule_type
+            )
+            upgrade = upgrade_info(state, alert.get("air_quality_level"))
+            if upgrade:
+                alert.update(upgrade)
+                alert["upgrade_of_event_id"] = state.get("first_event_id")
+            # 免打扰只拦常规再报；#23 升级例外（等级升高）夜间也必须叫人。
+            if not upgrade and config.quiet_suppresses(rule_type) and config.in_quiet_hours(now.hour):
+                alert["suppress_reason"] = "quiet_hours"
+                suppressed.append({"alert": alert, "reason": "quiet_hours"})
+                _log(alert, "suppress", "quiet_hours")
+                continue
+            reason = evaluate_gate(
+                state,
+                rule_type=rule_type,
+                pollutant=pollutant,
+                air_quality_level=alert.get("air_quality_level"),
+                now=now,
+                config=config,
+            )
+            if reason:
+                alert["suppress_reason"] = reason
+                suppressed.append({"alert": alert, "reason": reason})
+                _log(alert, "suppress", reason)
+                continue
+            reason = quota_reason(store, station_id, day, config)
+            if reason:
+                alert["suppress_reason"] = reason
+                suppressed.append({"alert": alert, "reason": reason})
+                _log(alert, "suppress", reason)
+                continue
+            # 本候选通过全部闸门 → 组内赢家；其余候选以 priority 抑制留痕。
+            for loser in items[index + 1:]:
+                loser["suppress_reason"] = "priority"
+                suppressed.append({"alert": loser, "reason": "priority"})
+                _log(loser, "suppress", "priority")
+            pending.append(alert)
+            break
 
     # 4) 同站合并（跨因子只影响通报组织，主告警带 concurrent_rules）。
     primaries = merge_by_station(pending)
