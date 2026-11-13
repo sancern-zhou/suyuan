@@ -196,6 +196,216 @@ class JiangxiNoiseDataClient:
             "GET",
             "/api/noiseproduct/AlarmRecord/GetAlarmRecordsPagedAsync",
         ),
+        # 超标事件分析（APP 数据查询，按角色可见站点统计超限报警）
+        "alarm_analysis": (
+            "GET",
+            "/api/noiseproduct/noiseapp/DataQuery/GetAlarmAnalysisAsync",
+        ),
+        # 达标统计（城市/功能区/站点三级昼夜达标率，须恰好构成一个统计周期）
+        "compliance_statistics": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseComplianceStatistics/GetStatisticsAsync",
+        ),
+        # 达标对比（剔除异常气象数据前后的达标天数对比）
+        "compliance_comparison": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseComplianceStatistics/GetComparisonAsync",
+        ),
+        # —— 报表与专项分析（经 api_catalog 目录按需调用） ——
+        "exceed_statistics": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/PollutionExceedStatistics/GetPollutionExceedStatisticsAsync",
+        ),
+        "overlimit_analysis": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/PollutionExceedStatistics/GetNoiseOverlimitAnalysisAsync",
+        ),
+        "season_comparison": (
+            "GET",
+            "/api/noiseproduct/dataanalysis/NoiseSeasonComparison/GetComparisonAsync",
+        ),
+        "area_average_report": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseReport/GetNoiseAreaAverageReportListAsync",
+        ),
+        "district_report": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseReport/GetNoiseDistrictReportListAsync",
+        ),
+        "assessment_report": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseAssessmentReport/GetNoiseAssessmentReportAsync",
+        ),
+        "prevention_control": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoisePreventionControlAnalysis/GetNoisePreventionControlAnalysisAsync",
+        ),
+        "horizontal_overview": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseHorizontalOverview/GetOverviewAsync",
+        ),
+        "noise_calendar": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseCalendar/GetDailyValuesAsync",
+        ),
+        "sound_calendar_day": (
+            "GET",
+            "/api/noiseproduct/chartanalysis/AirQuailtyCalendar/GetSoundCalendarPagedListAsync",
+        ),
+        "sound_calendar_month": (
+            "GET",
+            "/api/noiseproduct/chartanalysis/AirQuailtyCalendar/GetSoundMonthCalendarPagedListAsync",
+        ),
+        "assessment_ranking": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/AssessmentRanking/GetAssessmentRankingAsync",
+        ),
+        "source_feature_analysis": (
+            "GET",
+            "/api/noiseproduct/dataanalysis/NoiseSourceAnalysis/GetNoiseFeatureAnalysisDataPageAsync",
+        ),
+        "source_identification_check": (
+            "GET",
+            "/api/noiseproduct/dataanalysis/NoiseSourceAnalysis/GetNoiseIdentificationCheckAsync",
+        ),
+        "source_identification_detail": (
+            "GET",
+            "/api/noiseproduct/dataanalysis/NoiseSourceAnalysis/GetNoiseIdentificationDetailPagedListAsync",
+        ),
+        "source_report": (
+            "GET",
+            "/api/noiseproduct/dataanalysis/NoiseSourceAnalysis/GetNoiseSourceReportAsync",
+        ),
+        # —— 运维域查询(经 api_catalog 目录按需调用) ——
+        "opa_organization_paged": (
+            "POST",
+            "/api/noiseproduct/airdata/OpaOrganization/GetOpaOrganizationPagedListAsync",
+        ),
+        "opa_organization": (
+            "GET",
+            "/api/noiseproduct/airdata/OpaOrganization/GetOpaOrganizationAsync",
+        ),
+        "opa_organization_types": (
+            "GET",
+            "/api/noiseproduct/airdata/OpaOrganization/GetOpaOrganizationTypeListAsync",
+        ),
+        "opa_assessment_paged": (
+            "POST",
+            "/api/noiseproduct/airdata/OpaAssessment/GetOpaAssessmentPagedListAsync",
+        ),
+        "opa_assessment": (
+            "GET",
+            "/api/noiseproduct/airdata/OpaAssessment/GetOpaAssessmentAsync",
+        ),
+        "operation_flow_design_paged": (
+            "GET",
+            "/api/noiseproduct/airdata/OperationFlowDesign/GetPagedListAsync",
+        ),
+        "operation_flow_design_detail": (
+            "GET",
+            "/api/noiseproduct/airdata/OperationFlowDesign/GetDetailAsync",
+        ),
+        "operation_flow_areas": (
+            "GET",
+            "/api/noiseproduct/airdata/OperationFlowDesign/GetAreasAsync",
+        ),
+        "operation_flow_instance_paged": (
+            "GET",
+            "/api/noiseproduct/airdata/OperationFlowInstance/GetPagedListAsync",
+        ),
+        "operation_flow_instance_detail": (
+            "GET",
+            "/api/noiseproduct/airdata/OperationFlowInstance/GetDetailAsync",
+        ),
+        "substation_blank_records": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseSubStationOperation/GetBlankRecordPagedListAsync",
+        ),
+        "substation_maintenance_records": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseSubStationOperation/GetMaintenanceRecordPagedListAsync",
+        ),
+        "substation_maintenance_detail": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseSubStationOperation/GetMaintenanceRecordAsync",
+        ),
+        "substation_video_events": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseSubStationOperation/GetVideoEventPagedListAsync",
+        ),
+        "substation_power_status": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseSubStationPowerStatus/GetNoiseSubStationPowerStatusPagedListAsync",
+        ),
+        "remote_calibration_logs": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseRemoteCalibrationLog/GetNoiseRemoteCalibrationLogListAsync",
+        ),
+        "remote_calibration_log_paged": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseRemoteCalibrationLog/GetNoiseRemoteCalibrationLogPagedListAsync",
+        ),
+        "station_recount_paged": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseStationRecountData/GetNoiseStationRecountPagedListAsync",
+        ),
+        "recount_report_templates": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseStationRecountData/GetReportTemplateListAsync",
+        ),
+        "system_abnormal_reports": (
+            "GET",
+            "/api/noiseproduct/airdata/Moniter5MinData/GetSystemAbnormalReportPagedListAsync",
+        ),
+        "qc_arrange_list": (
+            "GET",
+            "/api/noiseproduct/audit/AuditRemoteControl/GetQCArrangeList",
+        ),
+        "opa_attendance": (
+            "GET",
+            "/api/noiseproduct/airdata/Attendance/GetOpaKqAttendanceList",
+        ),
+        "work_order_paged": (
+            "POST",
+            "/api/noiseproduct/airdata/WorkOrder/GetWorkOrderPagedListAsync",
+        ),
+        "fault_records": (
+            "POST",
+            "/api/noiseproduct/airdata/FaultRecord/GetFaultRecordDisplayListAsync",
+        ),
+        # —— 台账与字典(经 api_catalog 目录按需调用) ——
+        "noise_source_list": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseSourceList/GetNoiseSourceListDisplayPagedListAsync",
+        ),
+        "sensitive_areas": (
+            "GET",
+            "/api/noiseproduct/airdata/SensitiveConcentratedArea/GetSensitiveConcentratedAreaDisplayPagedListAsync",
+        ),
+        "quiet_city_daily": (
+            "GET",
+            "/api/noiseproduct/airdata/QuietCityAnalysisDaily/GetQuietCityAnalysisDailyDisplayPagedListAsync",
+        ),
+        "supervision_inspections": (
+            "GET",
+            "/api/noiseproduct/airdata/SupervisionInspection/GetSupervisionInspectionDisplayPagedListAsync",
+        ),
+        "horn_capture_records": (
+            "GET",
+            "/api/noiseproduct/airdata/HornCaptureRecord/GetHornCaptureRecordDisplayPagedListAsync",
+        ),
+        "event_strategy_list": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseEventStrategy/GetPagedListAsync",
+        ),
+        "noise_limit_dict": (
+            "GET",
+            "/api/noiseproduct/AirCityProductBase/GetAllBSDNoiseLimitAsync",
+        ),
+        "station_properties": (
+            "GET",
+            "/api/noiseproduct/AirCityProductBase/GetAllPropertyDataAsync",
+        ),
         # 基础字典
         "station_directory": (
             "GET",

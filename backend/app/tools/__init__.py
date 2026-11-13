@@ -416,6 +416,36 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             "directory_tool",
             53,
         ),
+        (
+            "get_jiangxi_noise_alarm_analysis",
+            "GetJiangxiNoiseAlarmAnalysisTool",
+            "alarm_analysis_tool",
+            54,
+        ),
+        (
+            "get_jiangxi_noise_compliance",
+            "GetJiangxiNoiseComplianceTool",
+            "compliance_tool",
+            55,
+        ),
+        (
+            "search_jiangxi_noise_apis",
+            "SearchJiangxiNoiseApisTool",
+            "api_discovery_tool",
+            56,
+        ),
+        (
+            "describe_jiangxi_noise_api",
+            "DescribeJiangxiNoiseApiTool",
+            "api_discovery_tool",
+            57,
+        ),
+        (
+            "call_jiangxi_noise_api",
+            "CallJiangxiNoiseApiTool",
+            "api_discovery_tool",
+            58,
+        ),
     )
     for tool_name, class_name, module_name, priority in jiangxi_extra_tools:
         if is_project_tool_enabled(context, "jiangxi-noise", tool_name):

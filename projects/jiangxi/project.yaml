@@ -70,6 +70,11 @@ backend:
     - get_jiangxi_noise_events
     - get_jiangxi_noise_runtime_status
     - get_jiangxi_noise_directory
+    - get_jiangxi_noise_alarm_analysis
+    - get_jiangxi_noise_compliance
+    - search_jiangxi_noise_apis
+    - describe_jiangxi_noise_api
+    - call_jiangxi_noise_api
   fetchers_enabled: false
   agent_mode_tools:
     assistant:
@@ -96,6 +101,11 @@ backend:
       - get_jiangxi_noise_events
       - get_jiangxi_noise_runtime_status
       - get_jiangxi_noise_directory
+      - get_jiangxi_noise_alarm_analysis
+      - get_jiangxi_noise_compliance
+      - search_jiangxi_noise_apis
+      - describe_jiangxi_noise_api
+      - call_jiangxi_noise_api
     query:
       - list_session_resources
       - publish_session_file
@@ -114,6 +124,11 @@ backend:
       - get_jiangxi_noise_events
       - get_jiangxi_noise_runtime_status
       - get_jiangxi_noise_directory
+      - get_jiangxi_noise_alarm_analysis
+      - get_jiangxi_noise_compliance
+      - search_jiangxi_noise_apis
+      - describe_jiangxi_noise_api
+      - call_jiangxi_noise_api
     report:
       - list_session_resources
       - publish_session_file
@@ -131,6 +146,11 @@ backend:
       - render_report_package
       - validate_report_package
       - get_jiangxi_noise_data
+      - get_jiangxi_noise_alarm_analysis
+      - get_jiangxi_noise_compliance
+      - search_jiangxi_noise_apis
+      - describe_jiangxi_noise_api
+      - call_jiangxi_noise_api
     chart:
       - list_session_resources
       - publish_session_file

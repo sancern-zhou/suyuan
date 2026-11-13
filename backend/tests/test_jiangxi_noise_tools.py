@@ -11,6 +11,21 @@ import httpx
 import pytest
 
 from app.external_apis.jiangxi_noise_api_client import JiangxiNoiseDataClient
+from app.tools.query.query_jiangxi_noise.alarm_analysis_tool import (
+    GetJiangxiNoiseAlarmAnalysisTool,
+)
+from app.tools.query.query_jiangxi_noise.api_catalog import API_CATALOG
+from app.tools.query.query_jiangxi_noise.api_discovery_tool import (
+    CallJiangxiNoiseApiTool,
+    DescribeJiangxiNoiseApiTool,
+    SearchJiangxiNoiseApisTool,
+    build_call_payload,
+    encode_query_params,
+)
+from app.tools.query.query_jiangxi_noise.compliance_tool import (
+    GetJiangxiNoiseComplianceTool,
+    resolve_period_range,
+)
 from app.tools.query.query_jiangxi_noise.directory_tool import (
     GetJiangxiNoiseDirectoryTool,
 )
@@ -595,3 +610,509 @@ async def test_client_unknown_route():
     client = make_client(FakePlatform())
     with pytest.raises(Exception):
         await client.query_platform_api("no_such_route")
+
+
+# ---------------------------------------------------------------------------
+# 超标事件分析工具
+# ---------------------------------------------------------------------------
+
+
+def alarm_analysis_payload(records: int = 1) -> dict[str, Any]:
+    return {
+        "startTime": "2026-07-15T00:00:00+08:00",
+        "endTime": "2026-07-15T23:59:59.99+08:00",
+        "periodText": "2026-07-15",
+        "regionLevel": "城市",
+        "totalAlarmCount": 42,
+        "unprocessedCount": 7,
+        "processedCount": 35,
+        "alarmStationCount": 9,
+        "levelSummary": {"lightCount": 30, "moderateCount": 8, "severeCount": 4},
+        "regionStats": [{"rank": 1, "regionName": "南昌市", "alarmCount": 12, "alarmRate": 0.8}],
+        "stationStats": [
+            {"rank": 1, "stationCode": "1737A", "stationName": "监测一站", "alarmCount": 5}
+        ],
+        "alarmRecords": [
+            {
+                "id": index + 1,
+                "stationCode": "1737A",
+                "stationName": "监测一站",
+                "alarmName": "昼间超标",
+                "level": "轻微",
+                "status": "已处理",
+            }
+            for index in range(records)
+        ],
+    }
+
+
+async def test_alarm_analysis_defaults_and_params():
+    fake = FakePlatform({"alarm_analysis": alarm_analysis_payload()})
+    tool = GetJiangxiNoiseAlarmAnalysisTool(client=make_client(fake))
+    result = await tool.execute()
+    assert result["success"] is True
+    route, request = fake.last()
+    assert route == "alarm_analysis"
+    assert request.method == "GET"
+    params = query_of(request)
+    assert params["TimeType"] == "today"
+    assert "CityCode" not in params
+    assert result["record_total"] == 1
+    assert result["data"]["totalAlarmCount"] == 42
+    assert result["truncated"] is False
+
+
+async def test_alarm_analysis_resolves_city_and_filters():
+    fake = FakePlatform({"alarm_analysis": alarm_analysis_payload()})
+    tool = GetJiangxiNoiseAlarmAnalysisTool(client=make_client(fake))
+    result = await tool.execute(
+        time_type="month", city="南昌市", district_code="360102"
+    )
+    assert result["success"] is True
+    params = query_of(fake.last()[1])
+    assert params["TimeType"] == "month"
+    assert params["CityCode"] == "360100"
+    assert params["DistrictCode"] == "360102"
+    assert result["city_code"] == "360100"
+
+
+async def test_alarm_analysis_province_code():
+    fake = FakePlatform({"alarm_analysis": alarm_analysis_payload()})
+    tool = GetJiangxiNoiseAlarmAnalysisTool(client=make_client(fake))
+    await tool.execute(city="江西省")
+    assert query_of(fake.last()[1])["CityCode"] == "360000"
+
+
+async def test_alarm_analysis_truncates_records():
+    fake = FakePlatform({"alarm_analysis": alarm_analysis_payload(records=5)})
+    tool = GetJiangxiNoiseAlarmAnalysisTool(client=make_client(fake))
+    result = await tool.execute(max_records=2)
+    assert result["success"] is True
+    assert result["truncated"] is True
+    assert result["record_count"] == 2
+    assert result["record_total"] == 5
+    assert len(result["data"]["alarmRecords"]) == 2
+    assert "已截断" in result["hint"]
+
+
+async def test_alarm_analysis_invalid_inputs():
+    tool = GetJiangxiNoiseAlarmAnalysisTool(client=make_client(FakePlatform()))
+    result = await tool.execute(time_type="week")
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_time_type"
+    result = await tool.execute(city="北京市")
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_city"
+
+
+# ---------------------------------------------------------------------------
+# 达标统计工具
+# ---------------------------------------------------------------------------
+
+
+def compliance_statistics_payload(stations: int = 2) -> dict[str, Any]:
+    return {
+        "summary": {
+            "stationCount": 20,
+            "cityCount": 2,
+            "unqualifiedStationCount": 3,
+            "averageDayRate": 0.95,
+            "averageNightRate": 0.9,
+        },
+        "cities": [{"rowId": "360100", "city": "南昌市", "dayRate": 0.96, "nightRate": 0.91}],
+        "zones": [{"rowId": "2", "zone": "2类区", "dayRate": 0.94}],
+        "stations": [
+            {"rowId": f"ST{index}", "name": f"站点{index}", "dayRate": 0.9}
+            for index in range(stations)
+        ],
+    }
+
+
+def test_period_range_expansion_matches_platform_periods():
+    # 平台 CreatePeriods 要求起止落在同一自然周期内（EndDate 闭区间）
+    cases = {
+        "day": ("2026-07-15T09:00:00+08:00", "2026-07-15", "2026-07-15", "2026-07-15"),
+        "month": ("2026-07-15T00:00:00+08:00", "2026-07-01", "2026-07-31", "2026-07"),
+        "quarter": ("2026-07-15T00:00:00+08:00", "2026-07-01", "2026-09-30", "2026Q3"),
+        "year": ("2026-07-15T00:00:00+08:00", "2026-01-01", "2026-12-31", "2026"),
+    }
+    for period, (period_date, expected_start, expected_end, label) in cases.items():
+        start, end, period_label = resolve_period_range(
+            period, datetime.fromisoformat(period_date)
+        )
+        assert start.strftime("%Y-%m-%d") == expected_start
+        assert end.strftime("%Y-%m-%d") == expected_end
+        assert period_label == label
+
+
+async def test_compliance_statistics_body():
+    fake = FakePlatform({"compliance_statistics": compliance_statistics_payload()})
+    tool = GetJiangxiNoiseComplianceTool(client=make_client(fake))
+    result = await tool.execute(
+        report="statistics",
+        city_names=["南昌市"],
+        period="month",
+        period_date="2026-07-15T00:00:00+08:00",
+    )
+    assert result["success"] is True
+    route, request = fake.last()
+    assert route == "compliance_statistics"
+    assert request.method == "POST"
+    body = body_of(request)
+    assert body["CityCodes"] == ["360100"]
+    assert body["DataType"] == 1
+    assert body["TimeType"] == 40
+    assert body["StartDate"] == "2026-07-01 00:00:00"
+    assert body["EndDate"] == "2026-07-31 00:00:00"
+    assert result["period_label"] == "2026-07"
+    assert result["station_total"] == 2
+    assert result["truncated"] is False
+
+
+async def test_compliance_statistics_truncates_stations():
+    fake = FakePlatform(
+        {"compliance_statistics": compliance_statistics_payload(stations=5)}
+    )
+    tool = GetJiangxiNoiseComplianceTool(client=make_client(fake))
+    result = await tool.execute(
+        report="statistics",
+        city_names=["360100"],
+        period="quarter",
+        period_date="2026-07-15T00:00:00+08:00",
+        max_records=2,
+    )
+    assert result["truncated"] is True
+    assert result["station_count"] == 2
+    assert len(result["data"]["stations"]) == 2
+    body = body_of(fake.last()[1])
+    assert body["StartDate"] == "2026-07-01 00:00:00"
+    assert body["EndDate"] == "2026-09-30 00:00:00"
+
+
+async def test_compliance_statistics_invalid_inputs():
+    tool = GetJiangxiNoiseComplianceTool(client=make_client(FakePlatform()))
+    result = await tool.execute(report="statistics", period="month", period_date=START)
+    assert result["success"] is False
+    assert result["error_code"] == "missing_city_names"
+    result = await tool.execute(
+        report="statistics",
+        city_names=["南昌市"],
+        period="week",
+        period_date=START,
+    )
+    assert result["error_code"] == "invalid_period"
+    result = await tool.execute(
+        report="statistics",
+        city_names=["北京市"],
+        period="month",
+        period_date=START,
+    )
+    assert result["error_code"] == "invalid_city"
+
+
+async def test_compliance_comparison_body():
+    fake = FakePlatform(
+        {
+            "compliance_comparison": {
+                "totalCount": 2,
+                "items": [
+                    {"districtName": "东湖区", "dayQualifiedBefore": 20, "dayQualifiedAfter": 18},
+                    {"districtName": "西湖区", "dayQualifiedBefore": 22, "dayQualifiedAfter": 22},
+                ],
+            }
+        }
+    )
+    tool = GetJiangxiNoiseComplianceTool(client=make_client(fake))
+    result = await tool.execute(
+        report="comparison",
+        city_names=["南昌市", "九江市"],
+        district_codes=["360102"],
+        start_date="2026-01-01T00:00:00+08:00",
+        end_date="2026-01-31T00:00:00+08:00",
+        review_status="raw",
+    )
+    assert result["success"] is True
+    route, request = fake.last()
+    assert route == "compliance_comparison"
+    assert request.method == "POST"
+    body = body_of(request)
+    assert body["CityCodes"] == ["360100", "360400"]
+    assert body["DistrictCodes"] == ["360102"]
+    assert body["DataType"] == 0
+    assert body["SkipCount"] == 0
+    assert body["MaxResultCount"] == 20
+    assert body["StartDate"] == "2026-01-01 00:00:00"
+    assert body["EndDate"] == "2026-01-31 00:00:00"
+    assert result["total_count"] == 2
+    assert len(result["data"]) == 2
+
+
+async def test_compliance_comparison_requires_region():
+    tool = GetJiangxiNoiseComplianceTool(client=make_client(FakePlatform()))
+    result = await tool.execute(
+        report="comparison",
+        start_date=START,
+        end_date=END,
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "missing_region"
+
+
+async def test_compliance_comparison_range_limit():
+    tool = GetJiangxiNoiseComplianceTool(client=make_client(FakePlatform()))
+    result = await tool.execute(
+        report="comparison",
+        city_names=["南昌市"],
+        start_date="2024-01-01T00:00:00+08:00",
+        end_date="2026-01-31T00:00:00+08:00",
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "time_range_too_large"
+
+
+async def test_compliance_invalid_report():
+    tool = GetJiangxiNoiseComplianceTool(client=make_client(FakePlatform()))
+    result = await tool.execute(report="unknown")
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_report"
+
+
+# ---------------------------------------------------------------------------
+# 接口目录发现工具（search / describe / call）
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_routes_consistent_with_client():
+    """目录守门：每条目录项的 route 必须已注册到客户端且动词一致。"""
+    for api, entry in API_CATALOG.items():
+        assert entry["route"] in JiangxiNoiseDataClient.API_ROUTES, api
+        method, endpoint = JiangxiNoiseDataClient.API_ROUTES[entry["route"]]
+        assert endpoint.startswith("/api/noiseproduct/"), api
+        describe_payload = {
+            "route": entry["route"],
+            "method": method,
+        }
+        assert describe_payload["route"] == entry["route"]
+        for field, rule in entry["params"].items():
+            assert rule.get("type"), f"{api}.{field} 缺少 type"
+            assert rule.get("desc"), f"{api}.{field} 缺少 desc"
+
+
+async def test_search_finds_exceed_apis():
+    tool = SearchJiangxiNoiseApisTool()
+    result = await tool.execute(query="超标 统计")
+    assert result["success"] is True
+    names = [item["api"] for item in result["results"]]
+    assert "exceed_statistics" in names
+    assert "overlimit_analysis" in names
+    assert "alarm_analysis" in names
+
+
+async def test_search_requires_query():
+    tool = SearchJiangxiNoiseApisTool()
+    result = await tool.execute(query="  ")
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_query"
+
+
+async def test_describe_returns_contract():
+    tool = DescribeJiangxiNoiseApiTool()
+    result = await tool.execute(api="season_comparison")
+    assert result["success"] is True
+    assert result["method"] == "GET"
+    assert result["params"]["StationCode"]["required"] is True
+    assert "example" in result
+    result = await tool.execute(api="no_such_api")
+    assert result["success"] is False
+    assert result["error_code"] == "unknown_api"
+
+
+def test_build_call_payload_enum_and_datetime():
+    payload = build_call_payload(
+        "assessment_ranking",
+        {
+            "DataType": "audited",
+            "Dimension": "city",
+            "StartDate": "2026-07-01T00:00:00+08:00",
+            "EndDate": "2026-07-31T00:00:00+08:00",
+        },
+    )
+    assert payload["DataType"] == 1
+    assert payload["Dimension"] == "city"
+    assert payload["StartDate"] == "2026-07-01 00:00:00"
+    assert payload["EndDate"] == "2026-07-31 00:00:00"
+
+
+def test_build_call_payload_defaults_and_omissions():
+    payload = build_call_payload(
+        "area_average_report",
+        {
+            "Codes": ["360100"],
+            "TimePoint": ["2026-07-01T00:00:00+08:00", "2026-07-31T00:00:00+08:00"],
+            "TimeType": "month",
+        },
+    )
+    assert payload["TimeType"] == 40
+    assert payload["SandType"] == 0  # 有默认值，缺省时补齐
+    assert "SamplingType" not in payload  # 无默认值，缺省时省略
+    assert payload["TimePoint"] == ["2026-07-01 00:00:00", "2026-07-31 00:00:00"]
+
+
+def test_build_call_payload_validation_errors():
+    with pytest.raises(Exception) as exc_info:
+        build_call_payload("no_such_api", {})
+    assert "unknown_api" in str(getattr(exc_info.value, "code", "")) or "目录中没有接口" in str(
+        exc_info.value
+    )
+    with pytest.raises(Exception) as exc_info:
+        build_call_payload("season_comparison", {"StationCode": "1737A"})  # 缺 Date
+    assert getattr(exc_info.value, "code", "") == "missing_Date"
+    with pytest.raises(Exception) as exc_info:
+        build_call_payload("season_comparison", {"StationCode": "1737A", "Date": START,
+                                                 "Bogus": 1})
+    assert getattr(exc_info.value, "code", "") == "unknown_param"
+    with pytest.raises(Exception) as exc_info:
+        build_call_payload("assessment_ranking", {"DataType": True})
+    assert getattr(exc_info.value, "code", "") == "invalid_DataType"
+    with pytest.raises(Exception) as exc_info:
+        build_call_payload(
+            "sound_calendar_day",
+            {"AnalysisDimension": 3, "StationCode": "1737A", "StartDay": "abc",
+             "EndDay": 2026},
+        )
+    assert getattr(exc_info.value, "code", "") == "invalid_StartDay"
+
+
+def test_encode_query_params_expands_lists():
+    query = encode_query_params(
+        {"Codes": ["360100", "360400"], "AreaType": 2, "TimePoint": ["2026-07-01 00:00:00"]}
+    )
+    assert query["Codes[0]"] == "360100"
+    assert query["Codes[1]"] == "360400"
+    assert query["TimePoint[0]"] == "2026-07-01 00:00:00"
+    assert query["AreaType"] == 2
+
+
+async def test_call_get_encodes_query_params():
+    fake = FakePlatform({"season_comparison": {"seasons": []}})
+    tool = CallJiangxiNoiseApiTool(client=make_client(fake))
+    result = await tool.execute(
+        api="season_comparison",
+        params={"StationCode": "1737A", "Date": "2026-07-15T00:00:00+08:00", "DataType": "raw"},
+    )
+    assert result["success"] is True
+    route, request = fake.last()
+    assert route == "season_comparison"
+    assert request.method == "GET"
+    params = query_of(request)
+    assert params["StationCode"] == "1737A"
+    assert params["Date"] == "2026-07-15 00:00:00"
+    assert params["DataType"] == "0"
+    assert result["params_sent"]["DataType"] == 0
+
+
+async def test_call_post_sends_json_body():
+    fake = FakePlatform({"exceed_statistics": {"total": 3}})
+    tool = CallJiangxiNoiseApiTool(client=make_client(fake))
+    result = await tool.execute(
+        api="exceed_statistics",
+        params={
+            "Dimension": "quarter",
+            "Period": "day",
+            "TimePoint": "2026-07-15T00:00:00+08:00",
+            "StationCodes": ["1737A"],
+            "DataType": "audited",
+        },
+    )
+    assert result["success"] is True
+    route, request = fake.last()
+    assert route == "exceed_statistics"
+    assert request.method == "POST"
+    body = body_of(request)
+    assert body["Dimension"] == "quarter"
+    assert body["Period"] == "day"
+    assert body["TimePoint"] == "2026-07-15 00:00:00"
+    assert body["StationCodes"] == ["1737A"]
+    assert body["DataType"] == 1
+
+
+async def test_call_rejects_unknown_api():
+    tool = CallJiangxiNoiseApiTool(client=make_client(FakePlatform()))
+    result = await tool.execute(api="not_in_catalog", params={})
+    assert result["success"] is False
+    assert result["error_code"] == "unknown_api"
+
+
+async def test_call_truncates_long_lists():
+    fake = FakePlatform(
+        {
+            "source_identification_detail": {
+                "items": [{"id": index} for index in range(300)],
+                "totalCount": 300,
+            }
+        }
+    )
+    tool = CallJiangxiNoiseApiTool(client=make_client(fake))
+    result = await tool.execute(
+        api="source_identification_detail",
+        params={
+            "TimePoint": ["2026-07-01T00:00:00+08:00", "2026-07-31T00:00:00+08:00"],
+            "AreaType": 3,
+        },
+    )
+    assert result["success"] is True
+    assert result["count"] == 200
+    assert result["total_count"] == 300
+    assert result["truncated"] is True
+
+
+def test_build_call_payload_int_list_resolves_enum_labels():
+    payload = build_call_payload(
+        "work_order_paged",
+        {
+            "TimePoint": ["2026-07-01T00:00:00+08:00", "2026-07-31T00:00:00+08:00"],
+            "OrderStatus": ["待处理", 2],
+            "StatisticsType": [8, "故障排查"],
+        },
+    )
+    assert payload["OrderStatus"] == [1, 2]
+    assert payload["StatisticsType"] == [8, 8]
+
+
+async def test_call_ops_get_encodes_paged_query():
+    fake = FakePlatform({"substation_power_status": {"items": [], "totalCount": 0}})
+    tool = CallJiangxiNoiseApiTool(client=make_client(fake))
+    result = await tool.execute(
+        api="substation_power_status",
+        params={
+            "StationCode": "1737A,1738A",
+            "StartTime": "2026-07-01T00:00:00+08:00",
+            "maxResultCount": 20,
+        },
+    )
+    assert result["success"] is True
+    route, request = fake.last()
+    assert route == "substation_power_status"
+    assert request.method == "GET"
+    params = query_of(request)
+    assert params["StationCode"] == "1737A,1738A"
+    assert params["StartTime"] == "2026-07-01 00:00:00"
+    assert params["skipCount"] == "0"  # 默认分页参数补齐
+    assert params["maxResultCount"] == "20"
+
+
+async def test_call_qc_arrange_requires_time_range():
+    fake = FakePlatform({"qc_arrange_list": {"items": [], "totalCount": 0}})
+    tool = CallJiangxiNoiseApiTool(client=make_client(fake))
+    result = await tool.execute(api="qc_arrange_list", params={"StationCode": "1737A"})
+    assert result["success"] is False
+    assert result["error_code"] == "missing_StartTime"
+    result = await tool.execute(
+        api="qc_arrange_list",
+        params={
+            "StartTime": "2026-07-01T00:00:00+08:00",
+            "EndTime": "2026-07-02T00:00:00+08:00",
+        },
+    )
+    assert result["success"] is True
+    assert result["params_sent"]["EndTime"] == "2026-07-02 00:00:00"
