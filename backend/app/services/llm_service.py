@@ -26,6 +26,7 @@ from app.services.llm_failover import (
     get_llm_pool_semaphore,
     mark_provider_cooldown,
     parse_fallback_candidates,
+    reset_provider_failures,
     should_fallback,
     summarize_attempts,
 )
@@ -1447,6 +1448,7 @@ class LLMService:
 
                 try:
                     result = await self._run_llm_request_with_global_limit(operation, call)
+                    reset_provider_failures(self.provider)
                     if attempts:
                         logger.warning(
                             "llm_fallback_candidate_succeeded",
@@ -1926,6 +1928,7 @@ class LLMService:
                             max_tokens=max_tokens,
                         ),
                     )
+                    reset_provider_failures(self.provider)
                     if attempts:
                         logger.warning(
                             "llm_chat_fallback_candidate_succeeded",
@@ -2197,6 +2200,7 @@ class LLMService:
                         "json_response",
                         lambda: self._call_llm_with_json_response_once(prompt, max_retries=max_retries),
                     )
+                    reset_provider_failures(self.provider)
                     if attempts:
                         logger.warning(
                             "llm_json_fallback_candidate_succeeded",
@@ -3195,8 +3199,10 @@ class LLMService:
 
         except Exception as e:
             # ✅ Reactive Compact：上下文溢出自动恢复
-            # 捕获各 Provider 的上下文过长错误，触发压缩后重试
-            if self._is_context_overflow_error(e):
+            # 捕获各 Provider 的上下文过长错误，触发压缩后重试。
+            # 413（网关级 payload 拒绝）同走此路径：压缩后重试同一 provider，
+            # 而非立即换候选——换 provider 只是绕过本次，压缩才能根治体积问题。
+            if self._is_context_overflow_error(e) or classify_llm_failure(e).reason == "payload_too_large":
                 logger.warning(
                     "context_overflow_detected",
                     provider=self.provider,
@@ -3352,6 +3358,7 @@ class LLMService:
                             ):
                                 candidate_emitted = True
                                 yield event
+                        reset_provider_failures(self.provider)
                         if attempts:
                             logger.warning(
                                 "llm_streaming_fallback_candidate_succeeded",
@@ -3494,6 +3501,7 @@ class LLMService:
                                         "type": "message_stop",
                                         "data": {}
                                     }
+                    reset_provider_failures(self.provider)
                     if attempts:
                         logger.warning(
                             "llm_streaming_fallback_candidate_succeeded",
