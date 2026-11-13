@@ -515,6 +515,7 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "report_data_id",
             "context_refs",
             "content_preview",
+            "stdout",
             "file_path",
             "file_paths",
             "report_file_path",

@@ -870,24 +870,20 @@ class ToolExecutor:
         result: Any
     ) -> Dict[str, Any]:
         """
-        标准化工具返回结果（含智能采样）
+        标准化工具返回结果
 
         Args:
             tool_name: 工具名称
             result: 工具返回的原始结果
 
         Returns:
-            标准化的观察结果（data字段已采样）
+            标准化的观察结果
         """
         # 如果工具已经返回标准格式
         if isinstance(result, dict) and "success" in result:
             # ✅ 增强：为失败的参数错误添加详细提示
             if not result.get("success", True):
                 result = self._enhance_error_with_hint(tool_name, result)
-
-            # ✅ 数据查询工具记录数限制：智能采样（Head-Tail-Middle策略）
-            # 对数据查询工具的data字段进行采样，避免传递给LLM的token过多
-            result = self._apply_smart_sampling_for_query_tools(tool_name, result)
 
             # 添加摘要（如果没有）
             # 对于返回 result 字段的工具（详细结果已传递给LLM），不需要添加 summary
@@ -936,84 +932,6 @@ class ToolExecutor:
         }
 
         return observation
-
-    def _apply_smart_sampling_for_query_tools(
-        self,
-        tool_name: str,
-        result: Dict[str, Any],
-        max_records: int = 6
-    ) -> Dict[str, Any]:
-        """
-        对数据查询工具的返回结果进行智能采样
-
-        策略：Head-Tail-Middle采样（30% 头部 + 40% 中间均匀采样 + 30% 尾部）
-        - 只对数据查询工具生效
-        - 完整数据已存储在 file_path 指向的文件中
-        - 采样后的数据传递给LLM，减少token消耗
-
-        Args:
-            tool_name: 工具名称
-            result: 工具返回结果
-            max_records: 最大保留记录数（默认6）
-
-        Returns:
-            采样后的结果
-        """
-        # 识别数据查询工具
-        query_tools = {
-            "get_jining_regular_stations",
-            "get_air_quality",
-            "get_vocs_data",
-            "get_pm25_ionic",
-            "get_pm25_carbon",
-            "get_pm25_crustal",
-            "get_weather_data",
-        }
-
-        # 只对数据查询工具进行采样
-        generator = result.get("metadata", {}).get("generator", "")
-        is_query_tool = tool_name in query_tools or generator in query_tools
-
-        if not is_query_tool:
-            return result
-
-        # 检查data字段是否为列表且需要采样
-        data = result.get("data")
-        if not isinstance(data, list):
-            return result
-
-        original_count = len(data)
-        if original_count <= max_records:
-            # 数据量不超过阈值，无需采样
-            return result
-
-        # 调用tool_adapter中的智能采样函数
-        from app.agent.tool_adapter import _smart_sample_data_for_load
-
-        sampled_data, sampling_info = _smart_sample_data_for_load(data, max_records)
-
-        # 更新result
-        result["data"] = sampled_data
-
-        # 在metadata中记录采样信息
-        if "metadata" not in result:
-            result["metadata"] = {}
-
-        result["metadata"]["sampling_applied"] = True
-        result["metadata"]["original_record_count"] = original_count
-        result["metadata"]["sampled_record_count"] = len(sampled_data)
-        result["metadata"]["sampling_info"] = sampling_info
-
-        logger.info(
-            "smart_sampling_applied_for_query_tool",
-            tool=tool_name,
-            original_count=original_count,
-            sampled_count=len(sampled_data),
-            strategy=sampling_info.get("strategy"),
-            retention_ratio=sampling_info.get("retention_ratio")
-        )
-
-        return result
 
     def _generate_summary(
         self,
