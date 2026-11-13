@@ -20,6 +20,7 @@ ALL_CHART_TYPES: tuple[str, ...] = (
     "weather_timeseries",
     "aqi_calendar",
     "pollutant_wind_rose",
+    "city_boundary_map",
     "henan_city_map",
 )
 
@@ -79,6 +80,7 @@ def business_chart_reference_paths() -> Dict[str, str]:
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
         "pollutant_wind_rose": str(REFERENCE_DIR / "pollutant-wind-rose.md"),
         "henan_city_map": str(REFERENCE_DIR / "henan-city-map.md"),
+        "city_boundary_map": str(REFERENCE_DIR / "city-boundary-map.md"),
         "weather_timeseries": str(REFERENCE_DIR / "weather-timeseries.md"),
     }
     for scoped_type in PROJECT_SCOPED_CHART_TYPES:
@@ -99,9 +101,11 @@ class CreateBusinessChartTool(LLMTool):
             f"采用两层规范：先读公共入口 references/index.md={reference_paths['index']}，"
             "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
-            "仅支持污染物/AQI 日历、污染物风玫瑰、风场污染物叠加时序和气象五要素时序。"
+            "仅支持污染物/AQI 日历、污染物风玫瑰、风场污染物叠加时序、气象五要素时序和城市级行政区填色地图。"
             "常规柱状、折线、散点、饼图、分布、热力图及自定义组合图不由本工具绘制；"
             "问数交互图使用 execute_echarts_python，静态分析及报告图使用 execute_python。"
+            "city_boundary_map 绘制全国任意城市集合的行政区填色地图（adcode/城市名匹配、视野随数据自适应、可选分组边框；"
+            "options.render_mode=idw 可选城市点插值示意，须≥8城且仅示意不得当实测场）；"
             "henan_city_map 绘制河南省城市级 AQI/污染物地图（本项目专用）。"
             "weather_timeseries 绘制连续 1–7 天风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或重叠不同日期曲线；"
             "气象背景叠加污染物使用 wind_timeseries；纯风向频率图使用 Python，不得用占位浓度制作污染物风玫瑰。"

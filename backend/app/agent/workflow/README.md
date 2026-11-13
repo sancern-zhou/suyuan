@@ -6,11 +6,11 @@ workflows.
 
 ## Contracts
 
-Use `build_agent_task()` for a task contract.  A contract identifies the task,
-its parent, objective, inputs, constraints, dependencies, capabilities, and
-the expected result schema.  Use `build_result_envelope()` for a stable result
-shape containing outputs, evidence, uncertainties, artifacts, errors, and
-metadata.  A mode may add a stricter schema inside `result_schema`.
+Use a node's `goal` for its task and, when needed, a caller-defined
+`result_schema` for its structured result. `build_result_envelope()` provides
+a stable transport shape for outputs, evidence, uncertainties, artifacts,
+errors, and metadata. The DAG does not impose a fixed task contract or infer
+business completeness from file formats.
 
 ## Runtime
 

@@ -72,6 +72,24 @@ def _strip_read_state_content_for_llm(value: Any) -> Any:
     return {**value, "metadata": {**metadata, "read_state": read_state}}
 
 
+def _strip_server_resource_ids_for_llm(value: Any) -> Any:
+    """LLM 注入前剥离 resource_tracking 中的资源目录主键。
+
+    resource_id/group_id/focus_resource_id 是服务端资源目录与前端产物卡片
+    的内部主键，不属于 ``[[chart:...]]`` 协议（协议只接受 visual_id 与
+    会话短别名 chart_N）。历史教训：模型把它们当图表 ID 抄进占位符，前端
+    按 visual_id 匹配不到导致图表不渲染，产物卡片还被标记文本抑制。模型
+    视野只保留 durable 状态；SSE 事件与落库消息仍携带完整 tracking。
+    """
+    if not isinstance(value, dict):
+        return value
+    tracking = value.get("resource_tracking")
+    if not isinstance(tracking, dict):
+        return value
+    slim = {key: val for key, val in tracking.items() if key == "durable"}
+    return {**value, "resource_tracking": slim}
+
+
 def _todo_status_counts(items: Any) -> Dict[str, int]:
     if not isinstance(items, list):
         return {
@@ -313,6 +331,66 @@ def _truncate_string(value: str, max_chars: int = MAX_TOOL_RESULT_STRING_CHARS) 
     return _truncate_head_tail(value, max_chars)
 
 
+_FRESH_DOWNSAMPLE_LIST_KEYS = ("data", "rows", "records", "resultData")
+
+
+def _downsample_raw_to_budget(serialized: str, single_max: int) -> "str | None":
+    """把超过单条预算的原文结果按 list 型 data 降采样到预算内。
+
+    返回降采样后的 JSON 字符串；无法降到预算内（或结构不适用）返回 None，
+    调用方保持原有"整块降级"行为。
+    """
+    try:
+        payload = json.loads(serialized)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    list_key = next((k for k in _FRESH_DOWNSAMPLE_LIST_KEYS if isinstance(payload.get(k), list)), None)
+    if list_key is None:
+        return None
+    records = payload[list_key]
+    if not records:
+        return None
+
+    # 预算扣除非数据部分的固定开销，再按记录均摊估算可保留条数。
+    non_data = dict(payload)
+    non_data.pop(list_key)
+    try:
+        overhead = len(_serialize_tool_result_json(non_data)) + 64
+    except Exception:
+        return None
+    usable = single_max - overhead
+    if usable <= 0:
+        return None
+
+    per_record = max(1, (len(serialized) - overhead) // len(records))
+    target = max(2, min(len(records), usable // per_record))
+
+    while target >= 2:
+        sampled = _sample_sequence(records, max_items=target)
+        candidate = dict(payload)
+        candidate[list_key] = sampled
+        metadata = candidate.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            candidate["metadata"] = metadata
+        metadata["fresh_projection_downsampled"] = {
+            "field": list_key,
+            "original_count": len(records),
+            "sampled_count": len(sampled),
+        }
+        try:
+            out = _serialize_tool_result_json(candidate)
+        except Exception:
+            return None
+        if len(out) <= single_max:
+            return out
+        target = target * 3 // 4
+    return None
+
+
 def _fresh_budgets() -> "tuple[int, int]":
     """新鲜窗口投影预算（总/单结果），可被 settings 覆盖，缺省用模块常量。"""
     try:
@@ -430,6 +508,7 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
         "original_count", "metadata", "has_chart", "chart_summary",
         "source_file_paths", "source_report_file_paths",
         "refs", "context_refs", "llm_resume", "content_preview", "visual_ids",
+        "stdout",
     }
     minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}
     data = value.get("data")
@@ -464,6 +543,19 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
         if chunk_map:
             minimal["data"] = chunk_map
             minimal["data_chunk_mapped"] = True
+    elif isinstance(data, dict) and data:
+        # dict 型 data（如 execute_python 的 {"output": ...}）不能整块丢弃：
+        # 那会把 stdout 埋掉、只剩静态 summary，逼模型重跑"探针"。
+        # 只保留可读性关键字段（字符串经 _compact_tool_result_value 截断）。
+        keep_data_keys = ("output", "stdout", "content_preview", "error", "declared_data_file_paths")
+        preserved = {
+            k: _compact_tool_result_value(data[k])
+            for k in keep_data_keys
+            if k in data and data[k] not in (None, "", [], {})
+        }
+        if preserved:
+            minimal["data"] = preserved
+            minimal["data_dict_preserved"] = True
     if "summary" not in minimal:
         minimal["summary"] = _safe_content_preview(value, 2_000)
     minimal["tool_result_truncated"] = True
@@ -483,7 +575,7 @@ def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
         )
         return compacted_todo
 
-    compacted = _compact_tool_result_value(result)
+    compacted = _strip_server_resource_ids_for_llm(_compact_tool_result_value(result))
     if isinstance(compacted, dict) and _tool_result_value_was_truncated(compacted):
         compacted = dict(compacted)
         compacted["tool_result_truncated"] = True
@@ -1698,14 +1790,22 @@ class SessionMemory:
                     continue
                 try:
                     serialized = _serialize_tool_result_json(
-                        _strip_read_state_content_for_llm(raw)
+                        _strip_read_state_content_for_llm(
+                            _strip_server_resource_ids_for_llm(raw)
+                        )
                     )
                 except Exception:
                     continue
                 if len(serialized) > single_max:
-                    # 超大结果退回存储的结构化压缩形式（合法 JSON、字段被限长），
-                    # 比截断出的断头 JSON 更利于模型使用。
-                    continue
+                    # 超单条上限：先尝试对 list 型 data 头尾降采样到限内注入
+                    # （擦线超限整块降级会让模型彻底看不到明细，例如 24,111 vs 24,000），
+                    # 降采样后仍超限才退回存储的结构化压缩形式（合法 JSON、
+                    # 字段被限长，比截断出的断头 JSON 更利于模型使用）。
+                    downsampled = _downsample_raw_to_budget(serialized, single_max)
+                    if downsampled is not None:
+                        serialized = downsampled
+                    else:
+                        continue
                 if len(serialized) > remaining:
                     continue
                 remaining -= len(serialized)

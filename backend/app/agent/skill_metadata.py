@@ -53,6 +53,14 @@ SKILL_METADATA = {
             "create_report_package",
         ],
     },
+    "ops_audit_retrospective": {
+        "enabled": True,
+        "aliases": ["审核复盘", "清单对账", "自我迭代复盘"],
+        "required_tools": [
+            "ops_audit_reconcile_checklist", "ops_audit_retrospective_stats",
+            "read_file", "write_file",
+        ],
+    },
     "pollution_alert_classification": {"enabled": True, "aliases": [], "required_tools": []},
     "pollution_fault_diagnosis": {"enabled": True, "aliases": [], "required_tools": []},
     "ppt_master_workflow": {
@@ -60,13 +68,26 @@ SKILL_METADATA = {
         "aliases": [],
         "required_tools": ["read_file"],
     },
-    "editable_ppt_generation": {
+    "pptx_authoring": {
         "enabled": True,
-        "aliases": ["高质量可编辑PPT", "源码PPT生成"],
-        "name": "高质量可编辑 PPT 生成",
-        "description": "从源码项目生成并多轮完善原生可编辑 PPTX",
-        "entry_reference": "backend/app/tools/office/editable_ppt/references/index.md",
-        "required_tools": ["manage_editable_ppt", "read_file", "edit_file", "validate_pptx"],
+        "aliases": ["PPT设计", "PPT制作", "幻灯片生成", "python-pptx", "自由PPT"],
+        "name": "PPT 设计与生成技能",
+        "description": "用 execute_python 编写 python-pptx 代码自由创作高质量 PPTX，配合 validate_pptx 渲染验收闭环",
+        "required_tools": ["read_file", "execute_python", "validate_pptx"],
+    },
+    "docx_authoring": {
+        "enabled": True,
+        "aliases": ["Word设计", "Word制作", "文档生成", "python-docx", "自由Word"],
+        "name": "Word 文档创作技能",
+        "description": "用 execute_python 编写 python-docx 代码自由创作非公文 Word 交付文档，配合 validate_office 渲染验收闭环",
+        "required_tools": ["read_file", "execute_python", "validate_office"],
+    },
+    "xlsx_authoring": {
+        "enabled": True,
+        "aliases": ["Excel设计", "Excel制作", "表格生成", "openpyxl", "台账"],
+        "name": "Excel 表格设计技能",
+        "description": "用 execute_python + openpyxl 设计高质量交付 Excel，继承 data_manual 规则并配合 validate_office 读回校验闭环",
+        "required_tools": ["read_file", "execute_python", "validate_office"],
     },
     "routine_monitoring_analysis_expert": {"enabled": True, "aliases": [], "required_tools": []},
     "skill_template": {"enabled": False, "aliases": [], "required_tools": []},
@@ -83,7 +104,8 @@ SKILL_METADATA = {
     "广东省空气质量形势分析汇报PPT": {
         "enabled": True,
         "aliases": [],
-        "required_tools": ["create_business_chart", "create_pptx_with_ppt_master"],
+        # 2026-11 起 PPT 管线退役，改走 pptx_authoring 技能路线（技能正文需在 project/guangdong 分支同步更新）
+        "required_tools": ["create_business_chart", "read_file", "execute_python", "validate_pptx"],
     },
     "抓取生态环境部全国环境空气质量状况页面和图片技能": {
         "enabled": True,

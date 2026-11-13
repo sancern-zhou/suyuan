@@ -62,6 +62,11 @@ class LLMResponseRejectedError(Exception):
 _pool_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _pool_semaphore_limits: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _cooldowns: dict[str, tuple[float, LLMFailure]] = {}
+# provider -> (连续失败次数, 最近一次失败时间戳)。用于指数退避：同一 provider 在
+# 短窗口内反复失败（网关故障、key 过期、payload 持续超限）时，冷却时长按 60→120→
+# 240→480→900s 翻倍，避免 60s 固定冷却过期后立刻撞回故障节点空烧一整个
+# first-token 超时（2026-11-11 14:02-14:18 一次 run 因此拖长 4~5 倍）。
+_failure_streaks: dict[str, tuple[int, float]] = {}
 
 
 def _pool_key(provider: Optional[str] = None, model: Optional[str] = None) -> str:
@@ -140,10 +145,24 @@ def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
             status=failure.status,
         )
         return
-    seconds = max(0, int(getattr(settings, "llm_failover_cooldown_seconds", 60) or 0))
+    now = time.time()
+    streak, last_marked_at = _failure_streaks.get(provider, (0, 0.0))
+    decay_seconds = max(
+        60.0,
+        float(getattr(settings, "llm_failover_streak_decay_seconds", 1800) or 1800),
+    )
+    if now - last_marked_at > decay_seconds:
+        streak = 0
+    base_seconds = max(0, int(getattr(settings, "llm_failover_cooldown_seconds", 60) or 0))
+    max_seconds = max(
+        base_seconds,
+        int(getattr(settings, "llm_failover_cooldown_max_seconds", 900) or 0),
+    )
+    seconds = min(max_seconds, base_seconds * (2 ** streak)) if base_seconds > 0 else 0
+    _failure_streaks[provider] = (streak + 1, now)
     if seconds <= 0:
         return
-    _cooldowns[provider] = (time.time() + seconds, failure)
+    _cooldowns[provider] = (now + seconds, failure)
     _record_failure_counter(provider, failure)
     logger.warning(
         "llm_provider_cooldown_marked",
@@ -151,7 +170,18 @@ def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
         reason=failure.reason,
         status=failure.status,
         cooldown_seconds=seconds,
+        failure_streak=streak + 1,
     )
+
+
+def reset_provider_failures(provider: str) -> None:
+    """候选成功后清零连续失败计数，避免历史故障让指数退避无限增长。
+
+    只清 streak 不清 cooldown：正在生效的冷却说明该 provider 刚失败过，
+    成功的是另一个候选，提前解除会立刻把流量打回故障节点。
+    """
+    if _failure_streaks.pop(provider, None) is not None:
+        logger.info("llm_provider_failure_streak_reset", provider=provider)
 
 
 def _record_failure_counter(provider: str, failure: LLMFailure) -> None:
@@ -249,6 +279,11 @@ def classify_llm_failure(err: object) -> LLMFailure:
         return LLMFailure("billing", status, code, message)
     if status == 404 or "model not found" in lower or "not found" in lower:
         return LLMFailure("model_not_found", status, code, message)
+    # 413 / "Request Entity Too Large"：单个网关对请求体积的拒绝（同一 payload 换
+    # provider 常可通过，2026-11-11 实测 scnet 413 后 go2 成功）。与模型级上下文
+    # 溢出（is_context_overflow_message）区分开：后者走压缩路径，前者直接切换候选。
+    if status == 413 or "request entity too large" in lower or "payload too large" in lower:
+        return LLMFailure("payload_too_large", status or 413, code, message)
     if status == 400:
         return LLMFailure("format", status, code, message)
     return LLMFailure("unknown", status, code, message)
@@ -259,6 +294,7 @@ def should_fallback(failure: LLMFailure) -> bool:
     # 切到备用 provider 可用性更高；密钥真正配错时备用链会全部失败并抛 LLMFailoverError。
     # billing(402) 不切换：账户余额不足是账号级别问题，换 provider 无法解决，
     # 直接抛出错误让调用方感知，避免无意义重试消耗时间。
+    # payload_too_large(413)：网关级体积拒绝，换 provider（不同的 body 限制）即可恢复。
     return failure.reason in {
         "rate_limit",
         "overloaded",
@@ -266,6 +302,7 @@ def should_fallback(failure: LLMFailure) -> bool:
         "format",
         "auth",
         "invalid_response",
+        "payload_too_large",
         "unknown",
     }
 

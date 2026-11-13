@@ -11,8 +11,6 @@ debian_packages:
   - libreoffice-writer
   - libmagic1
   - librsvg2-bin
-  - nodejs
-  - npm
   - poppler-utils
   - tesseract-ocr
   - tesseract-ocr-chi-sim
@@ -28,10 +26,7 @@ external_runtimes:
     purpose: HTML and DOCX report rendering
   playwright_chromium:
     install: python -m playwright install --with-deps chromium
-    purpose: Browser tools and editable PPT rendering
-  editable_ppt_node_modules:
-    install: npm ci --omit=dev --prefix app/tools/office/editable_ppt_runtime
-    purpose: Editable PPT compilation
+    purpose: Browser tools
 
 commands:
   soffice: Office preview, PPT rendering, and PDF conversion
@@ -42,7 +37,6 @@ commands:
   rsvg-convert: SVG preview conversion
   jq: Optional structured filtering with a Python fallback
   libmagic: File type detection for knowledge-base document partitioning
-  node: Editable PPT compilation
   quarto: Report HTML and DOCX rendering
 
 # Optional external integration. The application detects its absence.

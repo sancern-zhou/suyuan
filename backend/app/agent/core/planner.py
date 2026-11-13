@@ -132,7 +132,8 @@ class ReActPlanner:
         try:
             from app.agent.tool_adapter import get_react_agent_tool_registry
             return get_react_agent_tool_registry()
-        except:
+        except Exception as e:
+            logger.warning("tool_registry_load_failed_returning_empty", error=str(e))
             return {}
 
     def _fix_missing_tool_results(self, conversation_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

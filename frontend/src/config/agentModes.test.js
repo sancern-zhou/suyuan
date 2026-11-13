@@ -80,6 +80,33 @@ test('project overrides turn query mode into the Jiangxi query-and-chart agent',
   assert.deepEqual(query.welcome.features, ['查询噪声数据', '生成可视化图表'])
 })
 
+test('project-only modes resolve from manifest overrides without shared catalog entries', () => {
+  const overrides = {
+    gd_query: {
+      name: '广东运维问数智能体',
+      shortName: '运维问数',
+      description: '查询广东运维工单等指标并生成专业图表',
+      accent: '#0b9b8a',
+      iconPaths: ['M5 6c0 1.7 3.1 3 7 3s7-1.3 7-3'],
+      tags: ['广东运维'],
+      welcome: {
+        description: '面向广东站点运维数据完成指标查询与图表生成',
+        features: ['查询运维指标', '生成趋势对比图表'],
+        example: '例如："统计本月全省故障工单量"'
+      }
+    }
+  }
+
+  const mode = getAgentMode('gd_query', overrides)
+  assert.equal(mode.id, 'gd_query')
+  assert.equal(mode.name, '广东运维问数智能体')
+  assert.equal(mode.accent, '#0b9b8a')
+  assert.equal(mode.welcome.example, '例如："统计本月全省故障工单量"')
+
+  assert.deepEqual(selectAgentModes(['gd_query', 'missing_mode'], overrides).map(agent => agent.id), ['gd_query'])
+  assert.equal(getAgentMode('gd_query'), null)
+})
+
 test('default platform scenes cover every shared agent exactly once', () => {
   const sceneModeIds = AGENT_SCENES.flatMap(scene => scene.modeIds)
   assert.equal(new Set(sceneModeIds).size, AGENT_MODE_IDS.length)

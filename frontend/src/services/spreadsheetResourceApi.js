@@ -54,3 +54,29 @@ export async function saveSpreadsheetResource(resource, bytes, fetchImpl = authF
   if (!receipt?.success) throw new Error(receipt?.message || '保存失败')
   return receipt
 }
+
+export async function saveDocxResource(resource, bytes, fetchImpl = authFetch) {
+  const actionUrl = resource?.actions?.save
+  if (!actionUrl) throw new Error('该文档不支持保存')
+  const fileName = String(resource?.label || 'document.docx').replace(/\.xlsx?$/, '.docx')
+  const formData = new FormData()
+  formData.append(
+    'file',
+    new Blob([bytes], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    }),
+    fileName
+  )
+  const response = await fetchImpl(actionUrl, { method: 'POST', body: formData })
+  if (!response.ok) {
+    let message = ''
+    try {
+      const payload = await response.json()
+      message = payload?.detail || payload?.message || ''
+    } catch {
+      message = await response.text()
+    }
+    throw new Error(message || `保存失败 (${response.status})`)
+  }
+  return response.json()
+}

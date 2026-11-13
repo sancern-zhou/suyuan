@@ -12,6 +12,14 @@ test('partial delivery exposes gaps without allowing exhausted retries', () => {
   assert.equal(workflowCanResume(snapshot), false)
 })
 
+test('legacy resource gaps are not evidence gaps after DAG contract removal', () => {
+  const snapshot = { status: 'succeeded', delivery: { gaps: [
+    { task_id: 'weather', status: 'resource_gap', reason: 'expected csv, got json' },
+    { task_id: 'analysis', status: 'blocked', reason: 'dependency failed' },
+  ] } }
+  assert.deepEqual(workflowGaps(snapshot).map(gap => gap.task_id), ['analysis'])
+})
+
 test('legacy snapshots retain failed and blocked evidence gaps', () => {
   const snapshot = { status: 'failed', graph: { air: { status: 'succeeded' }, weather: { status: 'failed' }, analysis: { status: 'blocked' }, skip: { status: 'skipped' } },
     runtime: { runs: { w: { parent_task_id: 'flow', task_id: 'weather', status: 'failed', attempt: 1, max_attempts: 2 } } } }

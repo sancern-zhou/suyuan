@@ -90,7 +90,7 @@ def attach_report_package_resources(
             pdf_path = candidate
 
     rendition_specs = (
-        ("docx", docx_path, "file"),
+        ("docx", docx_path, "docx"),
         ("pdf", pdf_path, "pdf"),
         ("share_html", share_html_path, "html"),
     )
@@ -230,6 +230,7 @@ def attach_document_resources(
         "html": "html",
         "qmd": "markdown",
         "md": "markdown",
+        "docx": "docx",
         "xlsx": "spreadsheet",
         "xls": "spreadsheet",
         "pptx": "presentation",
@@ -240,9 +241,10 @@ def attach_document_resources(
         "svg": "image",
     }
     role = "output"
+    # 交互编辑仅 xlsx（SheetJS save）与 docx（docx-editor save）；pptx 无回传链路不声明
     capabilities = (
         ("preview", "download", "edit")
-        if fmt in {"docx", "xlsx", "pptx"}
+        if fmt in {"xlsx", "docx"}
         else ("preview", "download")
     )
     primary = primary_file(

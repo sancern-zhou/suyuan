@@ -179,16 +179,16 @@ async def test_ppt_reference_survives_reading_until_visual_source_is_created(tmp
         {
             "type": "TOOL_CALL",
             "tool": "read_file",
-            "args": {"path": "app/tools/office/editable_ppt/references/workflow.md"},
+            "args": {"path": "backend/docs/skills/pptx_authoring.md"},
         },
         {
             "type": "TOOL_CALL",
-            "tool": "manage_editable_ppt",
+            "tool": "execute_python",
             "args": {"operation": "create"},
         },
         {
             "type": "TOOL_CALL",
-            "tool": "manage_editable_ppt",
+            "tool": "execute_python",
             "args": {"operation": "edit_source"},
         },
         {"type": "PLAIN_TEXT_REPLY", "answer": "ok"},

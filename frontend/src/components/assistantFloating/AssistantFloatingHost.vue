@@ -12,15 +12,15 @@
       class="assistant-ball"
       :class="{ running: floating.state?.isAnalyzing, dragging }"
       :style="ballStyle"
-      title="打开助手（可拖动）"
-      aria-label="打开助手"
+      :title="ballTitle"
+      :aria-label="ballTitle"
       @pointerdown="startDrag"
       @click="handleClick"
     >
       <MessageCircle :size="27" aria-hidden="true" />
       <span v-if="floating.unread" class="ball-badge">{{ floating.unread > 99 ? '99+' : floating.unread }}</span>
       <span v-else-if="floating.notificationUnread" class="notification-dot"></span>
-      <span class="ball-label">助手</span>
+      <span class="ball-label">{{ assistantName }}</span>
     </button>
   </div>
 </template>
@@ -31,7 +31,11 @@ import { useRouter } from 'vue-router'
 import { MessageCircle } from 'lucide-vue-next'
 import { useAssistantFloatingStore } from '@/stores/assistantFloating.js'
 import AssistantFloatingPanel from './AssistantFloatingPanel.vue'
+import { projectConfig } from '@/config/projectConfig.js'
 
+// 助手人设名随项目配置（frontend.assistant_name），缺省「助手」。
+const assistantName = projectConfig.assistantName
+const ballTitle = `打开${assistantName}（可拖动）`
 const floating = useAssistantFloatingStore()
 const router = useRouter()
 const ballRef = ref(null)
@@ -80,8 +84,18 @@ async function openWorkspace(sessionId, attachment = null) {
   if (sessionId) await router.push({ name: 'session', params: { id: sessionId }, query: attachment ? { preview_resource: attachment.resourceId, workspace: 'full' } : { workspace: 'full' } })
   else await router.push({ name: 'analysis', query: { assistant: '1', workspace: 'full' } })
 }
-onMounted(() => window.addEventListener('resize', keepInView))
-onBeforeUnmount(() => { window.removeEventListener('pointermove', drag); window.removeEventListener('resize', keepInView) })
+function handleKeydown(event) {
+  if (event.key === 'Escape' && floating.open) floating.closePanel()
+}
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('resize', keepInView)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('pointermove', drag)
+  window.removeEventListener('resize', keepInView)
+})
 function keepInView() {
   floating.savePosition({
     x: Math.max(8, Math.min(window.innerWidth - 70, floating.position.x)),

@@ -29,6 +29,12 @@ import re
 import os
 import base64
 
+try:
+    import certifi
+    _TLS_VERIFY: Optional[str] = certifi.where()
+except ImportError:  # pragma: no cover
+    _TLS_VERIFY = None
+
 from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
@@ -66,6 +72,9 @@ class NOAAHysplitAPI:
         """初始化NOAA HYSPLIT API客户端"""
         self.api_key = api_key or os.getenv("NOAA_HYSPLIT_API_KEY")
         self.timeout = httpx.Timeout(180.0, connect=60.0)
+        # 显式固定使用 certifi 信任库：不随系统/conda 默认路径漂移
+        # （2026-11-11 排查 CERTIFICATE_VERIFY_FAILED：显式 certifi 验证 200 OK）
+        self._verify = _TLS_VERIFY or True
         
         self.output_dir = get_data_registry() / "noaa_hysplit"
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -86,6 +95,11 @@ class NOAAHysplitAPI:
                     return await client.post(url, **kwargs)
             except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError, httpx.NetworkError) as e:
                 last_error = e
+                # 证书校验失败是确定性错误（对端证书链/本地信任库问题），重试必然复现，
+                # 直接抛出避免 3 次重试白烧时间（2026-11-11 场景三 fetcher 每轮 6 轨迹全
+                # 失败仍重试，单轮拖到 15+ 分钟）。
+                if isinstance(e, httpx.ConnectError) and "CERTIFICATE_VERIFY_FAILED" in str(e):
+                    raise
                 if attempt < self.MAX_RETRIES - 1:
                     logger.warning(
                         "noaa_request_retry",
@@ -140,7 +154,7 @@ class NOAAHysplitAPI:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
             }
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers, verify=self._verify) as client:
                 # Step 1: 初始化会话 (带重试)
                 await self._request_with_retry(client, "GET", f"{self.BASE_URL}/hypub-bin/trajtype.pl?runtype=archive")
                 

@@ -1,6 +1,6 @@
 const SUPPORTED = new Set([
   'pdf', 'html', 'markdown', 'spreadsheet', 'presentation',
-  'image', 'chart', 'board', 'file'
+  'image', 'chart', 'board', 'docx', 'file'
 ])
 
 export const rendererKey = (resource = {}) => {
@@ -17,5 +17,6 @@ export const RESOURCE_RENDERERS = Object.freeze({
   image: () => import('../components/resources/renderers/ImageResourceRenderer.vue'),
   chart: () => import('../components/resources/renderers/ChartResourceRenderer.vue'),
   board: () => import('../components/resources/renderers/BoardResourceRenderer.vue'),
+  docx: () => import('../components/resources/renderers/DocxResourceRenderer.vue'),
   file: () => import('../components/resources/renderers/FileDetailRenderer.vue')
 })
