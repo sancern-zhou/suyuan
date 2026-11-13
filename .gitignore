@@ -253,6 +253,7 @@ backend/docs/skills/*
 !backend/docs/skills/ops_work_order_audit.md
 !backend/docs/skills/ops_work_order_audit/
 !backend/docs/skills/ops_work_order_audit/**
+!backend/docs/skills/ops_audit_retrospective.md
 !backend/docs/skills/archify.md
 !backend/docs/skills/xuchang_city_exceedance_source_report.md
 !backend/docs/skills/SKILLS_INDEX.md
@@ -270,6 +271,7 @@ backend/docs/skills/*
 !backend/docs/skills/routine_monitoring_analysis_expert.md
 !backend/docs/skills/weather_analysis_expert.md
 !backend/docs/skills/xuchang_station_daily_source_report.md
+!backend/docs/skills/interactive_html_report.md
 # 已入库的正式设计与运维文档（此前靠强制添加维持，补白名单防止新同名文件静默丢失）
 !backend/docs/*.md
 !backend/docs/third_party/

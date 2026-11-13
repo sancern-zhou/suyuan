@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 LEDGER_SCHEMA_VERSION = "ops_audit_feedback_ledger.v1"
 LEDGER_FILENAME = "feedback_ledger.jsonl"
+METRICS_HISTORY_FILENAME = "metrics_history.jsonl"
+METRICS_HISTORY_SCHEMA_VERSION = "ops_audit_metrics_history.v1"
 
 PANEL_CHANNEL = "panel"
 CHECKLIST_CHANNEL = "checklist"
@@ -65,6 +67,51 @@ def default_ledger_path() -> Path:
     """The ledger lives beside the audit artifacts under the ops memory dir."""
 
     return get_memory_dir() / "ops" / "audit" / "ledger" / LEDGER_FILENAME
+
+
+def default_metrics_history_path() -> Path:
+    """Time-series of computed audit metrics, one JSON line per computation."""
+
+    return default_ledger_path().parent / METRICS_HISTORY_FILENAME
+
+
+def append_metrics_history(
+    entry: dict[str, Any],
+    *,
+    path: Path | None = None,
+) -> dict[str, Any]:
+    """Append one metrics snapshot (reconciliation or monthly retrospective)."""
+
+    record = {
+        "schema_version": METRICS_HISTORY_SCHEMA_VERSION,
+        "recorded_at": datetime.now().isoformat(timespec="seconds"),
+        **entry,
+    }
+    target = path or default_metrics_history_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
+
+
+def read_metrics_history(*, path: Path | None = None) -> list[dict[str, Any]]:
+    """Read the metrics time-series, skipping malformed lines."""
+
+    target = path or default_metrics_history_path()
+    if not target.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in target.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            records.append(parsed)
+    return records
 
 
 def derive_execution_ref(path: str | Path) -> str | None:
