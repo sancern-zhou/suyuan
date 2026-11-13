@@ -756,6 +756,20 @@ class Settings(BaseSettings):
         default=60,
         description="Cooldown seconds for transiently failing LLM providers"
     )
+    llm_failover_cooldown_max_seconds: int = Field(
+        default=900,
+        description=(
+            "Exponential backoff cap for LLM provider cooldowns "
+            "(60s base doubles per consecutive failure: 60/120/240/480/900)"
+        ),
+    )
+    llm_failover_streak_decay_seconds: int = Field(
+        default=1800,
+        description=(
+            "Consecutive-failure streak resets after this quiet window, "
+            "returning the cooldown to the base duration"
+        ),
+    )
 
     ops_attachment_root: Optional[str] = Field(default=None, description="Local root used to resolve /WebFiles attachments")
     attachment_root: Optional[str] = Field(default=None, description="Fallback local attachment root")
