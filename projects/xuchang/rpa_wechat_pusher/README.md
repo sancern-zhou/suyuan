@@ -67,7 +67,9 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
    `.venv\Scripts\pythonw.exe`，无窗口运行）：
    - `pythonw.exe agent.py`（工作目录本目录）→ 常驻推送；
    - `pythonw.exe watchdog.py`（工作目录本目录）→ 看门狗，每 10 分钟
-     检查并拉起 agent。
+     检查 agent：进程缺失则拉起；进程在但存活心跳
+     （`data/agent_liveness` mtime，agent 每轮轮询/每条消息处理前刷新）
+     超过 10 分钟未更新则判定冻结，杀进程树后拉起新实例。
 
 ## 运行注意事项（都是实测坑）
 
@@ -92,8 +94,11 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
   （或带 `Authorization: Bearer <token>`），看 `pending_count`（积压）、
   `failed_count`、`agent.last_seen_at`（agent 心跳，agent 在线即持续刷新）。
 - 本机侧：`data/agent.log`；看门狗日志 `data/watchdog.log`。
-- **看门狗（watchdog.py）**：登录自启，每 10 分钟检查 agent 进程，缺失则
-  无窗口拉起（覆盖误关窗口、被杀、偶发崩溃）。杀毒软件（尤其 360 主动防御）
+- **看门狗（watchdog.py）**：登录自启，每 10 分钟检查 agent——进程缺失则
+  无窗口拉起（覆盖误关窗口、被杀、偶发崩溃）；进程在但心跳
+  `data/agent_liveness` 超过 10 分钟未更新则判定冻结（UIA/网络调用挂死），
+  杀进程树后拉起新实例（2026-11-12 冻结 36h 事故后新增，旧版只查进程
+  存在性发现不了这类故障）。杀毒软件（尤其 360 主动防御）
   可能把 wechatauto 的内存操作判定为威胁而终止 python 进程——请把
   `.venv\Scripts\pythonw.exe`、`python.exe`、本目录和微信安装目录加入
   安全软件白名单，否则看门狗会陷入"拉起-被杀"循环（日志可辨）。
