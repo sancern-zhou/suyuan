@@ -443,6 +443,7 @@ class XuchangStationDeviationEvidenceCollector:
     def _load_air_quality(self, start: datetime, end: datetime) -> dict[str, Any]:
         start_value = start.replace(tzinfo=None)
         end_value = end.replace(tzinfo=None)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         connection = pyodbc.connect(self.connection_string_factory(), timeout=30)
         try:
             cursor = connection.cursor()
