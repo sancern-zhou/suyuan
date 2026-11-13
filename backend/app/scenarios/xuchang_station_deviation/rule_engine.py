@@ -430,8 +430,12 @@ def rule_ol(
 class CycleOutcome:
     candidates: list[dict[str, Any]] = field(default_factory=list)
     checks: list[dict[str, Any]] = field(default_factory=list)
-    # (grain, station_id, pollutant) -> 本槽有效值，供恢复防抖使用。
+    # (grain, station_id, pollutant) -> 本槽有效值（展示/回溯用）。
     current_values: dict[tuple[str, str, str], float] = field(default_factory=dict)
+    # (grain, station_id, pollutant, rule_type) -> 与本规则阈值同口径的恢复
+    # 指标：DS/CL 为相对基线的增量，OL 为相对其余站点均值的偏差。恢复防抖
+    # 必须用该指标比较，不能用原始浓度比较增量阈值。
+    recovery_metrics: dict[tuple[str, str, str, str], float] = field(default_factory=dict)
     # CL 区域合并被抑制的候选（同窗口 >=N 站命中时只留最大站）。
     region_merged: list[dict[str, Any]] = field(default_factory=list)
 
@@ -566,8 +570,14 @@ def evaluate_five_minute_cycle(
             station_name = row.get("name") or row.get("station_name")
             level = levels.get((station_id, pollutant))
 
-            # DS：单点突升，单窗口；邻站同向则不判。
+            # 恢复防抖指标：与本规则阈值同口径（增量/偏差，而非浓度）。
             context = ds_context.get(station_id)
+            if context is not None:
+                outcome.recovery_metrics[(grain, station_id, pollutant, "sudden_rise")] = (
+                    value - context["baseline"]
+                )
+
+            # DS：单点突升，单窗口；邻站同向则不判。
             if context is not None:
                 peer_same_direction = sum(
                     1 for other, other_ctx in ds_context.items()
@@ -585,6 +595,11 @@ def evaluate_five_minute_cycle(
 
             # CL：窗口 = 3 个基线槽 + 3 个抬升值（起点固定为基线后第一值）。
             tail = _tail_values(series_by_station.get(station_id), 6, step, target_slot, grain)
+            if tail is not None:
+                baseline = mean(tail[:3])
+                outcome.recovery_metrics[(grain, station_id, pollutant, "continuous_rise")] = (
+                    value - baseline
+                )
             if tail is not None and level is not None:
                 baseline = mean(tail[:3])
                 hit, detail = rule_cl(tail[3:], baseline, pollutant, level, config)
@@ -597,6 +612,10 @@ def evaluate_five_minute_cycle(
 
             # OL：有效站最少 4 个；PM2.5 单窗口、其他连续 2 窗口。
             peer_mean, peer_count = _peer_mean(all_values, station_id, config.min_region_stations)
+            if peer_mean is not None:
+                outcome.recovery_metrics[(grain, station_id, pollutant, "spatial_outlier")] = (
+                    value - peer_mean
+                )
             if peer_mean is not None and level is not None:
                 hit, detail = rule_ol(
                     value, peer_mean, pollutant, level, config,
@@ -679,6 +698,9 @@ def evaluate_pm25_hourly_cycle(
 
         context = ds_context.get(station_id)
         if context is not None:
+            outcome.recovery_metrics[(grain, station_id, pollutant, "sudden_rise")] = (
+                value - context["baseline"]
+            )
             peer_same_direction = sum(
                 1 for other, other_ctx in ds_context.items()
                 if other != station_id and other_ctx["hit"]
@@ -698,6 +720,10 @@ def evaluate_pm25_hourly_cycle(
         tail = _tail_values(
             series_by_station.get(station_id), baseline_hours + 3, step, target_hour, grain
         )
+        if tail is not None:
+            outcome.recovery_metrics[(grain, station_id, pollutant, "continuous_rise")] = (
+                value - mean(tail[:baseline_hours])
+            )
         if tail is not None and level is not None:
             baseline = mean(tail[:baseline_hours])
             hit, detail = rule_cl(tail[baseline_hours:], baseline, pollutant, level, config)
@@ -709,6 +735,10 @@ def evaluate_pm25_hourly_cycle(
                 ))
 
         peer_mean, peer_count = _peer_mean(all_values, station_id, config.min_region_stations)
+        if peer_mean is not None:
+            outcome.recovery_metrics[(grain, station_id, pollutant, "spatial_outlier")] = (
+                value - peer_mean
+            )
         if peer_mean is not None and level is not None:
             hit, detail = rule_ol(
                 value, peer_mean, pollutant, level, config,

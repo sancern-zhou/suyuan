@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.scenarios.xuchang_station_deviation.push_control import (
     AlertStateStore,
     PushLogStore,
@@ -360,6 +362,20 @@ def test_ol_streak_resets_after_interruption():
     assert len(_slot_values(outcome3, "spatial_outlier")) == 1
 
 
+def test_ol_recovery_metric_uses_deviation_not_concentration():
+    # 恢复防抖必须与 OL 阈值同口径（本站−其余均值偏差），不能用原始浓度：
+    # 1003A 案例里浓度 64~68 恒大于偏差阈值 20，用浓度比较永远无法恢复。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    current = {"a": 64.0, "b": 68.0, "c": 42.0, "d": 42.0, "e": 38.0, "f": 46.0}
+    outcome = _cycle(_ol_rows(slot, current, "pm10"), slot)
+    peer_mean = (68.0 + 42.0 + 42.0 + 38.0 + 46.0) / 5
+    metric = outcome.recovery_metrics[("5min", "a", "PM10", "spatial_outlier")]
+    assert metric == pytest.approx(64.0 - peer_mean)
+    assert metric < 20.0
+    # 原始浓度仍保留在 current_values 供展示。
+    assert outcome.current_values[("5min", "a", "PM10")] == 64.0
+
+
 # ---- PM2.5 小时版 ----
 
 def test_pm25_hourly_ds_and_level_from_same_hour():
@@ -505,7 +521,7 @@ def test_priority_keeps_sudden_rise_over_outlier(tmp_path):
     pushed, suppressed, _summary = apply_push_chain(
         list(outcome_all.candidates), store=store, config=AirAlertRuleConfig(),
         now=slot0 + timedelta(minutes=5), log_store=PushLogStore(tmp_path),
-        current_values=outcome_all.current_values,
+        recovery_metrics=outcome_all.recovery_metrics,
     )
     assert [a["rule_type"] for a in pushed] == ["sudden_rise"]
     assert all(item["reason"] == "priority" for item in suppressed)
@@ -527,7 +543,7 @@ def test_window_summary_covers_three_stations(tmp_path):
     store = AlertStateStore(tmp_path)
     pushed, _suppressed, summary = apply_push_chain(
         candidates, store=store, config=AirAlertRuleConfig(), now=slot,
-        log_store=PushLogStore(tmp_path), current_values={},
+        log_store=PushLogStore(tmp_path), recovery_metrics={},
     )
     assert len(pushed) == 3
     assert summary is not None and "3 个站点" in summary

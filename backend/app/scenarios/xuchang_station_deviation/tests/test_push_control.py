@@ -53,7 +53,7 @@ def _alert(station_id: str = "a", rule_type: str = "sudden_rise",
 
 def _chain(candidates, store, tmp_path, now, **kwargs):
     kwargs.setdefault("log_store", PushLogStore(tmp_path))
-    kwargs.setdefault("current_values", {})
+    kwargs.setdefault("recovery_metrics", {})
     return apply_push_chain(candidates, store=store, config=AirAlertRuleConfig(), now=now, **kwargs)
 
 
@@ -150,10 +150,10 @@ def test_hysteresis_blocks_until_recovered(tmp_path):
     store = AlertStateStore(tmp_path)
     config = AirAlertRuleConfig()
     _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
-    key = ("5min", "a", "PM10")
+    key = ("5min", "a", "PM10", "sudden_rise")
     gate_time = datetime(2026, 11, 2, 9, 5, tzinfo=TZ)
     for index in range(1, 4):
-        # 当前值 10 ≤ 15×0.9=13.5，逐周期计数。
+        # 恢复指标 10 ≤ 15×0.9=13.5，逐周期计数。
         rearmed = recovery_pass(store, {key: 10.0}, config)
         state = store.instance("5min", "a", "PM10", "sudden_rise")
         if index < 3:
@@ -184,7 +184,7 @@ def test_recovery_counter_resets_on_rebound(tmp_path):
         now=datetime(2026, 11, 2, 9, 0, tzinfo=TZ),
         recovery_threshold=15.0, station_id="a",
     )
-    key = ("5min", "a", "PM10")
+    key = ("5min", "a", "PM10", "sudden_rise")
     assert recovery_pass(store, {key: 10.0}, AirAlertRuleConfig()) == []
     # 回弹超过阈值×90% → 计数清零，之后重新计数。
     assert recovery_pass(store, {key: 55.0}, AirAlertRuleConfig()) == []

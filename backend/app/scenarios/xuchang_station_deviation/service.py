@@ -879,7 +879,7 @@ class XuchangStationDeviationAlertService:
         meteo_decision = evaluate_adverse_meteorology(meteorology_summary)
 
         candidates: list[dict[str, Any]] = []
-        current_values: dict[tuple[str, str, str], float] = {}
+        recovery_metrics: dict[tuple[str, str, str, str], float] = {}
         checks: list[dict[str, Any]] = []
         region_merged: list[dict[str, Any]] = []
         if granularity == "5min":
@@ -892,7 +892,7 @@ class XuchangStationDeviationAlertService:
                 station_allowlist=allowlist,
             )
             candidates.extend(outcome.candidates)
-            current_values.update(outcome.current_values)
+            recovery_metrics.update(outcome.recovery_metrics)
             checks.extend(outcome.checks)
             region_merged.extend(outcome.region_merged)
             if target_slot.minute == 0:
@@ -906,7 +906,7 @@ class XuchangStationDeviationAlertService:
                     station_allowlist=allowlist,
                 )
                 candidates.extend(pm25_outcome.candidates)
-                current_values.update(pm25_outcome.current_values)
+                recovery_metrics.update(pm25_outcome.recovery_metrics)
                 checks.extend(pm25_outcome.checks)
                 region_merged.extend(pm25_outcome.region_merged)
         else:
@@ -919,7 +919,7 @@ class XuchangStationDeviationAlertService:
                 station_allowlist=allowlist,
             )
             candidates.extend(pm25_outcome.candidates)
-            current_values.update(pm25_outcome.current_values)
+            recovery_metrics.update(pm25_outcome.recovery_metrics)
             checks.extend(pm25_outcome.checks)
             region_merged.extend(pm25_outcome.region_merged)
         # CL 区域合并的其余站点：以 regional_merge 抑制留痕（不推送、不占冷却）。
@@ -933,7 +933,7 @@ class XuchangStationDeviationAlertService:
             config=config,
             now=now,
             log_store=self.push_log_store,
-            current_values=current_values,
+            recovery_metrics=recovery_metrics,
         )
         suppressed = suppressed_pre + suppressed
 

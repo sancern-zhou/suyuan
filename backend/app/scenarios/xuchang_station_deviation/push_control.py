@@ -212,10 +212,15 @@ def commit_push(
 
 def recovery_pass(
     store: AlertStateStore,
-    current_values: dict[tuple[str, str, str], float],
+    recovery_metrics: dict[tuple[str, str, str, str], float],
     config: AirAlertRuleConfig,
 ) -> list[str]:
-    """恢复防抖：连续 recover_periods 个周期 ≤ 阈值×recover_ratio 才重新武装。"""
+    """恢复防抖：连续 recover_periods 个周期 ≤ 阈值×recover_ratio 才重新武装。
+
+    ``recovery_metrics`` 的键是 (grain, station_id, pollutant, rule_type)，值
+    必须与对应规则的阈值同口径（OL 为相对其余站均值的偏差，DS/CL 为相对
+    基线的增量），不能用原始浓度——否则恢复判断永远不成立。
+    """
     rearmed: list[str] = []
     for key, state in store.all_instances().items():
         if state.get("armed", True):
@@ -226,8 +231,8 @@ def recovery_pass(
         parts = key.split("::")
         if len(parts) != 4:
             continue
-        grain, station_id, pollutant, _rule = parts
-        current = current_values.get((grain, station_id, pollutant))
+        grain, station_id, pollutant, rule = parts
+        current = recovery_metrics.get((grain, station_id, pollutant, rule))
         if current is None:
             continue
         if current <= float(threshold) * config.recover_ratio:
@@ -336,7 +341,7 @@ def apply_push_chain(
     config: AirAlertRuleConfig,
     now: datetime,
     log_store: PushLogStore | None = None,
-    current_values: dict[tuple[str, str, str], float] | None = None,
+    recovery_metrics: dict[tuple[str, str, str, str], float] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
     """推送管控主链：恢复防抖 → #24 优先级 → 免打扰/闸门/限额 → 合并 → 推送。"""
     now = now.astimezone(TZ_SHANGHAI)
@@ -362,8 +367,8 @@ def apply_push_chain(
         log_entries.append(entry)
 
     # 1) 恢复防抖检查。
-    if current_values:
-        recovery_pass(store, current_values, config)
+    if recovery_metrics:
+        recovery_pass(store, recovery_metrics, config)
 
     # 2) #24 优先级：同一站同一因子同一窗口只保留最高优先级。
     kept, priority_suppressed = select_by_priority(candidates)
