@@ -37,7 +37,7 @@ async def ensure_subagent_manager_only() -> None:
     set_subagent_manager(
         SubagentManager(
             agent=create_react_agent(),
-            task_store=TaskStatusStore(db_manager=None),
+            task_store=TaskStatusStore(),
             message_bus=message_bus,
         )
     )
