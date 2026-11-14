@@ -332,6 +332,10 @@ class Settings(BaseSettings):
         return self._split_unique_csv(self.trusted_gateway_networks)
 
     @property
+    def runtime_monitor_query_users_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.runtime_monitor_query_users))
+
+    @property
     def company_oidc_scopes_list(self) -> List[str]:
         return self._split_unique_csv(self.company_oidc_scopes.replace(" ", ","))
 
@@ -741,6 +745,14 @@ class Settings(BaseSettings):
         description=(
             "Consecutive-failure streak resets after this quiet window, "
             "returning the cooldown to the base duration"
+        ),
+    )
+    runtime_monitor_query_users: str = Field(
+        default="",
+        description=(
+            "CSV of user ids/usernames allowed to query runtime anomalies "
+            "from interactive (non-scheduled-task) sessions; empty disables "
+            "the interactive path entirely"
         ),
     )
 

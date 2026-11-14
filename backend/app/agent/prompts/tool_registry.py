@@ -394,6 +394,8 @@ ASSISTANT_TOOL_NAMES = [
     "manage_assistant_runs",
     "session_search",
     "ask_user_question",
+    # 运维质询：仅白名单用户可成功调用（工具内运行时校验）
+    "query_runtime_anomalies",
 ]
 
 # ===== 生态环境执法备考模式（微信专业场景） =====
