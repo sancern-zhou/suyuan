@@ -171,3 +171,17 @@
 | PANs 柱前压站点自设 | 184 | 全部带备注降级人工复核（设计内行为），待业务确认站点设定值口径后可收敛 |
 | HONO 周检校正未备注 | 24 | 真实（南沙科大等） |
 | HP_DalyHealth 范围越界 | 10 | 真实数值错误/校准事件（部分带备注转人工） |
+
+---
+
+# 归属裁定（2026-11-14，经确认）
+
+- 组分站档案子系统（`backend/app/services/ops_audit/configs/sup_form_profiles.yaml`、
+  `rules/sup_form_rules.py`、`rules/sup_attachment_rules.py` 组分站部分及配套测试
+  `test_sup_form_rules.py` / `test_sup_attachment_rules.py` / `test_ops_audit_config_yaml_integrity.py` /
+  `test_ops_audit_profile_synthetic_recall.py`）**归 `project/guangdong` 存量演化，不作共享层更新**。
+  背景：上述文件在 `origin/main` 上不存在（与 AGENTS.md 存量归属备注中 station_operation_monitor
+  同类情形），本次曾尝试按共享路径先提 main，已确认并回退。
+- 后续该子系统的改动继续提交 `project/guangdong`；若未来要做"拆分回 main"，需先盘点 main 侧
+  `backend/app/services/ops_audit/` 布局差异（参考 a5a63db9 auth 拆分先例），另行立项。
+- 仓库根 `docs/例行工单审核规则说明.md` 保持**不入库**（本地参考文档）。
