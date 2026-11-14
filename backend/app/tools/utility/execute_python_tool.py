@@ -65,6 +65,23 @@ _EXECUTION_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = w
 _MAX_CAPTURE_BYTES = 256 * 1024
 
 
+def _python_success_summary(output: str, stdout_bytes: int) -> "tuple[str, str]":
+    """成功结果的 (summary, stdout 别名)。
+
+    stdout 内容回填进 summary，避免模型只见"执行完成"却找不到输出在哪里，
+    被迫反复重跑打印充当探针；别名上限 2000 字符，完整输出仍在 data.output。
+    """
+    alias = output[:2000] if output else ""
+    if alias:
+        summary = (
+            f"✅ 执行成功（exit=0），stdout {stdout_bytes} 字符，"
+            f"完整输出在 data.output：{alias[:200]}"
+        )
+    else:
+        summary = "✅ 执行成功（exit=0），无 stdout 输出"
+    return summary, alias
+
+
 def _execution_lock_for(context) -> Optional[asyncio.Lock]:
     """Serialize executions sharing a session's writable artifact namespace."""
     if context is None:
@@ -1021,12 +1038,15 @@ class ExecutePythonTool(LLMTool):
                     "summary": error_info["summary"]
                 }
 
+            summary, stdout_alias = _python_success_summary(output, stdout_bytes)
+
             return {
                 "status": "success",
                 "success": True,
+                "stdout": stdout_alias,
                 "data": {"output": output, "declared_data_file_paths": declared_data_paths,
                          "execution": diagnostics},
-                "summary": "✅ 工具已执行完成，计算任务已完成",
+                "summary": summary,
                 **({"data_shapes": data_shapes} if data_shapes else {}),
             }
 
