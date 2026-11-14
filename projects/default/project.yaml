@@ -20,4 +20,5 @@ backend:
   tools: []
 knowledge:
   collections: []
-scheduled_tasks: []
+scheduled_tasks:
+  - task_runtime_monitor
