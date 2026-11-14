@@ -79,7 +79,7 @@ services:
       APP_ROLE: worker
       SOCIAL_WORKER_INTERNAL_PORT: "8011"
     ports:
-      - "18011:8011"
+      - "127.0.0.1:18011:8011"
     volumes:
       - ../..:/srv/suyuan
     depends_on:
