@@ -11,6 +11,10 @@ import asyncio
 import structlog
 
 from app.fetchers.base.run_log import record_fetcher_run
+from app.monitoring.anomaly_emitter import (
+    emit_fetcher_failure,
+    reset_fetcher_streak,
+)
 
 logger = structlog.get_logger()
 
@@ -118,6 +122,8 @@ class DataFetcher(ABC):
                 finished_at=datetime.now(),
                 status="success",
             )
+            # Fast Path：成功清零连续失败计数（发射器内部静默降级）。
+            await reset_fetcher_streak(self.name)
             logger.info("fetcher_completed", fetcher=self.name)
         except Exception as e:
             self.status = FetcherStatus.ERROR
@@ -128,6 +134,8 @@ class DataFetcher(ABC):
                 status="failed",
                 error=str(e),
             )
+            # Fast Path：连续失败达到阈值才发射异常事件（单次抖动不触发）。
+            await emit_fetcher_failure(self.name, str(e))
             logger.error(
                 "fetcher_failed",
                 fetcher=self.name,
