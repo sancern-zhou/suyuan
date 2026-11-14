@@ -261,6 +261,19 @@ def check_range_columns(
                 continue
             min_value = spec_range.get("min")
             max_value = spec_range.get("max")
+        # any_of 多分支区间：文档红字常写"≤±1%FS 或 10ppm"这类二选一判据，
+        # 值落在任一分支内即合规，全部分支均越界才判违规。
+        any_of_raw = spec.get("any_of")
+        any_of_branches: list[tuple[Any, Any]] = []
+        if isinstance(any_of_raw, list):
+            for branch in any_of_raw:
+                if not isinstance(branch, dict):
+                    continue
+                b_min = branch.get("min")
+                b_max = branch.get("max")
+                if b_min is None and b_max is None:
+                    continue
+                any_of_branches.append((b_min, b_max))
         expression = str(spec.get("expression") or "")
         if expression:
             # 计算型范围：对表达式结果判区间（如 示值误差=校准前读数-标准读数）；
@@ -281,7 +294,15 @@ def check_range_columns(
                 value = parse_form_number(raw)
         if value is None:
             continue
-        if min_value is not None and value < float(min_value):
+        if any_of_branches:
+            if any(
+                (b_min is None or value >= float(b_min)) and (b_max is None or value <= float(b_max))
+                for b_min, b_max in any_of_branches
+            ):
+                continue
+            min_value = any_of_branches[0][0]
+            max_value = any_of_branches[0][1]
+        elif min_value is not None and value < float(min_value):
             pass
         elif max_value is not None and value > float(max_value):
             pass

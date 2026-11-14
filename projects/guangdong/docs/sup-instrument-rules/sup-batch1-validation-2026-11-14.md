@@ -185,3 +185,41 @@
 - 后续该子系统的改动继续提交 `project/guangdong`；若未来要做"拆分回 main"，需先盘点 main 侧
   `backend/app/services/ops_audit/` 布局差异（参考 a5a63db9 auth 拆分先例），另行立项。
 - 仓库根 `docs/例行工单审核规则说明.md` 保持**不入库**（本地参考文档）。
+
+---
+
+# 持续监控：命中率周报看板（2026-11-15 新增）
+
+## 工具
+
+`backend/app/utils/sup_audit_weekly_board.py`——扫描审计产物，按 (规则, 表单类型) 聚合命中量、
+涉及工单、该 tag 命中率、站点集中度，并按噪音军规自动标记：
+
+| 标记 | 口径 | 处置建议 |
+|---|---|---|
+| `CONCENTRATED` | 单站占该规则命中 ≥60% | 检查是否站点口径差异（MARGA/EquipmentStatus 先例），考虑站点/品牌分档 |
+| `HIGH_RATE` | 该 tag 工单命中率 ≥50% | 近 100% = 判定口径错误，按军规 #8 复核（参考及时性宽限修正先例） |
+| `HIGH_VOLUME` | 命中 ≥200 条 | 抽检确认真实性；`SUP_ATTACHMENT_REQUIRED_MISSING`/`FORM_DATA_MISSING` 为已知文档硬要求，白名单豁免 |
+| `CHECK_NORMALIZATION` | ITEM_MATCH ≥20 条 | 核查归一化/跨仪器附件错挂（2026-11-14 斜杠 bug 的守门钩子） |
+
+已内置**跨窗口去重**（按 工单+规则+表单+消息唯一化），聚合多份重叠窗口产物不会重复计数
+（实测 21 份产物去重后 35337→12408 单）。
+
+## 用法
+
+```bash
+cd backend
+# 单份产物
+python app/utils/sup_audit_weekly_board.py --audit-result <.../deterministic_audit.json>
+# 聚合目录下全部窗口（定时任务产物按 executions/<run>/ops_audit 组织时用 glob 适配）
+python app/utils/sup_audit_weekly_board.py --runs-dir <runs目录> --html board.html
+```
+
+输出终端表格 + 可选 HTML 看板（红底行=需复核，标记徽章按类型着色）。
+每周定时任务跑完后执行一次即可完成"降噪音、提可靠性"的持续闭环。
+
+## 首份看板结论（修复后 8 周窗口，2413 单 / 871 条）
+
+- 无 `CHECK_NORMALIZATION` 告警（鸿沟修复生效），ITEM_MATCH 从 21 降至 3 条且均为真实跨仪器错挂；
+- 高量命中集中在周质控缺 Excel（`SUP_ATTACHMENT_REQUIRED_MISSING`，属业务确认单 A3 待确认项）；
+- `CONCENTRATED` 告警集中在紫马岭/博罗石下等单站（URG 柱压、OCEC 必填），已列入业务确认 A2/B7。

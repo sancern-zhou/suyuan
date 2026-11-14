@@ -1289,3 +1289,39 @@ def test_response_time_duration_range_uses_value_type():
     issues = _run_tag("Sup_RF_NH3ResponseTimeInspection", "SUP_RF_NH3RESPONSETIMEINSPECTION",
                       {"responsetimet90": "147ppb", "remark1": ""})
     assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_range_any_of_branch_passes_when_any_branch_matches():
+    """any_of 多分支区间：值落在任一分支内即合规（文档"≤±1%FS 或 10ppm"口径）。"""
+
+    from app.services.ops_audit.rules.sup_form_rules import check_range_columns
+
+    profile = {
+        "range_columns": [
+            {
+                "column": "drift",
+                "label": "零点漂移",
+                "any_of": [
+                    {"min": -10, "max": 10},
+                    {"min": -0.1, "max": 0.1},
+                ],
+                "confirmed": False,
+            }
+        ]
+    }
+    # 落在第一分支（±10）内 → 合规
+    issues: list[Issue] = []
+    check_range_columns({"WORKINGORDERCODE": "CH_A"}, "SUP_RF_SYNTH", "T",
+                        {"drift": "8"}, profile, issues)
+    assert issues == []
+    # 落在第二分支（±0.1）内 → 合规
+    issues = []
+    check_range_columns({"WORKINGORDERCODE": "CH_A"}, "SUP_RF_SYNTH", "T",
+                        {"drift": "0.05"}, profile, issues)
+    assert issues == []
+    # 两个分支都越界 → 命中
+    issues = []
+    check_range_columns({"WORKINGORDERCODE": "CH_A"}, "SUP_RF_SYNTH", "T",
+                        {"drift": "50"}, profile, issues)
+    assert len(issues) == 1
+    assert issues[0].rule_id == RANGE_RULE_ID

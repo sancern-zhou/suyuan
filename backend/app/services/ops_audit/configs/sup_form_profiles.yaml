@@ -13,7 +13,8 @@
 #   文档红字明确且列语义已验证的可置 true；
 # - enabled: false 可按类型停用全部规则；
 # - range_columns 支持 expression+inputs（计算型区间，如 温度示值误差=读数-标准值）、
-#   value_type: duration_seconds（时长文本统一换算秒，如 NH3 响应时间 T90）；
+#   value_type: duration_seconds（时长文本统一换算秒，如 NH3 响应时间 T90）、
+#   any_of（多分支区间："≤±1%FS 或 10ppm" 类判据，任一分支内即合规）；
 # - formula_columns 支持 skip_if_inputs_zero（0 填充占位行跳过复算）；
 # - date_columns 的 single_date_rule 支持 not_future / not_past / max_age_days；
 # - abnormal_columns 声明异常取值（SUP_ABNORMAL_NO_REMARK：命中且无备注即问题）；
@@ -1869,8 +1870,14 @@ form_profiles:
 
   # NH3 半年巡查：红字"填写参数需在范围内，否则需备注"，逐参数 *abnormalr
   # 列经数据证实为对应参数备注列（站点自设值自动降级）。ectcheckvalue（外部
-  # 转换器 725-775）越界 14.3% 且有站点自设先例 → 不落待业务确认；零跨漂移
-  # 数据全空+双阈值二选一需新机制 → 不落。
+  # 转换器 725-775）越界 14.3% 且有站点自设先例 → 不落待业务确认。
+  # 零/跨度漂移（zpcdrift/scdrift）文档判据"≤±1%FS 或 5ppb / ≤±2%FS 或 10ppb"
+  # 的双阈值二选一已由引擎 any_of 支持（2026-11-14），但该表两类漂移列
+  # 14/14 行全为空字符串，无数据可判 → 待表单落库补录后按如下范式补配：
+  #   - column: zpcdrift
+  #     label: 零点漂移
+  #     any_of: [{min: -1, max: 1}, {min: -5, max: 5}]   # ±1%FS 或 ±5ppb
+  #     remark_column: [zpcabnormalr, otherremarks]
   Sup_RF_NH3AnalyzerInspection_HalfYear:
     display_name: NH3 分析仪半年巡检记录
     category: halfyear_check
@@ -2144,7 +2151,8 @@ form_profiles:
 
   # CO2 分析仪半年巡查：红字 7 参数区间（半年表偏置电压 -120~-100，与周表
   # -130~-100 按表分别取值）。电机转速（100/100.02/100.03，37.5% 越界）与
-  # 7 项勾选（0/1 方向存疑）不落；漂移判据列数据未填报无法落地。
+  # 7 项勾选（0/1 方向存疑）不落；零点/跨度漂移（zpcdrift/spandrift）
+  # 8/8 行全为空，any_of 双分支判据待数据补录后配置（范式同 NH3 半年档）。
   Sup_RF_Co2Analyzerinspection_HalfYear:
     display_name: CO2 分析仪半年巡查记录
     category: halfyear_check
