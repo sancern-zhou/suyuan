@@ -12,9 +12,10 @@
 # - confirmed: false 表示阈值/列语义来自数据推断与案例反推，待业务确认后置 true；
 #   文档红字明确且列语义已验证的可置 true；
 # - enabled: false 可按类型停用全部规则；
-# - range_columns 支持 expression+inputs（计算型区间，如 温度示值误差=读数-标准值）；
+# - range_columns 支持 expression+inputs（计算型区间，如 温度示值误差=读数-标准值）、
+#   value_type: duration_seconds（时长文本统一换算秒，如 NH3 响应时间 T90）；
 # - formula_columns 支持 skip_if_inputs_zero（0 填充占位行跳过复算）；
-# - date_columns 的 single_date_rule 支持 not_future / not_past；
+# - date_columns 的 single_date_rule 支持 not_future / not_past / max_age_days；
 # - abnormal_columns 声明异常取值（SUP_ABNORMAL_NO_REMARK：命中且无备注即问题）；
 # - attachments.class 取值：report（报告/证明文档）、data_file（质控数据文件）；
 # - 命中率口径：近 90 天本地库，附件要求的类型命中率 <5% 才纳入（避免把行业
@@ -334,16 +335,29 @@ form_profiles:
     category: week_qc
     cycle: week
     max_fill_lag_days: 7
-    # 两个通道标线相关系数（列语义由近 90 天样本推断，待业务确认）；
-    # 阈值 >0.995 来自《HONO》文档周质控注意栏。
+    # 行结构经数据核实（266 行填满行）：每通道行 9 列，尾三列=斜率K/R²/合格
+    #（string27/28/29=ch1-550，37/38/39=ch1-600，47/48/49=ch2-550，57/58/59=
+    # ch2-600）；既有 string28/string38 实为 ch1 的 550/600 两行，label 已更正，
+    # 补 ch2 两行（string48 <0.995 仅 1 条 0.43%、string58 3 条 1.3%）。阈值
+    # >0.995 来自《HONO》文档周质控注意栏。
     range_columns:
       - column: string28
-        label: 通道 1 标线相关系数R2
+        label: 通道1标线R2(ch1-550)
         min: 0.995
         max: 1
         confirmed: false
       - column: string38
-        label: 通道 2 标线相关系数R2
+        label: 通道1标线R2(ch1-600)
+        min: 0.995
+        max: 1
+        confirmed: false
+      - column: string48
+        label: 通道2标线R2(ch2-550)
+        min: 0.995
+        max: 1
+        confirmed: false
+      - column: string58
+        label: 通道2标线R2(ch2-600)
         min: 0.995
         max: 1
         confirmed: false
@@ -356,15 +370,76 @@ form_profiles:
     cycle: week
     max_fill_lag_days: 7
     # 案例实证：东莞东城甲醛标准溶液有效期应一个月内（配制日+30 天），
-    # 有效区间按 30/31 天档位判定。
+    # 有效区间按 30/31 天档位判定。2026-11-14 数据复核：time1/time2 440/443
+    # 行为同日（维护起止时间），"吸收液有效期对"标签存疑，同日跳过保护下
+    # 规则近惰性；语义待业务确认（决策项，保留不删）。
     date_columns:
       - start: time1
         end: time2
-        label: 吸收液/标准溶液配制与有效期
+        label: 维护起止时间（原标注吸收液有效期，语义待业务确认）
         valid_intervals_days: [30, 31]
         interval_tolerance_days: 3
         must_cover_checkdate: true
         confirmed: false
+    # string50 循环水浴温度不落数值区间：3407B（Etraninc）自 2026-08 起该列
+    # 全部填 "7"（<20 的值均该站，配 string51="1.86ppb" 疑填标液浓度/水位档），
+    # 列语义站点级双义，配 20~30℃ 区间=每周重复误报，宁缺勿噪（决策项）。
+    # 勾选方向双证：bool 列 1 占比 93%+（1=正常）；0 值行备注实证"仪器返厂
+    # 维修/更换废液蠕动泵管/9日更换试剂"，0=异常/未确认。bool_30 排废（无备注
+    # 0 达 19.1%）与 bool_1~5/48~50（全 0 未使用）不配。
+    range_columns:
+      - column: string51
+        label: 零气钢瓶现有压力
+        min: 0.5
+        unit: bar
+        remark_column: [remark9, remark49, remark50]
+        confirmed: false
+    # string52"设备校正系数R2"区间在真实工单验证中撤下（2026-11-14 噪音治理）：
+    # 东城站将该列填标液浓度"0.0200 mg/L"（解析 0.02 <0.995 即越界），8 周窗口
+    # 8 条误报——列语义站点级双义（与 string50 同款问题），该项已由 bool_11
+    # 勾选异常承载，数值区间不再配置。
+    abnormal_columns:
+      - {column: bool_6,  label: 分析仪主机运行观测, values: ["0"], remark_column: [remark6, remark49, remark50]}
+      - {column: bool_7,  label: 循环水浴(25℃/水位>2/3), values: ["0"], remark_column: [remark7, remark49, remark50]}
+      - {column: bool_8,  label: 取气盒固定与接头连接, values: ["0"], remark_column: [remark8, remark49, remark50]}
+      - {column: bool_9,  label: 零气钢瓶压力(>0.5bar), values: ["0"], remark_column: [remark9, remark49, remark50]}
+      - {column: bool_10, label: 零点校正执行(<24小时), values: ["0"], remark_column: [remark10, remark49, remark50]}
+      - {column: bool_11, label: 设备校正(R2>0.995), values: ["0"], remark_column: [remark11, remark49, remark50]}
+      - {column: bool_12, label: 数据状态(仪器显示/数采), values: ["0"], remark_column: [remark12, remark49, remark50]}
+      - {column: bool_13, label: 显示屏运行/设备控制, values: ["0"], remark_column: [remark13, remark49, remark50]}
+      - {column: bool_14, label: 蠕动泵基本状态, values: ["0"], remark_column: [remark14, remark49, remark50]}
+      - {column: bool_15, label: 蠕动泵转速匹配, values: ["0"], remark_column: [remark15, remark49, remark50]}
+      - {column: bool_16, label: 泵管是否需要更换, values: ["0"], remark_column: [remark16, remark49, remark50]}
+      - {column: bool_17, label: 泵管卡子松紧度, values: ["0"], remark_column: [remark17, remark49, remark50]}
+      - {column: bool_18, label: 通道R1-1in无气泡, values: ["0"], remark_column: [remark18, remark49, remark50]}
+      - {column: bool_19, label: 通道R1-2in无气泡, values: ["0"], remark_column: [remark19, remark49, remark50]}
+      - {column: bool_20, label: 通道R2-1无气泡, values: ["0"], remark_column: [remark20, remark49, remark50]}
+      - {column: bool_21, label: 通道R2-2无气泡, values: ["0"], remark_column: [remark21, remark49, remark50]}
+      - {column: bool_22, label: 通道R1-1out无气泡, values: ["0"], remark_column: [remark22, remark49, remark50]}
+      - {column: bool_23, label: 通道R1-2out无气泡, values: ["0"], remark_column: [remark23, remark49, remark50]}
+      - {column: bool_24, label: 通道ABS-1无气泡, values: ["0"], remark_column: [remark24, remark49, remark50]}
+      - {column: bool_25, label: 通道ABS-2无气泡, values: ["0"], remark_column: [remark25, remark49, remark50]}
+      - {column: bool_26, label: 通道W1间隔气泡, values: ["0"], remark_column: [remark26, remark49, remark50]}
+      - {column: bool_27, label: 通道W2间隔气泡, values: ["0"], remark_column: [remark27, remark49, remark50]}
+      - {column: bool_28, label: 中和液in无气泡, values: ["0"], remark_column: [remark28, remark49, remark50]}
+      - {column: bool_29, label: 中和液out间隔气泡, values: ["0"], remark_column: [remark29, remark49, remark50]}
+      - {column: bool_31, label: 废液管出口间隔气泡, values: ["0"], remark_column: [remark31, remark49, remark50]}
+      - {column: bool_32, label: ch1积分时间(<80), values: ["0"], remark_column: [remark32, remark49, remark50]}
+      - {column: bool_33, label: ch2积分时间(<80), values: ["0"], remark_column: [remark33, remark49, remark50]}
+      - {column: bool_34, label: 光谱1-550nm强度(>3500), values: ["0"], remark_column: [remark34, remark49, remark50]}
+      - {column: bool_35, label: 光谱2-550nm强度(>3500), values: ["0"], remark_column: [remark35, remark49, remark50]}
+      - {column: bool_36, label: 吸光度1(<2), values: ["0"], remark_column: [remark36, remark49, remark50]}
+      - {column: bool_37, label: 吸光度2(<2), values: ["0"], remark_column: [remark37, remark49, remark50]}
+      - {column: bool_38, label: 内部液路管紧固/漏液, values: ["0"], remark_column: [remark38, remark49, remark50]}
+      - {column: bool_39, label: 空气泵运转无异响, values: ["0"], remark_column: [remark39, remark49, remark50]}
+      - {column: bool_40, label: 安全瓶无进液, values: ["0"], remark_column: [remark40, remark49, remark50]}
+      - {column: bool_41, label: 光纤无折损/接头无松动, values: ["0"], remark_column: [remark41, remark49, remark50]}
+      - {column: bool_42, label: 空气过滤膜检查, values: ["0"], remark_column: [remark42, remark49, remark50]}
+      - {column: bool_43, label: 光源LED正常光照, values: ["0"], remark_column: [remark43, remark49, remark50]}
+      - {column: bool_44, label: 试剂袋无泄漏, values: ["0"], remark_column: [remark44, remark49, remark50]}
+      - {column: bool_45, label: R2避光保护, values: ["0"], remark_column: [remark45, remark49, remark50]}
+      - {column: bool_46, label: 试剂剩余量充足(>2/5), values: ["0"], remark_column: [remark46, remark49, remark50]}
+      - {column: bool_47, label: 废液桶液位(<2/3), values: ["0"], remark_column: [remark47, remark49, remark50]}
 
   Sup_RF_OCECJGWeekCheck:
     display_name: OCEC 有机碳/元素碳分析仪周巡检记录（升温程序）
@@ -514,17 +589,22 @@ form_profiles:
     cycle: week
     max_fill_lag_days: 7
 
+  # 2026-11-14 迁移停用：现行浊度仪数据全部落在 sup_rf_turbidimeter 分表的
+  # Sup_RF_Turbidimeter_Week/Month/Quarter/HalfYear（见文件尾部新档），本表
+  # 两个旧 tag 自 2022-03 后无数据，档案保留但停用（历史审计可解释性）。
   Sup_RF_TurbidiMeterRoutineCheck:
     display_name: 浊度仪例行检查记录
     category: week_check
     cycle: week
     max_fill_lag_days: 7
+    enabled: false
 
   Sup_RF_TurbidiMeterCalibration:
     display_name: 浊度仪校准记录
     category: month_check
     cycle: month
     max_fill_lag_days: 10
+    enabled: false
 
   Sup_RF_OCECSamplingFlowCheck:
     display_name: OCEC 采样流量检查记录
@@ -664,20 +744,6 @@ form_profiles:
         must_cover_checkdate: true
         confirmed: true
 
-  # PM1 月巡查校准膜误差（sup_rf_pm1monitorinspection 分表）；阈值 ±5% 来自《PM1》文档。
-  Sup_RF_PM1MonitorInspection_Month:
-    display_name: PM1 监测仪月巡查记录（含校准膜核查）
-    category: month_check
-    cycle: month
-    max_fill_lag_days: 10
-    range_columns:
-      - column: merror
-        label: 校准膜测定误差
-        min: -5
-        max: 5
-        unit: "%"
-        confirmed: true
-
   # PANs 重复性年度核查（RSD≤3%，来自《PANs》文档红字；列语义按样本推断）。
   Sup_RF_PANsRepeatabilityCheck:
     display_name: PANs 重复性年度核查记录
@@ -809,6 +875,10 @@ form_profiles:
     category: day_check
     cycle: day
     max_fill_lag_days: 2
+    # 2026-11-14 全年验证口径修正：日检表单以隔日批量补录为常态（东澳岛等
+    # 7 站建单晚于计划 8~13 天，全年 191/202=94% 命中=口径性噪音），档案级
+    # 宽限放宽到 10 天，>10 天的长期漏补仍命中。
+    plan_late_grace_days: 10
     range_columns:
       - column: string1
         label: 加热盒温度
@@ -1052,6 +1122,9 @@ form_profiles:
     category: month_check
     cycle: month
     max_fill_lag_days: 10
+    # 2026-11-14 全年验证口径修正：周节奏建单晚于计划 6~8 天为常态（全年
+    # 14/14=100% 命中），档案级宽限放宽到 10 天。
+    plan_late_grace_days: 10
   Sup_RF_Week_YT_Check:
     display_name: 优泰甲烷/非甲烷周检查记录
     category: week_check
@@ -1075,11 +1148,120 @@ form_profiles:
     category: month_check
     cycle: month
     max_fill_lag_days: 10
+    # 方向双证：1 占比 87~94%（1=正常）；0 行备注实证"更换吸收液R1电磁泵/
+    # 仪器寄回厂家维修"。bool_24(R2避光)/bool_28(剩余量) 呈 86/13 反向分布
+    #（方向矛盾）不配；bool_27 命中 5/99=5.05% 贴线不配（决策项）；bool_29~50
+    # 全 0 未使用。
+    abnormal_columns:
+      - {column: bool_1,  label: 室外取气盒固定牢固, values: ["0"], remark_column: [remark1, remark49, remark50]}
+      - {column: bool_2,  label: 循环水浴器温控及水位, values: ["0"], remark_column: [remark2, remark49, remark50]}
+      - {column: bool_3,  label: 取气盒循环水运行, values: ["0"], remark_column: [remark3, remark49, remark50]}
+      - {column: bool_4,  label: 取气盒管路连接, values: ["0"], remark_column: [remark4, remark49, remark50]}
+      - {column: bool_5,  label: 主机前面板显示控制, values: ["0"], remark_column: [remark5, remark49, remark50]}
+      - {column: bool_6,  label: 蠕动泵泵管堵塞/接头松紧, values: ["0"], remark_column: [remark6, remark49, remark50]}
+      - {column: bool_7,  label: 泵头转速正常, values: ["0"], remark_column: [remark7, remark49, remark50]}
+      - {column: bool_8,  label: 蠕动泵管是否需要更换, values: ["0"], remark_column: [remark8, remark49, remark50]}
+      - {column: bool_9,  label: 泵管卡子松紧度, values: ["0"], remark_column: [remark9, remark49, remark50]}
+      - {column: bool_10, label: 内部液路管松紧/漏液, values: ["0"], remark_column: [remark10, remark49, remark50]}
+      - {column: bool_11, label: 空气泵运转无异常声响, values: ["0"], remark_column: [remark11, remark49, remark50]}
+      - {column: bool_12, label: 安全瓶无进液, values: ["0"], remark_column: [remark12, remark49, remark50]}
+      - {column: bool_13, label: 光纤无折损/接头无松动, values: ["0"], remark_column: [remark13, remark49, remark50]}
+      - {column: bool_14, label: 光源LED正常光照, values: ["0"], remark_column: [remark14, remark49, remark50]}
+      - {column: bool_15, label: 光谱蓝色线达预计值, values: ["0"], remark_column: [remark15, remark49, remark50]}
+      - {column: bool_16, label: 光谱红色线达预计值, values: ["0"], remark_column: [remark16, remark49, remark50]}
+      - {column: bool_17, label: 吸光度强度无异常峰, values: ["0"], remark_column: [remark17, remark49, remark50]}
+      - {column: bool_18, label: 吸光度强度在合理范围, values: ["0"], remark_column: [remark18, remark49, remark50]}
+      - {column: bool_19, label: 测量数据无异常, values: ["0"], remark_column: [remark19, remark49, remark50]}
+      - {column: bool_20, label: 测量数据无偏离, values: ["0"], remark_column: [remark20, remark49, remark50]}
+      - {column: bool_21, label: 无异常数据, values: ["0"], remark_column: [remark21, remark49, remark50]}
+      - {column: bool_22, label: 数据正常存入对应文件夹, values: ["0"], remark_column: [remark22, remark49, remark50]}
+      - {column: bool_23, label: 试剂袋无泄漏, values: ["0"], remark_column: [remark23, remark49, remark50]}
+      - {column: bool_25, label: 试剂外表无破损, values: ["0"], remark_column: [remark25, remark49, remark50]}
+      - {column: bool_26, label: 试剂未过期, values: ["0"], remark_column: [remark26, remark49, remark50]}
+
   Sup_RF_Month_HONOTest:
     display_name: HONO 月测试记录
     category: month_check
     cycle: month
     max_fill_lag_days: 10
+    # 列位经数据解码：string1=零点噪音(ch1)、string2=检出限-浓度(=噪音×2)、
+    # string3=检出限-ppt(=噪音×2000)、string4=是否合格(是/合格，无"否"正样本
+    # 不配 abnormal)。列位由数值关系链 2×/×1000 全样本拟合证实；string1=0 占位
+    # 行 36/74 由 skip_if_inputs_zero 跳过；公式抽检命中为真实算术错填（忘×2、
+    # 10 倍量级），range 检出限 ≥2ppt 全年 1 行真实超限（红字"检出限≤2ppt"）。
+    formula_columns:
+      - target: string2
+        expression: "{string1}*2"
+        inputs: [string1]
+        label: 检出限=零点噪音×2
+        tolerance: 0.01
+        tolerance_mode: relative
+        skip_if_inputs_zero: true
+        confirmed: false
+      - target: string3
+        expression: "{string2}*1000"
+        inputs: [string2]
+        label: 检出限换算ppt（浓度×1000）
+        tolerance: 0.01
+        tolerance_mode: relative
+        skip_if_inputs_zero: true
+        confirmed: false
+    range_columns:
+      - column: string3
+        label: 检出限
+        min: 0
+        max: 2
+        unit: ppt
+        remark_column: [remark49, remark50]
+        confirmed: false
+
+  # 半年巡检（LOPAP）：勾选与月检同题（映射文档 L1432-1460 bool_1~29）。
+  # 方向双证：7/10 行全 1；3 行全 0 的备注实证"工单误建作废/仪器返厂维修/
+  # 电路板故障寄回厂家"（0=异常），配对备注豁免后历史命中 0（保护型）。
+  # bool_24(R2避光)/bool_28(剩余量) 10/10 全 0 无区分度不配；bool_29 空气过滤膜
+  # 为半年表独有项。近 120 天 0 行，规则为历史回溯+复用预留。
+  Sup_RF_HalfYear_HONOCheck:
+    display_name: HONO 分析仪半年巡检记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+    abnormal_columns: &sup_hono_halfyear_abnormal
+      - {column: bool_1,  label: 室外取气盒固定牢固, values: ["0"], remark_column: [remark1, remark49, remark50]}
+      - {column: bool_2,  label: 循环水浴器温控及水位, values: ["0"], remark_column: [remark2, remark49, remark50]}
+      - {column: bool_3,  label: 取气盒循环水运行, values: ["0"], remark_column: [remark3, remark49, remark50]}
+      - {column: bool_4,  label: 取气盒管路连接, values: ["0"], remark_column: [remark4, remark49, remark50]}
+      - {column: bool_5,  label: 主机前面板显示控制, values: ["0"], remark_column: [remark5, remark49, remark50]}
+      - {column: bool_6,  label: 蠕动泵泵管堵塞/接头松紧, values: ["0"], remark_column: [remark6, remark49, remark50]}
+      - {column: bool_7,  label: 泵头转速正常, values: ["0"], remark_column: [remark7, remark49, remark50]}
+      - {column: bool_8,  label: 蠕动泵管是否需要更换, values: ["0"], remark_column: [remark8, remark49, remark50]}
+      - {column: bool_9,  label: 泵管卡子松紧度, values: ["0"], remark_column: [remark9, remark49, remark50]}
+      - {column: bool_10, label: 内部液路管松紧/漏液, values: ["0"], remark_column: [remark10, remark49, remark50]}
+      - {column: bool_11, label: 空气泵运转无异常声响, values: ["0"], remark_column: [remark11, remark49, remark50]}
+      - {column: bool_12, label: 安全瓶无进液, values: ["0"], remark_column: [remark12, remark49, remark50]}
+      - {column: bool_13, label: 光纤无折损/接头无松动, values: ["0"], remark_column: [remark13, remark49, remark50]}
+      - {column: bool_14, label: 光源LED正常光照, values: ["0"], remark_column: [remark14, remark49, remark50]}
+      - {column: bool_15, label: 光谱蓝色线达预计值, values: ["0"], remark_column: [remark15, remark49, remark50]}
+      - {column: bool_16, label: 光谱红色线达预计值, values: ["0"], remark_column: [remark16, remark49, remark50]}
+      - {column: bool_17, label: 吸光度强度无异常峰, values: ["0"], remark_column: [remark17, remark49, remark50]}
+      - {column: bool_18, label: 吸光度强度在合理范围, values: ["0"], remark_column: [remark18, remark49, remark50]}
+      - {column: bool_19, label: 测量数据无异常, values: ["0"], remark_column: [remark19, remark49, remark50]}
+      - {column: bool_20, label: 测量数据无偏离, values: ["0"], remark_column: [remark20, remark49, remark50]}
+      - {column: bool_21, label: 无异常数据, values: ["0"], remark_column: [remark21, remark49, remark50]}
+      - {column: bool_22, label: 数据正常存入对应文件夹, values: ["0"], remark_column: [remark22, remark49, remark50]}
+      - {column: bool_23, label: 试剂袋无泄漏, values: ["0"], remark_column: [remark23, remark49, remark50]}
+      - {column: bool_25, label: 试剂外表无破损, values: ["0"], remark_column: [remark25, remark49, remark50]}
+      - {column: bool_26, label: 试剂未过期, values: ["0"], remark_column: [remark26, remark49, remark50]}
+      - {column: bool_29, label: 空气过滤膜检查, values: ["0"], remark_column: [remark29, remark49, remark50]}
+
+  # 年巡检（映射文档 L7163 起，内容与半年一致）：在库 4 行（2025-03~2025-12），
+  # 锚点复用半年勾选组；及时性按年周期 60 天。
+  Sup_RF_Year_HONOCheck:
+    display_name: HONO 分析仪年巡检记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+    abnormal_columns: *sup_hono_halfyear_abnormal
+
   Sup_RF_PTR_MSQuality:
     display_name: PTR-MS 质控核查记录
     category: week_check
@@ -1283,6 +1465,9 @@ form_profiles:
     category: week_check
     cycle: week
     max_fill_lag_days: 7
+    # 2026-11-14 全年验证口径修正：建单晚于计划 6~10 天为周节奏常态（全年
+    # 11 命中多为 6~10 天），档案级宽限放宽到 10 天；17 天档真实滞后仍命中。
+    plan_late_grace_days: 10
     abnormal_columns:
       - column: dtisitcalibrated
         label: 数据传输
@@ -1299,8 +1484,9 @@ form_profiles:
 
   # 月巡查：校准膜测定误差 ±5%（文档红字）+ 清洗部件/漏气检查。
   # merror 全量 610 行 0 越界，确认阈值口径正确。
+  # 2026-11-14 合并早期建档的同名重复档案（两份规则等价，保留此份）。
   Sup_RF_PM1MonitorInspection_Month:
-    display_name: PM1 监测仪月巡查记录
+    display_name: PM1 监测仪月巡查记录（含校准膜核查）
     category: month_check
     cycle: month
     max_fill_lag_days: 10
@@ -1311,15 +1497,71 @@ form_profiles:
         max: 5
         unit: "%"
         confirmed: true
+    # 方向实证（2026-11-14，Month 624 行，Vue 头部映射 0=是/1=否 + 备注）：
+    # externalisitclean=1 行备注"清洗切割头/该设备暂时停运调试中/更换纸带"
+    #（1=否/需处理）；leakwhether 93% 为 1（1=否-不漏气=正常），0=是-漏气=异常。
+    # 命中率：aline 5(0.8%)、ext 31(4.97% 贴线)、sh 8(1.3%)、leak 28(4.5%)，
+    # 全部 <5% 红线。不配：insideisitclean 5.13%、idbwhether 8.0%、
+    # spwhether 22.6%（跨品牌极性无法实证）——贴线/超线决策项见验证报告。
+    abnormal_columns:
+      - column: alineisitcalibrated
+        label: 校准膜是否合格
+        values: ["1"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
+      - column: externalisitclean
+        label: 清洗部件-外部清洁
+        values: ["1"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
+      - column: shwhether
+        label: 采样头及切割头检查
+        values: ["1"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
+      - column: leakwhether
+        label: 是否漏气
+        values: ["0"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
 
   # 半年巡查：清洗部件同月巡检，无校准膜数值；文档红字同月检。
-  # 标志位方向：该变体 leakwhether 87% 为 1（1=不漏气/正常），
-  # externalisitclean/insideisitclean 90/92 为 0，方向与 Week 不同，
-  # 语义需业务确认后再落 abnormal 规则，本轮只建及时性口径。
+  # 方向实证（2026-11-14，92 行全量）：该变体与 Month 同码——external/inside
+  # isitclean 90/92% 为 0（0=是-已清洁=正常，与 Week 变体 Vue 映射"true=原表
+  # 0（是）"一致），leakwhether 95% 为 1（1=否-不漏气=正常），既有注释猜测
+  # 经全量分布+备注（停运/维修文本在 1 值行）落定。命中率 ext/ins 0、idb 3(3.3%)、
+  # sh 2(2.2%)、leak 2(2.2%)。不配：spwhether（极性存疑）、alineisitcalibrated
+  #（92/92 全 0 无区分度）。
   Sup_RF_PM1MonitorInspection_HalfYear:
     display_name: PM1 监测仪半年巡查记录
     category: half_year_check
     cycle: half_year
+    abnormal_columns:
+      - column: externalisitclean
+        label: 清洗部件-外部清洁
+        values: ["1"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
+      - column: insideisitclean
+        label: 清洗部件-内部清洁
+        values: ["1"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
+      - column: idbwhether
+        label: 压头和垫块检查
+        values: ["1"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
+      - column: shwhether
+        label: 采样头及切割头检查
+        values: ["1"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
+      - column: leakwhether
+        label: 是否漏气
+        values: ["0"]
+        remark_column: [otherremarks, faultdescription, maintenanceresults]
+        confirmed: false
     max_fill_lag_days: 30
 
   # ── 2026-11-09 收益摸底批次（按"数值列真实越界率"排序后的产出）─────────────
@@ -1382,6 +1624,54 @@ form_profiles:
         max: 47
         unit: ℃
         confirmed: true
+      # ── 2026-11-14 扩展（偏移电压/AGC/光室温度/斜率/零点跨度漂移）──────────
+      # 全量 141 行 devicebrand 均=TE（赛默飞）；brand_ranges 分档后其他品牌
+      # 未来落库自动跳过判定。越界率：string1 2.1%、string2 1.4%、string6 0.7%、
+      # string7 0.7%、ldpyppb 0%、kdpy 4.96%（3390B 站连续 2.75 属真实漂移超限），
+      # 均 <5% 红线，逐条证据见验证报告。
+      - column: string1
+        label: 偏移电压
+        unit: V
+        brand_ranges:
+          TE: {min: -130, max: -100}
+        remark_column: remark1
+        confirmed: true
+      - column: string2
+        label: AGC强度
+        unit: Hz
+        brand_ranges:
+          TE: {min: 150000, max: 300000}
+        remark_column: remark2
+        confirmed: true
+      - column: string6
+        label: 光室温度
+        min: 47
+        max: 51
+        unit: "℃"
+        remark_column: remark6
+        confirmed: true
+      - column: string7
+        label: 斜率(Slope)
+        min: 0.5
+        max: 2.0
+        remark_column: remark7
+        confirmed: true
+      # 零点漂移 ≤±1%F.S. 或 10ppm：双阈值机制不支持，只配 ppm 侧；本站满量程
+      # 全为 1000ppm，±1%F.S.=±10ppm 与 ppm 侧等价，无口径损失。
+      - column: ldpyppb
+        label: 零点漂移
+        min: -10
+        max: 10
+        unit: PPM
+        confirmed: true
+      # 跨度漂移 ≤±2%F.S. 或 20ppm：kdpy 列原始值带 % 后缀（%F.S. 口径），
+      # 满量程 1000ppm 下两分支数值等价，配 % 侧即可。
+      - column: kdpy
+        label: 跨度漂移
+        min: -2
+        max: 2
+        unit: "%F.S."
+        confirmed: true
 
   # 设备状态检查（sup_rf_equipmentstatus 分表，175 行 / 窗口 8 单）：
   # 同一题号在不同型号下含义不同（GAC 柱流量同款问题）：TiH200 的 string4/5
@@ -1399,11 +1689,14 @@ form_profiles:
         unit: ml/min
         brand_ranges:
           Etraninc: {min: 0.45, max: 0.55}
-      - column: string5
-        label: 蠕动泵2流量
-        unit: ml/min
-        brand_ranges:
-          Etraninc: {min: 0.22, max: 0.26}
+      # string5 蠕动泵2流量区间停用（2026-11-14 全年验证）：梅华站恒填 0.2、
+      # 莲花山站恒填 0.6（全年 35/35 命中，站点泵管口径与标称档不符），待业务
+      # 确认各站泵管规格后再按站点/型号细分档位。
+      # - column: string5
+      #   label: 蠕动泵2流量
+      #   unit: ml/min
+      #   brand_ranges:
+      #     Etraninc: {min: 0.22, max: 0.26}
 
   # URG 周维护（sup_rf_urgweekmaintain 分表，81 行 / 窗口 6 单，单一型号 URG9000D）：
   # 只落阳离子柱压（文档 1500~2500psi，实测 1519~1840 基本在位）。
@@ -1421,3 +1714,1698 @@ form_profiles:
         max: 2500
         unit: psi
         confirmed: true
+
+  # ══ 2026-11-14 截图规则批次 1 建档（sup_rf_% 专用分表 tag，全部经
+  #    "映射文档标签+数据分布"双证后落档；噪音控制八条军规见
+  #    projects/guangdong/docs/sup-screenshot-rules-implementation-plan.md；
+  #    依据与逐列证据见该方案配套验证报告）════════════════════════════════
+
+  # ── NH3 分析仪族（sup_rf_nh3* 分表）─────────────────────────────────────
+  # NH3 转化率测试：文档红框 NO2平均≥96%、NH3效率≥85%、与上次偏差±10%。
+  # NO2 转换效率公式经 37/37 行复算双证（35 行偏差≤0.72pp 属舍入级，2 个粗差为
+  # 整单 O3开/关列错位）；tolerance 取 3pp 使单规则命中率 ≤2.7%（5% 红线内）。
+  # NH3 效率公式与文档口径系统性不符（数据实填 Cc/Ct×100，差 100% 基线），不落。
+  Sup_RF_NH3ConversionRate:
+    display_name: NH3 分析仪转化率检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 31
+    formula_columns:
+      - target: zhxl1
+        expression: "(({remrow21}-{remrow11})-({origrow21}-{origrow11}))/({origrow11}-{remrow11})*100"
+        inputs: [remrow21, remrow11, origrow21, origrow11]
+        label: NO2 转换效率第 1 次
+        unit: "%"
+        tolerance: 3
+        tolerance_mode: absolute
+        confirmed: false
+      - target: zhxl2
+        expression: "(({remrow22}-{remrow12})-({origrow22}-{origrow12}))/({origrow12}-{remrow12})*100"
+        inputs: [remrow22, remrow12, origrow22, origrow12]
+        label: NO2 转换效率第 2 次
+        unit: "%"
+        tolerance: 3
+        tolerance_mode: absolute
+        confirmed: false
+      - target: zhxl3
+        expression: "(({remrow23}-{remrow13})-({origrow23}-{origrow13}))/({origrow13}-{remrow13})*100"
+        inputs: [remrow23, remrow13, origrow23, origrow13]
+        label: NO2 转换效率第 3 次
+        unit: "%"
+        tolerance: 3
+        tolerance_mode: absolute
+        confirmed: false
+    range_columns:
+      - column: bjzh
+        label: NO2 平均转换效率
+        min: 96
+        unit: "%"
+        confirmed: true
+      - column: nh3zhxl20
+        label: NH3 转化效率（20%浓度点）
+        min: 85
+        unit: "%"
+        confirmed: true
+      - column: nh3zhxl40
+        label: NH3 转化效率（40%浓度点）
+        min: 85
+        unit: "%"
+        confirmed: true
+      - column: nh3zhxl80
+        label: NH3 转化效率（80%浓度点）
+        min: 85
+        unit: "%"
+        confirmed: true
+      - column: ysczhxlpc20
+        label: 与上次转化效率偏差（20%浓度点）
+        min: -10
+        max: 10
+        unit: "%"
+        confirmed: true
+      - column: ysczhxlpc40
+        label: 与上次转化效率偏差（40%浓度点）
+        min: -10
+        max: 10
+        unit: "%"
+        confirmed: true
+      - column: ysczhxlpc80
+        label: 与上次转化效率偏差（80%浓度点）
+        min: -10
+        max: 10
+        unit: "%"
+        confirmed: true
+
+  # NH3 季度多点校准：红字 0.95≤斜率≤1.05、r>0.999、截距≤±1%满量程。
+  # 截距按表达式 {ju}/{ppb}*100 归一 %FS（满量程列实填 200/500PPB），
+  # 越界 2/16=12.5% 超 5% 红线，remark_column 联动降级（抽检 2 条均真实越界
+  # 且校准结果列标"合格"）。标气有效期过期 1 条为应捕捉的真实问题。
+  Sup_RF_NH3DeviceMultipoint:
+    display_name: NH3 设备多点校准记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    range_columns:
+      - column: xl
+        label: 校准曲线斜率b
+        min: 0.95
+        max: 1.05
+        remark_column: remark1
+        confirmed: true
+      - column: xgxs
+        label: 校准曲线相关系数r
+        min: 0.999
+        max: 1
+        remark_column: remark1
+        confirmed: true
+      - label: 校准曲线截距a（占满量程%）
+        expression: "{ju}/{ppb}*100"
+        inputs: [ju, ppb]
+        min: -1
+        max: 1
+        unit: "%FS"
+        remark_column: remark1
+        confirmed: false
+    date_columns:
+      - start: gasexpirationdate
+        label: 标气有效期
+        single_date_rule: not_past
+        confirmed: true
+
+  # NH3 季度动态校准仪核查：红字 r>0.999、0.99≤b≤1.01、|截距|≤±1%×满量程。
+  # 两组曲线 0-10 L/min（1%FS=±0.1）与 0-100 ml/min（1%FS=±1）。
+  # jua1（L/min 截距）越界 2/16=12.5% 且该表无备注列无降级路径 → 不落待业务确认。
+  Sup_RF_NH3GASEOUSCALIDEVICECHECK:
+    display_name: NH3 气体校准设备检查记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    range_columns:
+      - column: xlb1
+        label: L/min 曲线斜率b1
+        min: 0.99
+        max: 1.01
+        confirmed: true
+      - column: xgxsr1
+        label: L/min 曲线相关系数r1
+        min: 0.999
+        max: 1
+        confirmed: true
+      - column: xlb2
+        label: ml/min 曲线斜率b2
+        min: 0.99
+        max: 1.01
+        confirmed: true
+      - column: xgxsr2
+        label: ml/min 曲线相关系数r2
+        min: 0.999
+        max: 1
+        confirmed: true
+      - column: jua2
+        label: ml/min 曲线截距a2（±1%×100ml/min 满量程）
+        min: -1
+        max: 1
+        unit: ml/min
+        confirmed: true
+
+  # NH3 半年巡查：红字"填写参数需在范围内，否则需备注"，逐参数 *abnormalr
+  # 列经数据证实为对应参数备注列（站点自设值自动降级）。ectcheckvalue（外部
+  # 转换器 725-775）越界 14.3% 且有站点自设先例 → 不落待业务确认；零跨漂移
+  # 数据全空+双阈值二选一需新机制 → 不落。
+  Sup_RF_NH3AnalyzerInspection_HalfYear:
+    display_name: NH3 分析仪半年巡检记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+    range_columns:
+      - column: itcheckvalue
+        label: 内部温度
+        min: 15
+        max: 45
+        unit: "℃"
+        remark_column: itabnormalr
+        confirmed: true
+      - column: trccheckvalue
+        label: 反应室温度
+        min: 48
+        max: 52
+        unit: "℃"
+        remark_column: trcabnormalr
+        confirmed: true
+      - column: ctcheckvalue
+        label: 毛细管温度
+        min: 48
+        max: 52
+        unit: "℃"
+        remark_column: ctabnormalr
+        confirmed: true
+      - column: cootcheckvalue
+        label: 制冷器温度
+        min: -12
+        max: -1.0
+        unit: "℃"
+        remark_column: cootabnormalr
+        confirmed: true
+      - column: contcheckvalue
+        label: 转换炉温度
+        min: 300
+        max: 350
+        unit: "℃"
+        remark_column: contabnormalr
+        confirmed: true
+      - column: rcpcheckvalue
+        label: 反应室压力
+        min: 50
+        max: 150
+        unit: mmHg
+        remark_column: rcpabnormalr
+        confirmed: true
+      - column: flowcheckvalue
+        label: 流量
+        min: 0.35
+        max: 0.9
+        unit: L/min
+        remark_column: flowabnormalr
+        confirmed: true
+      - column: oflowcheckvalue
+        label: 臭氧流量
+        min: 0.05
+        unit: L/min
+        remark_column: oflowabnormalr
+        confirmed: true
+      - column: slopeb
+        label: 多点线性校准斜率b
+        min: 0.95
+        max: 1.05
+        remark_column: otherremarks
+        confirmed: true
+      - column: coefficientr
+        label: 多点线性校准相关系数r
+        min: 0.999
+        max: 1
+        remark_column: otherremarks
+        confirmed: true
+
+  # NH3 年度精密度/正确度：红字"结果在±5%以内"（样本仅 2 行，双证一致）。
+  Sup_RF_NH3InstrumentPrecision:
+    display_name: NH3 仪器精密度记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+    range_columns:
+      - column: accuracy
+        label: 正确度
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: true
+      - column: rsd
+        label: 相对标准偏差
+        min: 0
+        max: 5
+        unit: "%"
+        confirmed: true
+    formula_columns:
+      - target: instrumentresponseavg
+        expression: "({instrumentresponsevalues1}+{instrumentresponsevalues2}+{instrumentresponsevalues3}+{instrumentresponsevalues4}+{instrumentresponsevalues5}+{instrumentresponsevalues6})/6"
+        inputs: [instrumentresponsevalues1, instrumentresponsevalues2, instrumentresponsevalues3, instrumentresponsevalues4, instrumentresponsevalues5, instrumentresponsevalues6]
+        label: 仪器响应均值（6 次平均）
+        tolerance: 0.05
+        tolerance_mode: absolute
+        confirmed: true
+    date_columns:
+      - start: gasexpirationdate
+        label: 标气有效期
+        single_date_rule: not_past
+        confirmed: true
+
+  # NH3 月度维护：5 项维护时间列（datetime1~5，34/34 填充，必填兜底）。
+  # checkdate 全 NULL，及时性仅质控计划口径可判；"维护时间与照片一致"
+  # 红字需照片比对新机制，不落。
+  Sup_RF_NH3MonthDeviceMaintain:
+    display_name: NH3 设备月维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    required_value_columns:
+      - column: datetime1
+        label: 维护时间-清洗制冷系统过滤网
+      - column: datetime2
+        label: 维护时间-清洁仪器风扇防尘网
+      - column: datetime3
+        label: 维护时间-仪器时钟/数采时钟检查
+      - column: datetime4
+        label: 维护时间-仪器显示数据与数采一致性检查
+      - column: datetime5
+        label: 维护时间-设备电机运转情况检查
+
+  # NH3 季度响应时间核查：T90≤600s（HJ 1393-2024 红字）经 2026-11-14 引擎
+  # 时长解析扩展（value_type: duration_seconds）落地——'5min12s'/'3分钟'/裸数
+  # 统一换算秒，'147ppb' 单位误填自动跳过；实测 14 行中 45min(2700s) 为真实
+  # 超标（该行备注列留痕转人工复核路径可用）。
+  Sup_RF_NH3ResponseTimeInspection:
+    display_name: NH3 响应时间检查记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    required_value_columns:
+      - column: responsetimet90
+        label: 响应时间T90上升
+    range_columns:
+      - column: responsetimet90
+        label: 响应时间T90上升
+        max: 600
+        unit: s
+        value_type: duration_seconds
+        remark_column: remark1
+        confirmed: true
+    date_columns:
+      - start: gasexpirationdate
+        label: 标气有效期
+        single_date_rule: not_past
+        confirmed: true
+
+  # ── 浊度仪族（sup_rf_turbidimeter 分表，Week14/Month7/Quarter2/HalfYear1）──
+  # 旧档案 Sup_RF_TurbidiMeterRoutineCheck/Calibration 挂在 2022-03 后无数据的
+  # sup_rf_common 旧 tag 上（上文原块保留，加 enabled:false 迁移停用）。
+  # 周表零点核查：635/525/450nm 差值 ±2Mm⁻¹（红框），14/14 全在区间；
+  # 勾选 10 列全 0 无区分度不配；无逐项备注列，以 otherremarks/faultdescription 兜底。
+  Sup_RF_Turbidimeter_Week:
+    display_name: 浊度仪周记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: zp635difference
+        label: 零点核查差值（635nm）
+        min: -2
+        max: 2
+        unit: Mm⁻¹
+        remark_column: [otherremarks, faultdescription]
+        confirmed: true
+      - column: zp525difference
+        label: 零点核查差值（525nm）
+        min: -2
+        max: 2
+        unit: Mm⁻¹
+        remark_column: [otherremarks, faultdescription]
+        confirmed: true
+      - column: zp450difference
+        label: 零点核查差值（450nm）
+        min: -2
+        max: 2
+        unit: Mm⁻¹
+        remark_column: [otherremarks, faultdescription]
+        confirmed: true
+    required_value_columns:
+      - column: cfilterremarks
+        label: 粗过滤器巡查记录
+      - column: ffilterremarks
+        label: 细过滤器巡查记录
+      - column: lsremarks
+        label: 光源巡查记录
+      - column: sgremarks
+        label: 标气巡查记录
+
+  # 月表跨度核查：三波长差值百分比 ±10%（红框；差值列已算好，无标准值列
+  # 无法复算）；文本形态（'设备故障返厂'、'/'）解析跳过。
+  Sup_RF_Turbidimeter_Month:
+    display_name: 浊度仪月记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: sp635difference
+        label: 跨度核查差值百分比（635nm）
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: [otherremarks, faultdescription]
+        confirmed: true
+      - column: sp525difference
+        label: 跨度核查差值百分比（525nm）
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: [otherremarks, faultdescription]
+        confirmed: true
+      - column: sp450difference
+        label: 跨度核查差值百分比（450nm）
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: [otherremarks, faultdescription]
+        confirmed: true
+
+  # 季度/半年表：仅 3 项检查勾选且样本 2/1 行、勾选全 0 无区分度——
+  # 只建及时性骨架，样本积累后再补内容规则。
+  Sup_RF_Turbidimeter_Quarter:
+    display_name: 浊度仪季度记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_Turbidimeter_HalfYear:
+    display_name: 浊度仪半年记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+
+  # ── CO2 / 温室气体族（sup_rf_co2* 分表）──────────────────────────────────
+  # CO2 季度多点线性校准：判据 r>0.999、0.95≤b≤1.05、|a|≤1%×满量程（满量程
+  # 12/13 行 1000ppm→±10ppm 对称带）。checkdate 全 NULL，及时性仅计划口径。
+  # xzjg 布尔结果 12 True+1 NULL 无 False 正样本，方向 confirmed:false。
+  Sup_RF_CO2MulityPointCheck_Q:
+    display_name: CO2 季度多点线性校准记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    range_columns:
+      - column: xl
+        label: 校准曲线斜率 b
+        min: 0.95
+        max: 1.05
+        confirmed: true
+      - column: ju
+        label: 校准曲线截距 a
+        min: -10
+        max: 10
+        unit: ppm
+        confirmed: true
+      - column: xgxs
+        label: 相关系数 r
+        min: 0.999
+        confirmed: true
+    abnormal_columns:
+      - column: xzjg
+        label: 校准结果
+        values: ["False", "false", "不合格"]
+        remark_column: remark
+        confirmed: false
+
+  # CO2 分析仪半年巡查：红字 7 参数区间（半年表偏置电压 -120~-100，与周表
+  # -130~-100 按表分别取值）。电机转速（100/100.02/100.03，37.5% 越界）与
+  # 7 项勾选（0/1 方向存疑）不落；漂移判据列数据未填报无法落地。
+  Sup_RF_Co2Analyzerinspection_HalfYear:
+    display_name: CO2 分析仪半年巡查记录
+    category: halfyear_check
+    cycle: half_year
+    max_fill_lag_days: 45
+    range_columns:
+      - column: inttempcheckvalue
+        label: 内部温度
+        min: 8
+        max: 47
+        unit: "℃"
+        remark_column: inttemppr
+        confirmed: true
+      - column: benchcheckvalue
+        label: BENCH 温度
+        min: 40
+        max: 59
+        unit: "℃"
+        remark_column: benchpr
+        confirmed: true
+      - column: pressurecheckvalue
+        label: 压力
+        min: 250
+        max: 1000
+        unit: mmHg
+        remark_column: pressurepr
+        confirmed: true
+      - column: samplingflowcvalue
+        label: 采样流量
+        min: 0.35
+        max: 1.5
+        unit: L/min
+        remark_column: samplingflowpr
+        confirmed: true
+      - column: biasvoltagecvalue
+        label: 偏置电压
+        min: -120
+        max: -100
+        unit: V
+        remark_column: biasvoltagepr
+        confirmed: true
+      - column: automaticcvalue
+        label: 自动增益强度
+        min: 150000
+        max: 300000
+        unit: Hz
+        remark_column: automaticpr
+        confirmed: true
+
+  # CO2 月度/半年/年度维护：分表只承载执行时间与执行人，配必填兜底+及时性。
+  # 月表 checkdate 全 NULL，及时性仅质控计划口径可判。
+  Sup_RF_CO2DeviceMaintain:
+    display_name: CO2 月度维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    required_value_columns:
+      - {column: datetime1, label: 清洗制冷系统过滤网时间}
+      - {column: datetime2, label: 清洁仪器风扇防尘网时间}
+      - {column: datetime3, label: 仪器时钟与数采时钟检查时间}
+      - {column: datetime4, label: 仪器与数采数据一致性检查时间}
+
+  Sup_RF_CO2HalfYearDeviceMaintain:
+    display_name: CO2 半年维护记录
+    category: halfyear_maintenance
+    cycle: half_year
+    max_fill_lag_days: 45
+    required_value_columns:
+      - {column: datetime1, label: 清洁内部光路时间}
+      - {column: datetime2, label: 清洁内部气路时间}
+
+  # CO2 年度维护：当前 0 行、列语义无映射文档段落，只建及时性骨架。
+  Sup_RF_CO2YearDeviceMaintain:
+    display_name: CO2 年度维护记录
+    category: year_maintenance
+    cycle: year
+    max_fill_lag_days: 60
+
+  # ── 臭氧激光雷达族（sup_rf_o3laserradar* 分表）───────────────────────────
+  # 周巡检：水温 10-40℃（28 行水冷设备填值全部在区间，空/"风冷设备说明"
+  # 引擎跳过）+ 站房外部 7 项/内部 8 项勾选（1=正常；0 值行与"返厂维修/异常"
+  # 备注强相关，inside 双证、outside 由同表迁移，历史 0 命中纯安全网）。
+  # 13 个设备 _1 勾选列已实证可配，本轮未纳入（标签逐项核对后作为增量补）。
+  Sup_RF_O3LaserRadarCheck:
+    display_name: 臭氧激光雷达周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: laser_4_2
+        label: 激光器电源水温
+        min: 10
+        max: 40
+        unit: "℃"
+        remark_column: remark
+        confirmed: true
+    abnormal_columns:
+      - {column: stationoutside_1, label: 点位周围环境变化情况, values: ["0"], remark_column: remark}
+      - {column: stationoutside_2, label: 点位周围安全隐患, values: ["0"], remark_column: remark}
+      - {column: stationoutside_3, label: 周围道路供电通讯给排水设施状况, values: ["0"], remark_column: remark}
+      - {column: stationoutside_4, label: 站房外围防护栏隔离带, values: ["0"], remark_column: remark}
+      - {column: stationoutside_5, label: 周围树木是否需要修剪, values: ["0"], remark_column: remark}
+      - {column: stationoutside_6, label: 站房防雷接地, values: ["0"], remark_column: remark}
+      - {column: stationoutside_7, label: 站房屋顶完好无漏雨, values: ["0"], remark_column: remark}
+      - {column: stationinside_1, label: 站房供电通讯, values: ["0"], remark_column: remark}
+      - {column: stationinside_2, label: 给排水供暖空调, values: ["0"], remark_column: remark}
+      - {column: stationinside_3, label: 站房内异常声音, values: ["0"], remark_column: remark}
+      - {column: stationinside_4, label: 站房内异常气味, values: ["0"], remark_column: remark}
+      - {column: stationinside_5, label: 站房温湿度符合要求, values: ["0"], remark_column: remark}
+      - {column: stationinside_6, label: 站房排风扇, values: ["0"], remark_column: remark}
+      - {column: stationinside_7, label: 稳压电源参数, values: ["0"], remark_column: remark}
+      - {column: stationinside_8, label: 电源插头线板, values: ["0"], remark_column: remark}
+      # 13 个设备检查勾选（cshtml 标签见映射文档 L3213-3225）。方向复证：0 值
+      # 行备注"原机中科返厂维修/现场仪器为风冷设备未显示水温"，0=异常/未确认；
+      # 备注豁免后各列无备注命中 ≤1 行，纯安全网增量。
+      - {column: laser_1_1,          label: 激光器电源水位在正常位以上, values: ["0"], remark_column: remark}
+      - {column: laser_2_1,          label: 防护镜灰尘是否清理, values: ["0"], remark_column: remark}
+      - {column: laser_3_1,          label: 激光光斑位于天窗出光孔中心, values: ["0"], remark_column: remark}
+      - {column: laser_4_1,          label: 激光器电源水温正常(10-40℃), values: ["0"], remark_column: remark}
+      - {column: sensirion_1_1,      label: 室外温湿度监测, values: ["0"], remark_column: remark}
+      - {column: skylight_1_1,       label: 天窗洁净, values: ["0"], remark_column: remark}
+      - {column: skylight_2_1,       label: 天窗加热, values: ["0"], remark_column: remark}
+      - {column: collect_1_1,        label: 采集软件回波曲线绘制, values: ["0"], remark_column: remark}
+      - {column: software_1_1,       label: 日志查询, values: ["0"], remark_column: remark}
+      - {column: software_2_1,       label: 设备状态显示, values: ["0"], remark_column: remark}
+      - {column: analysissoftware_1_1, label: 各个图谱自动绘制, values: ["0"], remark_column: remark}
+      - {column: analysissoftware_2_1, label: 报表、图谱导出, values: ["0"], remark_column: remark}
+      - {column: analysissoftware_3_1, label: 参数设置, values: ["0"], remark_column: remark}
+
+  # 月度维护：两项执行情况以维护时间+巡检人四列承载（cshtml 版列名核实），
+  # 只配必填兜底+及时性；createtime−checkdate max 6 天，及时性历史 0 命中。
+  Sup_RF_O3LaserRadarMaintenance:
+    display_name: 臭氧激光雷达月度维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    required_value_columns:
+      - {column: cleancoldsystemscreentime, label: 清洗制冷系统过滤网时间}
+      - {column: cleancoldsystemscreenuserid, label: 清洗制冷系统过滤网巡检人}
+      - {column: cleandevicefantime, label: 清洁仪器风扇防尘网时间}
+      - {column: cleandevicefanuserid, label: 清洁仪器风扇防尘网巡检人}
+
+  # 季度能量核查：天气环境 4 项必填、水温 10-40℃（仅水冷，非数值自动跳过）、
+  # 有效数据率 ≥85%（<85 共 7/24：2 行停机备注转人工复核、5 行无备注且达标
+  # 勾选与 0/1% 数值矛盾——属真实数据质量问题，验证阶段抽样复核）。
+  Sup_RF_O3LaserRadarCalibration:
+    display_name: 臭氧激光雷达季度能量核查记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    required_value_columns:
+      - {column: weatherenv_1, label: 天气情况}
+      - {column: weatherenv_2, label: 温度}
+      - {column: weatherenv_3, label: 湿度}
+      - {column: weatherenv_4, label: 空气质量等级}
+    range_columns:
+      - column: launchingsystem_4_2
+        label: 激光器电源水温
+        min: 10
+        max: 40
+        unit: "℃"
+        remark_column: remark
+        confirmed: true
+      - column: datacollectsystem_10_2
+        label: 有效数据率
+        min: 85
+        max: 100
+        unit: "%"
+        remark_column: remark
+        confirmed: true
+
+  # ── 大气重金属仪族（sup_rf_heavymetalinspection / sup_rf_leakageratecalibration_i）──
+  # 周巡检 19 项：品牌分档是关键——CES 68 行填完整表，FPI 20 行/Skyray 20 行
+  # 表单变体不填 10/14/15/16 项（0 值 40%+ 为品牌差异非异常，不落防 43/108 误报）；
+  # nr1~nr13 异常勾选 0 值行均带 zb 配对备注（引擎豁免后 0 误报），仅 nr12
+  # 2 行无备注命中为真实缺口。nr4/nrv/nr16 数值列按品牌分档（confirmed 待业务确认）。
+  Sup_RF_HeavyMetalInspection:
+    display_name: 大气重金属仪周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: nr4
+        label: 稳压电压
+        unit: V
+        brand_ranges:
+          CES: {min: 100, max: 250}
+        confirmed: false
+      - column: nrv
+        label: 稳压电压（FPI 变体列）
+        unit: V
+        brand_ranges:
+          FPI: {min: 100, max: 250}
+        confirmed: false
+      - column: nr16
+        label: 设备采样流量显示
+        unit: L/min
+        brand_ranges:
+          CES: {min: 16.2, max: 17.2}
+        confirmed: false
+    abnormal_columns:
+      - {column: nr1,  label: 数据采集工控机运行, values: ["0"], remark_column: zb1}
+      - {column: nr2,  label: 重金属主机运行, values: ["0"], remark_column: zb2}
+      - {column: nr3,  label: CES-XRF/FP软件运行, values: ["0"], remark_column: zb3}
+      - {column: nr5,  label: 站房空调运行, values: ["0"], remark_column: zb5}
+      - {column: nr6,  label: 采样管法兰防水, values: ["0"], remark_column: zb6}
+      - {column: nr7,  label: 网络运行, values: ["0"], remark_column: zb7}
+      - {column: nr8,  label: 设备指示灯显示, values: ["0"], remark_column: zb8}
+      - {column: nr9,  label: 设备与数采时间校对, values: ["0"], remark_column: zb9}
+      - {column: nr11, label: 流量自动校准结果核查, values: ["0"], remark_column: zb11}
+      - {column: nr12, label: UpScale自动校准结果核查, values: ["0"], remark_column: zb12}
+      - {column: nr13, label: 清洁颗粒物切割器, values: ["0"], remark_column: zb13}
+
+  # 月度泄漏率与流量核查：红框"90Sec 泄漏率<150mmHg/Min"、"采样流量与QA流量
+  # 误差≤10%"。修正流量公式经 11+2+2 行全量复算验证（max Δ0.046，tolerance
+  # 0.05）；误差列不做公式复算（1 行实填 5.39% 系运营丢负号，符号口径不一），
+  # 用 ±10% 区间兜底幅值。7/18 行流量区整组 '/'（仅做泄漏核查）parse 跳过不误报。
+  Sup_RF_LeakageRateCalibration_i:
+    display_name: 重金属仪月度泄漏率与流量核查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    required_value_columns:
+      - column: leakagerate
+        label: 泄漏率核查结果
+        remark_column: remarks
+    formula_columns:
+      - target: correctedflow_16_7
+        expression: "{displayflow_16_7}*{flowmeterslope}+{flowmeterintercept}"
+        inputs: [displayflow_16_7, flowmeterslope, flowmeterintercept]
+        label: 已修正流量 16.7 点（显示值×斜率+截距）
+        tolerance: 0.05
+        tolerance_mode: absolute
+        confirmed: true
+      - target: correctedflow_15_0
+        expression: "{displayflow_15_0}*{flowmeterslope}+{flowmeterintercept}"
+        inputs: [displayflow_15_0, flowmeterslope, flowmeterintercept]
+        label: 已修正流量 15.0 点（显示值×斜率+截距）
+        tolerance: 0.05
+        tolerance_mode: absolute
+        confirmed: true
+      - target: correctedflow_18_4
+        expression: "{displayflow_18_4}*{flowmeterslope}+{flowmeterintercept}"
+        inputs: [displayflow_18_4, flowmeterslope, flowmeterintercept]
+        label: 已修正流量 18.4 点（显示值×斜率+截距）
+        tolerance: 0.05
+        tolerance_mode: absolute
+        confirmed: true
+    range_columns:
+      - column: leakagerate
+        label: 泄漏率（90Sec）
+        max: 150
+        unit: mmHg/Min
+        remark_column: remarks
+        confirmed: true
+      - column: samplingflowerror_16_7
+        label: 采样流量误差 16.7 点
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: samplingflowerror_15_0
+        label: 采样流量误差 15.0 点
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: samplingflowerror_18_4
+        label: 采样流量误差 18.4 点
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: qaflowerror_16_7
+        label: QA流量误差 16.7 点
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: qaflowerror_15_0
+        label: QA流量误差 15.0 点
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: qaflowerror_18_4
+        label: QA流量误差 18.4 点
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+    date_columns:
+      - start: flowmeterlasttime
+        end: flowmeteranothertime
+        label: 参考流量计校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+
+  # ── 太阳总辐射族（sup_rf_week_radiationrecord / sup_rf_year_radiationcalibration）──
+  # 周巡检 7 项：Vue 移植版头部映射"true=原表 0（正常/执行）"，落库 1=异常/未执行
+  #（radio2=0 行 remark"已清洁"佐证），120 行 radio1~7 全 0，命中现量 0，保护型。
+  Sup_RF_Week_RadiationRecord:
+    display_name: 太阳总辐射周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    abnormal_columns:
+      - {column: radio1, label: 仪器状态, values: ["1"], remark_column: remark1}
+      - {column: radio2, label: 表面护罩清洁, values: ["1"], remark_column: remark2}
+      - {column: radio3, label: 气泡水准仪, values: ["1"], remark_column: remark3}
+      - {column: radio4, label: 安装支架, values: ["1"], remark_column: remark4}
+      - {column: radio5, label: 数模转换器（232转485）, values: ["1"], remark_column: remark5}
+      - {column: radio6, label: 电源适配器, values: ["1"], remark_column: remark6}
+      - {column: radio7, label: 数据传输情况, values: ["1"], remark_column: remark7}
+
+  # 年校准：红框"偏差≤±3%"。只判"校准后偏差"（string17，8 行 0.37~1.23%
+  # 全达标）；校准前偏差 14~54% 是校准动机本身不判。"已修正标准值=直接读取×
+  # 修正因子"公式不落（实填两种口径并存，恒等直抄 6+ 行，统一复算误报半表）。
+  # 双有效期 time1/2（仪器）+time3/4（参考辐射计）must_cover_checkdate。
+  Sup_RF_Year_RadiationCalibration:
+    display_name: 太阳总辐射年校准记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+    range_columns:
+      - column: string17
+        label: 校准后偏差
+        min: -3
+        max: 3
+        unit: "%"
+        remark_column: remark
+        confirmed: true
+    date_columns:
+      - start: time1
+        end: time2
+        label: 仪器校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+      - start: time3
+        end: time4
+        label: 参考辐射计校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+
+  # ── PTR-MS / OCEC 族（sup_rf_ptrmsweekcheck / sup_rf_ocec* 分表）─────────
+  # PTR-MS 周巡检：仅 4 行且 result1~11 44/44 全"正常"零区分度——只配及时性。
+  Sup_RF_PTRMSWeekCheck:
+    display_name: PTR-MS 周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  # OCEC 双周单点核查：红字"偏差应小于±5%"（49 行仅 1 行真实越界 5.82）+
+  # 蔗糖有效期 must_cover_checkdate（29/91/183/364 天多档随浓度变化，只做覆盖
+  # 判定）。核查日期间隔文档 14 天 vs 实填 27~31 天主导（配置即 40+ 误报）不落，
+  # 待业务确认实际执行周期。
+  Sup_RF_OCECSingleCheck:
+    display_name: OCEC 双周单点核查记录
+    category: week_check
+    cycle: biweek
+    max_fill_lag_days: 14
+    range_columns:
+      - column: measuredeviation_1
+        label: 单点核查偏差 1
+        min: -5
+        max: 5
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: measuredeviation_2
+        label: 单点核查偏差 2
+        min: -5
+        max: 5
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: measuredeviation_3
+        label: 单点核查偏差 3
+        min: -5
+        max: 5
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+    date_columns:
+      - start: preparationdate
+        end: effectivedate
+        label: 标准蔗糖溶液有效期
+        must_cover_checkdate: true
+        confirmed: true
+
+  # OCEC 月维护：溶蚀器效率 ≥70%、仪器空白 TC≤0.3μg（cshtml 自带阈值，
+  # 现量 0 越界）+ 切割器清洁勾选（0 值行均带清洗日期备注，豁免后 0 误报）。
+  Sup_RF_OCECMonthCheck:
+    display_name: OCEC 月维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: nr3
+        label: 溶蚀器效率
+        min: 70
+        max: 100
+        unit: "%"
+        remark_column: remark
+        confirmed: true
+      - column: nr4
+        label: 仪器空白 TC
+        max: 0.3
+        unit: μg
+        remark_column: remark
+        confirmed: true
+    abnormal_columns:
+      - {column: nr1, label: 切割器清洁, values: ["0"], remark_column: bz1}
+
+  # OCEC Sunset 季度曲线：精密度 ≤5%、正确度 ±10%、系统空白 <1.0μgC/m³
+  # （cshtml 自带阈值，现量 0 越界）；相关系数 ≥0.995 非文档红字 confirmed:false。
+  # '待补做'/'/'/'-'（停机/不适用备注）解析跳过。蔗糖日期对同 JG 多点范式。
+  Sup_RF_OCECMultipointCheck:
+    display_name: OCEC 多点核查记录（Sunset 季度曲线）
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    range_columns:
+      - column: precision
+        label: 精密度（相对标准偏差）
+        min: 0
+        max: 5
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: accuracy
+        label: 正确度（相对误差）
+        min: -10
+        max: 10
+        unit: "%"
+        remark_column: remarks
+        confirmed: true
+      - column: systemblank
+        label: 系统空白
+        max: 1.0
+        unit: μgC/m³
+        remark_column: remarks
+        confirmed: true
+      - column: correlationcoefficient
+        label: 相关系数
+        min: 0.995
+        max: 1
+        confirmed: false
+    date_columns:
+      - start: preparationdate
+        end: effectivedate
+        label: 标准蔗糖溶液有效期
+        must_cover_checkdate: true
+        confirmed: true
+
+  # OCEC 季度维护：唯一内容项全 1 且备注均带更换文字，零区分度——只配及时性。
+  Sup_RF_OCECQuarterhCheck:
+    display_name: OCEC 季度维护记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  # OCEC 半年三峰测试：红框 RSD≤5%（5 行 0.71~4.93% 全达标，1 行整组 '/'
+  # 跳过）；合格勾选/清洁标志全 1 零区分度不配。
+  Sup_RF_OCECHalfYearCheck:
+    display_name: OCEC 半年维护记录（三峰测试）
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+    range_columns:
+      - column: threepeak_rsd_1
+        label: 三峰测试相对标准偏差 1
+        min: 0
+        max: 5
+        unit: "%"
+        remark_column: remark
+        confirmed: true
+      - column: threepeak_rsd_2
+        label: 三峰测试相对标准偏差 2
+        min: 0
+        max: 5
+        unit: "%"
+        remark_column: remark
+        confirmed: true
+      - column: threepeak_rsd_3
+        label: 三峰测试相对标准偏差 3
+        min: 0
+        max: 5
+        unit: "%"
+        remark_column: remark
+        confirmed: true
+
+  # OCEC 年度维护：6 项勾选 1=正常/执行（bz 配对"正常"/维护日期双证），
+  # 3 行样本零命中，保护型规则。
+  Sup_RF_OCECYearCheck:
+    display_name: OCEC 年度维护记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+    abnormal_columns:
+      - {column: nr1, label: 采样泵维护与检查, values: ["0"], remark_column: bz1}
+      - {column: nr2, label: 激光维护与检查, values: ["0"], remark_column: bz2}
+      - {column: nr3, label: 电磁阀维护与检查, values: ["0"], remark_column: bz3}
+      - {column: nr4, label: 气路维护与检查, values: ["0"], remark_column: bz4}
+      - {column: nr5, label: 石英炉维护与检查, values: ["0"], remark_column: bz5}
+      - {column: nr6, label: NDIR维护与检查, values: ["0"], remark_column: bz6}
+
+  # ══ 2026-11-14 批次 2：宽表存量 tag 骨架建档 ═══════════════════════════════
+  # 两类：(1) HCHO 季度测试 4 tag——文档有红字阈值但列语义双证失败
+  #（string43 全表=1 疑合格标志位而非 RSD 数值；检出限列混标志），按军规#1
+  # 只建及时性，数值规则待列语义与业务确认后补；(2) 《组分仪器工单规则》
+  # 无截图/无数值阈值的 tag——及时性骨架 + "待业务提供阈值"留痕。
+
+  Sup_RF_HCHOCollectPercent:
+    display_name: 甲醛采集效率测试记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_HCHORepeatTest:
+    display_name: 甲醛重复性测试记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_HCHOMLinearError:
+    display_name: 甲醛中间浓度线性误差测试记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_HCHODetectionLimit:
+    display_name: 甲醛检出限测试记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_HP_Calibration:
+    display_name: HP 校准记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_HP_Accuracy:
+    display_name: HP 准确度检查记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_TSIRoutineCheck:
+    display_name: TSI 仪器例行检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_TSIFlowCheckRecord:
+    display_name: TSI 流量检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_Week_TrafficFlowCheck:
+    display_name: 交通流量监测因子周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_VOCsSinglePointCheckQC:
+    display_name: VOCs 单点核查质控记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_VoCsEXPECCheck:
+    display_name: VOCs（聚光 EXPEC）周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_VOCsEXPECSamplingFlowRecord:
+    display_name: VOCs（聚光 EXPEC）采样流量记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VOCsEXPECMulityPointCurveRecord:
+    display_name: VOCs（聚光 EXPEC）多点曲线记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VoCsChromatotecCheck:
+    display_name: VOCs（Chromatotec）周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_VOCsChromatotecSamplingFlowRecord:
+    display_name: VOCs（Chromatotec）采样流量记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VoCsChromatotecDetectionLimitRecord:
+    display_name: VOCs（Chromatotec）检出限记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VOCsWHTHMulityPointCurveRecord:
+    display_name: 武汉天虹VOCs多点曲线校准记录表（每月）
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VOCsWHTHSamplingFlowRecord:
+    display_name: 武汉天虹-VOCs流量核查记录表（每月）
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VoCsWHTHDetectionLimitRecord:
+    display_name: 武汉天虹-VOCs方法检出限记录表（每月）
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_Attex_Check:
+    display_name: Attex 仪器检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_PaperTapeRecord:
+    display_name: 纸带记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_OcecEnvironmentCheck:
+    display_name: OCEC 环境检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+
+  # ══ 2026-11-14 批次 2（续）：沉睡 tag 建档 + 专用分表第二批 ════════════════
+
+  # 双周 JG 单点核查（映射文档 L3418-3451：time1/2=蔗糖配制/有效期限、
+  # time3/4=上一次/下一次核查日期、string9/15/21=偏差1/2/3）。判据同
+  # Sup_RF_OCECSingleCheck 红字"偏差应小于±5%"。数据止于 2022-06（沉睡
+  # tag），先按同范式建档，数据回归即生效。偏差 ±5% 越界 2/69=2.9%，抽检均真实。
+  Sup_RF_OCECJGSingleCheck:
+    display_name: OCEC 双周单点核查记录（JG）
+    category: week_check
+    cycle: biweek
+    max_fill_lag_days: 14
+    range_columns:
+      - column: string9
+        label: 单点核查偏差 1
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+      - column: string15
+        label: 单点核查偏差 2
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+      - column: string21
+        label: 单点核查偏差 3
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+    date_columns:
+      - start: time1
+        end: time2
+        label: 标准蔗糖溶液有效期
+        must_cover_checkdate: true
+        confirmed: true
+      - start: time3
+        end: time4
+        label: 仪器核查有效期（上一次/下一次核查日期）
+        must_cover_checkdate: true
+        confirmed: false
+
+  # 单颗粒质谱月度流量核查（映射文档 L1639-1673，与 DeviceFlowCheck 同构）。
+  # 公式复算 9+5 行 max|Δ|=0.0006；偏差 ±5% 越界 0（实测 max 4.6）；双有效期
+  # 过期 0（保护型）。文档"示值误差≤±2%"宽表投影无对应列不落。数据止于 2022-06。
+  Sup_RF_MSFlowCheck:
+    display_name: 单颗粒质谱月度流量核查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    formula_columns:
+      - target: string13
+        expression: "{string12}*{string6}+{string7}"
+        inputs: [string12, string6, string7]
+        label: 校准前已修正标准值（直接读取×斜率+截距）
+        tolerance: 0.02
+        tolerance_mode: absolute
+        confirmed: true
+      - target: string18
+        expression: "{string17}*{string6}+{string7}"
+        inputs: [string17, string6, string7]
+        label: 校准后已修正标准值（直接读取×斜率+截距）
+        tolerance: 0.02
+        tolerance_mode: absolute
+        skip_if_inputs_zero: true
+        confirmed: true
+    range_columns:
+      - column: string14
+        label: 校准前流量偏差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+      - column: string19
+        label: 校准后流量偏差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+    date_columns:
+      - start: time1
+        end: time2
+        label: 质谱校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+      - start: time3
+        end: time4
+        label: 参考流量计校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+
+  # ══ 2026-11-14 截图规则批次 2 建档（专用分表 tag 第二批）══════════════════
+  # 依据：04-ocec-ions-bc.md（BC/水溶性离子章）、01-vocs-nmhc.md（甲烷/VOCs 章）、
+  # opa-source-field-mappings.md 对应表段；全部经"映射文档标签+数据分布"双证。
+
+  # ── BC 监测仪巡检族（sup_rf_monitorinspection 单物理表三周期共用）──────────
+  # pollutanttype 全量=BC 单仪器（Week 1262/Month 320/Quarter 92）；多品牌共用
+  # 同一套勾选列、语义品牌无关。方向全量实证：0=正常/是，1=异常/否（各 tag
+  # 99%+ 全 0，全部 1 值行均带停电报备等说明备注，与 PM1 Week 变体同方向）。
+  Sup_RF_MonitorInspection_Week:
+    display_name: BC 监测仪周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7            # 实证：lag>7 仅 5/1262=0.4%
+    # 2026-11-14 全年验证口径修正：周节奏建单晚于计划 6~10 天为常态（9/9
+    # 命中），档案级宽限放宽到 10 天。
+    plan_late_grace_days: 10
+    abnormal_columns:               # 实证：1251/1262 全 0；11 行 1 值全部带停电说明备注
+      - {column: weekdatacontrol,  label: 数据传输,  values: ["1"],
+         remark_column: [weekdcremarks, weekaremarks, weekdbremarks, weekzptremarks, weekstremarks, otherremarks]}
+      - {column: weekattribute,    label: 仪器参数,  values: ["1"],
+         remark_column: [weekdcremarks, weekaremarks, weekdbremarks, weekzptremarks, weekstremarks, otherremarks]}
+      - {column: weekdewaterbottle, label: 除水汽瓶, values: ["1"],
+         remark_column: [weekdcremarks, weekaremarks, weekdbremarks, weekzptremarks, weekstremarks, otherremarks]}
+      - {column: weekzeropointtest, label: 零点测试, values: ["1"],
+         remark_column: [weekdcremarks, weekaremarks, weekdbremarks, weekzptremarks, weekstremarks, otherremarks]}
+      - {column: weekstabilitytest, label: 稳定性测试, values: ["1"],
+         remark_column: [weekdcremarks, weekaremarks, weekdbremarks, weekzptremarks, weekstremarks, otherremarks]}
+
+  Sup_RF_MonitorInspection_Month:
+    display_name: BC 监测仪月巡查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10           # 实证：lag>10 仅 4/320=1.25%
+    abnormal_columns:               # 实证：317/320 全 0；3 行 1 值均带备注
+      - {column: monthsamplelinetube,  label: 样气线管,     values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+      - {column: monthcap,             label: 防虫网帽,     values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+      - {column: monthcutter,          label: 切割器,       values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+      - {column: monthdate,            label: 时间日期,     values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+      - {column: ondemandopticalcavity, label: 光腔检查/清洁, values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+      - {column: ondemandlubrication,  label: 光腔滑块润滑, values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+      - {column: ondemandpapertape,    label: 纸带,         values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+      - {column: ondemandfilter,       label: 过滤器,       values: ["1"],
+         remark_column: [monthsltremarks, monthcremarks, monthcuttremarks, monthdremarks, ondemandqcremarks, ondemandlremarks, ondemandptremarks, ondemandfremarks, otherremarks]}
+
+  # 季度巡检：流量验证 ±5% 无数值列（quartertrafficv 实为 0/1 勾选，91/92 全 0）
+  # 只配勾选；检漏测试同。
+  Sup_RF_MonitorInspection_Quarter:
+    display_name: BC 监测仪季度巡检记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31           # 实证：lag>31 为 0/92
+    abnormal_columns:               # 实证：1 行 1 值带停电备注
+      - {column: quartertrafficv, label: 流量验证, values: ["1"],
+         remark_column: [quartertvremarks, quarterltremarks, otherremarks]}
+      - {column: quarterleaktest, label: 检漏测试, values: ["1"],
+         remark_column: [quartertvremarks, quarterltremarks, otherremarks]}
+
+  # ── MARGA 周巡检（88 行/近120天 47）───────────────────────────────────────
+  # 仅配内标系数四值（文档红框 0.9-1.1）；88 行全部数值填充，越界率 1.1~5.7%，
+  # 8 行越界全部带"正常波动/内标液更换波动"备注 → remark 联动后历史 0 硬失败。
+  # 电导、柱压、蒸汽发生器实测越界 41~100%（单位混填/勾选承载）→ 不配待业务确认。
+  Sup_RF_GACWeekMaintainByMARGA:
+    display_name: 水溶性离子（MARGA）周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7            # 实证：lag 最大 5 天
+    range_columns:
+      # 内标系数存于 *remarks 列（映射文档+平台 required 校验器双证）
+      - column: br_aerremarks
+        label: 阴离子内标系数 Br⁻（Aer）
+        min: 0.9
+        max: 1.1
+        remark_column: [rergasremarks, remarks]
+        confirmed: true
+      - column: br_gasremarks
+        label: 阴离子内标系数 Br⁻（Gas）
+        min: 0.9
+        max: 1.1
+        remark_column: [rergasremarks, remarks]
+        confirmed: true
+      - column: li_aerremarks
+        label: 阳离子内标系数 Li⁺（Aer）
+        min: 0.9
+        max: 1.1
+        remark_column: [rergasremarks, remarks]
+        confirmed: true
+      - column: li_gasremarks
+        label: 阳离子内标系数 Li⁺（Gas）
+        min: 0.9
+        max: 1.1
+        remark_column: [rergasremarks, remarks]
+        confirmed: true
+
+  # ── GAC/URG 月/季/年维护 ──────────────────────────────────────────────────
+  # GAC 月维护方向实证：1=是/已执行/合格，0=否/未执行/不合格（0 值行备注语义
+  # 反证）。0 值未备注仅 1/70 行。色谱柱/垫片更换、IC单向阀 0 值占 100%（未更换
+  # 常态）无区分度不配。URG 月维护三列 0 值占 58% 几乎无备注（0 疑为单选默认值）
+  # 不配；及时性放宽 31 天（lag>10 达 17% 超 5% 红线）。季度/年度样本小且无区分度
+  # 只配及时性。
+  Sup_RF_GACMonthMaintain:
+    display_name: 水溶性离子（GAC）月度维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10           # 实证：lag 最大 7 天
+    abnormal_columns:
+      - {column: pm25result,      label: 清洗切割器,   values: ["0"],
+         remark_column: [pm25remarks, icsixremarks, aersolremarks, kongbairemarks, zhengqueduremarks]}
+      - {column: icsixresult,     label: 清洗扩散管,   values: ["0"],
+         remark_column: [pm25remarks, icsixremarks, aersolremarks, kongbairemarks, zhengqueduremarks]}
+      - {column: aersolresult,    label: 清洗冷凝瓶,   values: ["0"],
+         remark_column: [pm25remarks, icsixremarks, aersolremarks, kongbairemarks, zhengqueduremarks]}
+      - {column: kongbairesult,   label: 系统空白核查, values: ["0"],
+         remark_column: [pm25remarks, icsixremarks, aersolremarks, kongbairemarks, zhengqueduremarks]}
+      - {column: zhengqueduresult, label: 正确度核查,  values: ["0"],
+         remark_column: [pm25remarks, icsixremarks, aersolremarks, kongbairemarks, zhengqueduremarks]}
+
+  Sup_RF_URGMonthMaintain:
+    display_name: 水溶性离子（URG）月度维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 31
+
+  Sup_RF_GACQuarterMaintain:
+    display_name: 水溶性离子（GAC）季度维护记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_URGQuarterMaintain:
+    display_name: 水溶性离子（URG）季度维护记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_GACYearMaintain:
+    display_name: 水溶性离子（GAC）年度维护记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+  Sup_RF_URGYearMaintain:
+    display_name: 水溶性离子（URG）年度维护记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+
+  # ── 赛浩/中兴 甲烷非甲烷季度多点校准（sup_rf_multicalibration，52 行）──────
+  # pollutanttype=NMHC（ZTE 27 + Panna 25）。温度设定 400℃ 文档明确（51/52 行
+  # 填 400）；压力 20~30psig 实填单位混填越界 13% → 不配；勾选全 0 无区分度 →
+  # 不配；R²≥0.999 曲线判据在 xlsx 附件属需新机制。
+  Sup_RF_MultiCalibration:
+    display_name: 甲烷/非甲烷总烃季度多点校准记录（赛浩/中兴）
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31           # 实证：lag>31 仅 2/52=3.8%
+    range_columns:
+      - column: ptemperature
+        label: 零气发生器温度设定
+        min: 400
+        max: 400
+        unit: "℃"
+        remark_column: abnormalremark
+        confirmed: false
+    date_columns:
+      - start: fixedtill
+        end: validtill
+        label: 钢瓶标气定值/有效期
+        must_cover_checkdate: true
+        confirmed: false
+      - start: dynamictimes
+        end: dynamictimee
+        label: 动态校准仪校准起止
+        valid_intervals_days: [30, 90, 180, 365]
+        interval_tolerance_days: 3
+        must_cover_checkdate: true
+        confirmed: false
+
+  # NH3 检出限核查（3 行）：引用阈值为 NMHC 年度注 1，本表 pollutanttype=NH3
+  # 且 05 文件无检出限限值 → 无文档阈值不配数值规则，待业务提供。
+  Sup_RF_NH3InstrumentDetectionLimit:
+    display_name: NH3 仪器检出限核查记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+  # BC 年度维护 3 项（04 文件红字"异常情况需备注"）。方向实证：11 行全 1，
+  # 3 行含 0 全部带说明，历史 0 硬命中（保护型）。
+  Sup_RF_BCYearMaintain:
+    display_name: BC 仪年度维护记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+    abnormal_columns:
+      - {column: qgqqj,  label: 气路清洁,     values: ["0"], remark_column: [bz1, bz2, bz3, rmark]}
+      - {column: qjkqcs, label: 分析腔体清洁, values: ["0"], remark_column: [bz1, bz2, bz3, rmark]}
+      - {column: wdxcs,  label: 采样泵维护,   values: ["0"], remark_column: [bz1, bz2, bz3, rmark]}
+
+  # ── 谱育（thyb）VOCs 维护族 ───────────────────────────────────────────────
+  # 月/半年表 0=未执行占主导且大量无备注（落 abnormal 必产 >5% 噪声）只配
+  # 及时性；季度验漏列数值档实证干净可配。
+  Sup_RF_thybMonthMaintain:
+    display_name: 谱育 VOCs 月度维护记录
+    category: month_check
+    cycle: month
+    # 实证：lag>10 达 18% 超 5% 红线，按实际节奏放宽至 31（lag>31 仅 1/22）
+    max_fill_lag_days: 31
+
+  Sup_RF_thybQuarterMaintain:
+    display_name: 谱育 VOCs 季度维护记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31           # 实证：lag>31 仅 1/28=3.6%
+    range_columns:
+      # 01 文件红字"全流程验漏检查需≤2mL/min"；28 行数值全部 ≤1.5，0 越界；
+      # 列语义映射文档"3/全流程验漏检查"双证
+      - column: result_5
+        label: 全流程验漏检查
+        max: 2
+        unit: mL/min
+        remark_column: remark_5
+        confirmed: true
+
+  Sup_RF_thybHalfYearMaintain:
+    display_name: 谱育 VOCs 半年维护记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45           # 实证：lag>45 为 0/17
+
+  Sup_RF_thybYearMaintain:
+    display_name: 谱育 VOCs 年度维护记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+  # ── N2O 分析仪巡检（22 类文档无截图；阈值取自映射文档 cshtml 标签内嵌参考
+  # 区间，照 HP_DalyHealth 先例，confirmed:false 待业务确认。39 行六参数 0 越界）──
+  Sup_RF_N2OAnalyzerinspection_Week:
+    display_name: N2O 分析仪周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:                  # 【待业务提供阈值】以下区间均出自 cshtml 标签
+      - column: benchcheckvalue
+        label: BENCH 温度
+        min: 40
+        max: 52
+        unit: "℃"
+        remark_column: otherremarks
+        confirmed: false
+      - column: inttempcheckvalue
+        label: 内部温度
+        min: 8
+        max: 47
+        unit: "℃"
+        remark_column: otherremarks
+        confirmed: false
+      - column: pressurecheckvalue
+        label: 压力
+        min: 250
+        max: 1000
+        unit: mmHg
+        remark_column: otherremarks
+        confirmed: false
+      - column: samplingflowcvalue
+        label: 采样流量
+        min: 0.35
+        max: 1.5
+        unit: L/min
+        remark_column: otherremarks
+        confirmed: false
+      - column: biasvoltagecvalue
+        label: 偏置电压
+        min: -120
+        max: -100
+        unit: V
+        remark_column: otherremarks
+        confirmed: false
+      - column: automaticcvalue
+        label: 自动增益强度
+        min: 150000
+        max: 300000
+        unit: Hz
+        remark_column: otherremarks
+        confirmed: false
+
+  # 半年表 2 行参数列全 NULL 无区分度 → 只配及时性；【待业务提供阈值】。
+  Sup_RF_N2OAnalyzerinspection_HalfYear:
+    display_name: N2O 分析仪半年巡检记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+
+  # 甲醛仪零跨核查表：02 文档阈值明确（零点≤0.5ppb/跨度≤10%）但 zerodrift*/
+  # spandrift* 数值列 152 行全 NULL → 无可判数值只建及时性，表单落库整改后补配。
+  Sup_RF_ZeroSpanCalibration:
+    display_name: 甲醛仪零跨核查记录（周质控）
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7            # 实证：lag>7 仅 1/152=0.7%
+
+  # 能见度仪（22 类文档无截图）→ 及时性骨架；附件已由
+  # VISIBILITY_CALIBRATION_EVIDENCE 覆盖，档案不重复配附件。
+  Sup_RF_VisibilityMeter_Week:
+    display_name: 能见度仪周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_VisibilityMeter_HalfYear:
+    display_name: 能见度仪半年标校记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+
+  # ── 甲醛通用设备族（映射列语义与实际填充错位，数值/日期规则全部不落，
+  # 【待业务提供列位映射与阈值】）────────────────────────────────────────────
+  # EquipmentMaintenance 实际填充 string1/2（耗材"已更换"）、string3/4（ALICAT
+  # 流量计型号/编号）、time1/2（流量计校准上次/下次）——映射登记列 93 行全 NULL。
+  # 周期=双周推断（02 文件"半月维护记录表"+93 行/9 个月多站节奏）。
+  Sup_RF_EquipmentMaintenance:
+    display_name: 甲醛仪半月维护记录
+    category: week_check
+    cycle: biweek
+    max_fill_lag_days: 14           # 实证：lag>14 仅 3/93=3.2%
+
+  # 维修记录为事件驱动（lag>31 达 12.8% 属维修自然跨度，不设及时性）；改用
+  # 日期倒挂校验：三时间列 86 行全填，检修早于故障 3 行、恢复早于故障 1 行
+  #（4.7%<5%，真实倒挂）。
+  Sup_RF_RepaireRecord:
+    display_name: 仪器维修记录
+    category: repair_record
+    date_columns:
+      - start: faulttime
+        end: repairetime
+        label: 故障/现场检修时间
+        confirmed: false
+      - start: faulttime
+        end: recovertime
+        label: 故障/恢复运行时间
+        confirmed: false
+
+  # 甲醛季度维护（22 类文档无截图；bool 勾选为 cshtml 标签阈值、方向未证不落）。
+  Sup_RF_QuarterlyEquipment:
+    display_name: 甲醛仪季度维护记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  # 甲醛维护测试记录（cshtml 标签阈值待业务确认；bool 方向混杂无区分度）。
+  Sup_RF_MaintenanceRecord:
+    display_name: 甲醛仪维护测试记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+
+  # ── Chromatotec（科玛特）VOCs 族 ──────────────────────────────────────────
+  # 流量核查：diff=偏差% 经全列数值关系实证，判据与 DeviceFlowCheck ±5% 同构
+  #（01 科玛特注释"流量偏差超过±5%即为不合格"），9 行全部在界内 0 越界。
+  Sup_RF_ChromatotecFlowCheck:
+    display_name: 科玛特 VOCs 流量核查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: c2c6_diff
+        label: C2-C6 流量偏差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+      - column: c6c12_diff
+        label: C6-C12 流量偏差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+
+  Sup_RF_ChromatotecMonthMaintain:
+    display_name: 科玛特 VOCs 月度维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_ChromatotecWeekCheck:
+    display_name: 科玛特 VOCs 周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7            # 实证：lag 最大 4 天
+
+  Sup_RF_ChromatotecQuarterMaintain:
+    display_name: 科玛特 VOCs 季度维护记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    range_columns:
+      # 01 文件科玛特季度红字"全流程验漏检查≤2mL/min"；3 行填 0.17/0/0 全合规
+      - column: result_8
+        label: 全流程验漏检查
+        max: 2
+        unit: mL/min
+        remark_column: remark_8
+        confirmed: true
+
+  # ── 最小及时性骨架族（数据 1~7 行，无文档阈值）────────────────────────────
+  Sup_RF_ChannelFlowCalibration:
+    display_name: OCEC 通道流量校准记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+  Sup_RF_Calibration:
+    display_name: NOy 分析仪校准记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_MonthDeviceMaintain:
+    display_name: NOy 仪器月度维护记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  # 浊度计历史两表：设备冲突判定已由 RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT
+  # 覆盖、附件已由 VISIBILITY_CALIBRATION_EVIDENCE 覆盖，本档案只补及时性。
+  Sup_RF_MonthNepheloMeterCheck:
+    display_name: 浊度仪月度检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_NepheloMeterCalibration:
+    display_name: 浊度仪校准记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+
+  # ── 历史残留 tag 骨架（1~10 行、近120天 0，及时性覆盖收口）─────────────────
+  # 数值阈值待业务提供；tag 名取自 rf_form_names.py 注册表。
+  Sup_RF_WholeDiaphargmCalibration:
+    display_name: 重金属全膜核查记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+  Sup_RF_DiaphragmCheck:
+    display_name: 重金属膜片核查记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_VocsStandardCurveCalibrate:
+    display_name: VOCs 标准曲线校准记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VoCsDetectionLimitRecord:
+    display_name: VOCs 检出限记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VoCsEXPECDetectionLimitRecord:
+    display_name: VOCs（聚光 EXPEC）检出限记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_VOCsMulityPointCurveRecord:
+    display_name: VOCs 多点曲线校准记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_OCECSunsetFlowCalibration:
+    display_name: OCEC Sunset 流量校准记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+  Sup_RF_O3LidarRepair:
+    display_name: 臭氧激光雷达维修记录
+    category: repair_record
+
+  Sup_RF_Quarter_HONOCheck:
+    display_name: HONO 分析仪季度巡检记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_TurbidiMeterSamplingCheck:
+    display_name: 浊度仪采样检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_QualityCheck:
+    display_name: 质控检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_MTHNMHCAnalyzer:
+    display_name: 甲烷/非甲烷总烃分析仪记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  RF_HY_GreenHouseCheck:
+    display_name: 温室气体半年检查记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45

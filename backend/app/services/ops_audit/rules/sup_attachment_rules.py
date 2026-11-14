@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.services.ops_audit.models import Issue
@@ -221,16 +222,20 @@ def _split_by_pollutant(
 
     matched = []
     mismatched = []
-    normalized = pollutant.strip().lower().replace("-", "").replace("_", "")
+    # 归一化仅保留字母数字：pollutanttype 常含分隔符（如 "CO2/CH4/CO/N2O"），
+    # 而 typecode 后缀为连续写法（CO2CH4CON2O），不去除 "/" 会造成温室气体族
+    # 全量误判"附件与表单不一致"（2026-11-14 全年验证发现的系统性误报源）。
+    normalized = re.sub(r"[^a-z0-9]", "", pollutant.strip().lower())
     prefix = f"{tag.strip().lower()}_"
     for record in tag_files:
         typecode = _record_typecode(record)
         lower = typecode.lower()
         suffix = typecode[len(prefix):] if lower.startswith(prefix) else typecode
-        suffix_normalized = suffix.strip().lower().replace("-", "").replace("_", "")
+        suffix_normalized = re.sub(r"[^a-z0-9]", "", suffix.strip().lower())
         filename = attachment_filename(record).lower()
+        filename_normalized = re.sub(r"[^a-z0-9]", "", filename)
         if (suffix_normalized and suffix_normalized == normalized) or (
-            not suffix_normalized and normalized in filename
+            not suffix_normalized and normalized and normalized in filename_normalized
         ):
             matched.append(record)
         else:

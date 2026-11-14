@@ -1115,12 +1115,25 @@ def test_pm1_month_merror_in_range_passes():
     assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
 
 
-def test_pm1_halfyear_has_no_abnormal_rule():
-    """半年检标志位方向与周检不同（leakwhether 87% 为 1），未确认前不得落异常规则。"""
+def test_pm1_halfyear_abnormal_direction_confirmed():
+    """半年检标志位方向经 92 行全量+备注实证落定（2026-11-14）：
+    external/insideisitclean 1=否-需处理（异常）、leakwhether 0=是-漏气（异常）。
+    1/0 值无备注命中；带备注豁免。"""
 
     issues = _run_pm1("Sup_RF_PM1MonitorInspection_HalfYear", {
         "externalisitclean": 1, "insideisitclean": 1, "leakwhether": 0,
         "otherremarks": "",
+    })
+    hits = [i for i in issues if i.rule_id == ABNORMAL_RULE_ID]
+    # 同表多列命中打包为一条 Issue，evidence.items 逐列记录
+    assert len(hits) == 1
+    evidence_items = json.loads(hits[0].evidence)["items"]
+    cols = {item["column"] for item in evidence_items}
+    assert cols == {"externalisitclean", "insideisitclean", "leakwhether"}
+
+    issues = _run_pm1("Sup_RF_PM1MonitorInspection_HalfYear", {
+        "externalisitclean": 1, "insideisitclean": 1, "leakwhether": 0,
+        "otherremarks": "厂家告知无分析腔体清洁，采样泵内置损坏直接更换",
     })
     assert [i for i in issues if i.rule_id == ABNORMAL_RULE_ID] == []
 
@@ -1190,16 +1203,24 @@ def test_co2_inspection_out_of_range_hits():
 
 
 def test_equipment_status_tih200_out_of_range_hits():
-    """TiH200（Etraninc）蠕动泵流量越界应命中。"""
+    """TiH200（Etraninc）蠕动泵1流量越界应命中；泵2（string5）区间已停用
+    （2026-11-14 全年验证：梅华恒填 0.2/莲花山恒填 0.6，站点泵管口径差异，
+    35/35 命中为档位不适用，待业务确认各站规格）。"""
 
     issues = _run_tag("Sup_RF_EquipmentStatus", "SUP_RF_EQUIPMENTSTATUS",
                       {"DEVICEBRAND": "Etraninc", "DEVICEMODEL": "TiH200",
-                       "string4": "0.50", "string5": "0.6"})
+                       "string4": "0.80", "string5": "0.6"})
     hits = [i for i in issues if i.rule_id == RANGE_RULE_ID]
     assert len(hits) == 1
     violations = json.loads(hits[0].evidence)["violations"]
-    assert violations[0]["column"] == "string5"
+    assert violations[0]["column"] == "string4"
     assert violations[0]["brand"] == "Etraninc"
+
+    # string5 已停用：越界值不再命中
+    issues = _run_tag("Sup_RF_EquipmentStatus", "SUP_RF_EQUIPMENTSTATUS",
+                      {"DEVICEBRAND": "Etraninc", "DEVICEMODEL": "TiH200",
+                       "string5": "0.6"})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
 
 
 def test_equipment_status_sdl_skipped_without_range():
@@ -1224,4 +1245,47 @@ def test_urg_water_peak_not_profiled_yet():
 
     issues = _run_tag("Sup_RF_URGWeekMaintain", "SUP_RF_URGWEEKMAINTAIN",
                       {"anionicwaterpeak1": "0.38"})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+
+def test_parse_duration_seconds_text_forms():
+    """时长解析覆盖真实填报形态（NH3 响应时间 T90）。"""
+
+    from app.services.ops_audit.rules.sup_form_rules import parse_duration_seconds
+
+    assert parse_duration_seconds("5min") == 300.0
+    assert parse_duration_seconds("45MIN") == 2700.0
+    assert parse_duration_seconds("3分钟") == 180.0
+    assert parse_duration_seconds("89.99s") == 89.99
+    assert parse_duration_seconds("290s") == 290.0
+    assert parse_duration_seconds("3min35") == 215.0
+    assert parse_duration_seconds("5min12s") == 312.0
+    assert parse_duration_seconds("129") == 129.0
+    assert parse_duration_seconds(600) == 600.0
+    # 单位误填与其他物理量：不判（None），避免首数字解析误判
+    assert parse_duration_seconds("147ppb") is None
+    assert parse_duration_seconds("-") is None
+    assert parse_duration_seconds(None) is None
+
+
+def test_response_time_duration_range_uses_value_type():
+    """value_type=duration_seconds 的 range 规则：45min(2700s) 超标命中、5min 通过。
+
+    档案 Sup_RF_NH3ResponseTimeInspection 的 T90≤600s 规则（HJ 1393-2024 红字）。
+    """
+
+    issues = _run_tag("Sup_RF_NH3ResponseTimeInspection", "SUP_RF_NH3RESPONSETIMEINSPECTION",
+                      {"responsetimet90": "45min", "remark1": ""})
+    hits = [i for i in issues if i.rule_id == RANGE_RULE_ID]
+    assert len(hits) == 1
+    assert "45min" in (hits[0].message or "")
+    assert "2700.0" in json.dumps(hits[0].evidence or {}, ensure_ascii=False)
+
+    issues = _run_tag("Sup_RF_NH3ResponseTimeInspection", "SUP_RF_NH3RESPONSETIMEINSPECTION",
+                      {"responsetimet90": "5min", "remark1": ""})
+    assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []
+
+    # 单位误填（147ppb）解析为 None，不产生命中
+    issues = _run_tag("Sup_RF_NH3ResponseTimeInspection", "SUP_RF_NH3RESPONSETIMEINSPECTION",
+                      {"responsetimet90": "147ppb", "remark1": ""})
     assert [i for i in issues if i.rule_id == RANGE_RULE_ID] == []

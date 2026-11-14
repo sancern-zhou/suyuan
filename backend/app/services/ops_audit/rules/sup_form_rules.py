@@ -273,7 +273,12 @@ def check_range_columns(
         else:
             column = str(spec.get("column") or "")
             raw = form.get(column)
-            value = parse_form_number(raw)
+            if str(spec.get("value_type") or "").strip().lower() == "duration_seconds":
+                # 时长列（如 NH3 响应时间 T90："5min12s"/"3分钟"/"45min"/裸数秒），
+                # 统一换算为秒后再判区间；裸数按秒（HJ 1393 口径以秒计）。
+                value = parse_duration_seconds(raw)
+            else:
+                value = parse_form_number(raw)
         if value is None:
             continue
         if min_value is not None and value < float(min_value):
@@ -630,7 +635,14 @@ def check_cycle_timeliness(
     check_date = parse_form_date(form.get("CHECKDATE") or form.get("checkdate"))
     create_time = parse_form_date(order.get("CREATETIME") or order.get("createtime"))
     task_item = _matching_task_item(sup_taskitems, tag, form)
-    grace_days = _plan_late_grace_days()
+    # 档案级宽限覆盖：周节奏 tag（如 VOCs 流量/BC 周巡检）建单常态晚于计划
+    # 6~10 天，全局 5 天试点宽限会产生近 100% 命中（口径性噪音），允许按
+    # tag 覆盖 plan_late_grace_days，未配置时回落全局值。
+    grace_override = profile.get("plan_late_grace_days")
+    if grace_override is None:
+        grace_days = _plan_late_grace_days()
+    else:
+        grace_days = max(0, int(grace_override))
     if task_item is not None:
         # 计划口径（阶段 2.4）：质控计划任务项给出周期计划完成日，表单创建
         # 晚于计划完成日超过宽限天数即填写不及时。
@@ -860,6 +872,43 @@ def parse_form_number(value: Any) -> float | None:
         return float(match.group(0))
     except ValueError:
         return None
+
+
+def parse_duration_seconds(value: Any) -> float | None:
+    """把时长文本统一解析为秒（NH3 响应时间 T90 判定用）。
+
+    支持 "5min12s"/"3min35"/"45MIN"/"3分钟"/"89.99s"/"290s" 与裸数（按秒，
+    HJ 1393 口径）；带其他物理量单位（ppb/ppm/℃ 等）视为单位误填返回 None，
+    避免首数字解析把 45min（2700s）误判成 45。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and math.isnan(value):
+            return None
+        return float(value)
+    text = str(value).strip()
+    if text.lower() in SKIP_TOKENS:
+        return None
+    if re.search(r"ppb|ppm|℃|°c|ug|mg|Mm", text, re.IGNORECASE):
+        return None
+    match = re.fullmatch(
+        r"\s*(?:(-?\d+(?:\.\d+)?)\s*(?:min|mins|minutes|分钟|分种))?"
+        r"\s*(-?\d+(?:\.\d+)?)?\s*(?:s|sec|secs|seconds|秒)?\s*",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    minutes, seconds = match.group(1), match.group(2)
+    if minutes is None and seconds is None:
+        return None
+    total = 0.0
+    if minutes:
+        total += float(minutes) * 60
+    if seconds:
+        total += float(seconds)
+    return total
 
 
 def parse_form_date(value: Any) -> datetime | None:
