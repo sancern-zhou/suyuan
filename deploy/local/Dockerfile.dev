@@ -1,0 +1,27 @@
+# 开发专用镜像：国内源加速 + 最小系统依赖
+#
+# 与 backend/Dockerfile（生产全量）的差异：
+# - apt/pip 走清华源（生产源在低带宽网络下 3GB+ 依赖需数小时）；
+# - 跳过 LibreOffice/Quarto/Playwright/msodbc/Tesseract——报告渲染、浏览器
+#   自动化、SQL Server 直连、OCR 在本地开发环境不可用（监控栈与 Agent
+#   运行时开发不依赖它们）；
+# - Python 依赖与生产完全一致（backend/requirements.txt 原样安装）。
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# Debian 换清华源（bookworm 用 deb822 格式）
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    libmagic1 \
+    fonts-noto-cjk \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r requirements.txt
