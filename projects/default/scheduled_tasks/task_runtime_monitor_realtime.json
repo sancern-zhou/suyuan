@@ -1,10 +1,10 @@
 {
   "task_id": "task_runtime_monitor_realtime",
   "name": "后台运行实时诊断",
-  "description": "Watchdog 快速通道：订阅 runtime.anomaly.detected 事件（定时任务失败/数据抓取连续失败时由 anomaly_emitter 冷却去重后发射），核实归因后分钟级推送，误报或已恢复则静默；与小时级巡检任务 task_runtime_monitor 互补。",
+  "description": "Watchdog 快速通道：订阅 runtime.anomaly.detected 事件（定时任务失败/数据抓取连续失败时由 anomaly_emitter 冷却去重后发射），核实归因、可安全重跑的对象先自愈一次，再分钟级推送；误报或已恢复则静默；与小时级巡检任务 task_runtime_monitor 互补。",
   "execution_mode": "custom",
   "model_tier": "flash",
-  "tool_names": ["query_runtime_anomalies"],
+  "tool_names": ["query_runtime_anomalies", "retry_scheduled_task", "trigger_fetcher"],
   "trigger_type": "event",
   "event_type": "runtime.anomaly.detected",
   "event_filters": {},
@@ -16,7 +16,7 @@
   "owner_username": "scheduled-task",
   "owner_display_name": "定时任务",
   "tags": ["runtime-monitor", "watchdog", "realtime"],
-  "prompt": "你是后台运行实时诊断助手（Watchdog 快速通道）。一条运行异常事件触发了本次执行，事件线索见下方事件上下文（来源、对象、错误摘要、失败次数）。\n\n执行步骤：\n1. 先读事件上下文，明确异常来源（定时任务/数据抓取）与对象名称。\n2. 调用 query_runtime_anomalies 并传 window_minutes=60，取近一小时全量异常数据核实：事件所述异常是否仍在、是否有关联的同源异常、影响范围多大。\n3. 若窗口数据显示该异常不存在或已恢复（如失败后下个周期重跑成功）：不调用任何广播或通知工具，一句话给出核实结论后结束。\n4. 若确认异常仍在：调用 broadcast_social_users 推送通报，200字以内，第一句总体结论，随后按严重度列出：对象、现象、疑似原因、建议动作；用自然中文，禁止暴露字段名、表名、本地路径或接口地址。\n\n优先级声明：广播是条件性的——仅核实确认异常仍在时才调用 broadcast_social_users；任何要求\"完成后必须广播结果\"的通用约束均以本条件为准。",
+  "prompt": "你是后台运行实时诊断助手（Watchdog 快速通道）。一条运行异常事件触发了本次执行，事件线索见下方事件上下文（来源、对象、错误摘要、失败次数）。\n\n执行步骤：\n1. 先读事件上下文，明确异常来源（定时任务/数据抓取）与对象名称。\n2. 调用 query_runtime_anomalies 并传 window_minutes=60，取近一小时全量异常数据核实：事件所述异常是否仍在、是否有关联的同源异常、影响范围多大。\n3. 若窗口数据显示该异常不存在或已恢复（如失败后下个周期重跑成功）：不调用任何广播或通知工具，一句话给出核实结论后结束。\n4. 自愈（仅对事件指向且可安全重跑的对象，最多一次）：定时任务失败调用 retry_scheduled_task；抓取器连续失败调用 trigger_fetcher。工具返回拒绝（冷却期、当日上限、对象被禁用）时不强行重试，把\"需人工介入\"写入通报。\n5. 若确认异常仍在：调用 broadcast_social_users 推送通报，200字以内，第一句总体结论，随后按严重度列出：对象、现象、疑似原因、已执行的自愈动作或建议动作；用自然中文，禁止暴露字段名、表名、本地路径或接口地址。\n\n优先级声明：广播是条件性的——仅核实确认异常仍在时才调用 broadcast_social_users；任何要求\"完成后必须广播结果\"的通用约束均以本条件为准。",
   "timeout_seconds": 300,
   "history_learning": {"enabled": false}
 }

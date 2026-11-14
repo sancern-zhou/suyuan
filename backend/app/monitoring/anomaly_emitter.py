@@ -51,6 +51,11 @@ def _get_redis():
     return _redis
 
 
+def get_redis_client():
+    """共享同一懒加载客户端（自愈工具的缰绳复用，避免第二份连接池）。"""
+    return _get_redis()
+
+
 def _cooldown_seconds() -> int:
     try:
         return max(60, int(os.getenv("RUNTIME_MONITOR_EVENT_COOLDOWN_SECONDS", DEFAULT_COOLDOWN_SECONDS)))

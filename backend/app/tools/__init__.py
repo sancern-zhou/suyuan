@@ -1072,6 +1072,36 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="query_runtime_anomalies", error=str(e))
 
     try:
+        from app.tools.runtime_monitor.self_heal import (
+            retry_scheduled_task_tool,
+            trigger_fetcher_tool,
+        )
+        registry.register(
+            retry_scheduled_task_tool,
+            priority=367,
+            metadata={
+                "data_type": "self_heal",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        registry.register(
+            trigger_fetcher_tool,
+            priority=367,
+            metadata={
+                "data_type": "self_heal",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="retry_scheduled_task")
+        logger.info("tool_loaded", tool="trigger_fetcher")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="runtime_monitor_self_heal", error=str(e))
+
+    try:
         from app.tools.scheduled_tasks import query_scheduled_task_results_tool
         registry.register(
             query_scheduled_task_results_tool,
