@@ -74,6 +74,14 @@ def normalize(record):
     }
 
 
+def _missing_fields(raw_text):
+    """Parameter fields absent in one raw hourly record; a NULL record means all absent."""
+    if raw_text is None:
+        return set(POLLUTANTS)
+    values = normalize(json.loads(raw_text))['values']
+    return {field for field in POLLUTANTS if values[field] is None}
+
+
 def _consecutive_groups(cells):
     """Split hour-ending labels into runs of adjacent hours."""
     groups = []
@@ -227,12 +235,19 @@ class MonitorStore:
                                   'start':row['hour'], 'end':row['hour']})
         return intervals
 
-    def open_gaps(self, code):
-        """Merged still-missing spans per source for one station, for feedback matching."""
+    def open_gaps(self, code, *, include_backfilled=False):
+        """Merged observed-missing spans per source for one station.
+
+        Still-missing hours (present=0) are the ongoing-tracking view. Feedback
+        matching also needs spans the platform already backfilled: their sticky
+        first_missing_at evidence keeps those episodes matchable after recovery.
+        """
         with self.connect() as db:
-            rows = list(db.execute('''SELECT source,hour FROM cells
-                WHERE code=? AND first_missing_at IS NOT NULL AND present=0
-                ORDER BY source,hour''', (code,)))
+            sql = '''SELECT source,hour FROM cells
+                WHERE code=? AND first_missing_at IS NOT NULL'''
+            if not include_backfilled:
+                sql += ' AND present=0'
+            rows = list(db.execute(sql + ' ORDER BY source,hour', (code,)))
         spans = []
         for row in rows:
             if (spans and spans[-1]['source'] == row['source']
@@ -256,22 +271,23 @@ class MonitorStore:
                 sources = national_sources if station['type'] == '国控' else [provincial_source]
                 main_source = sources[0]
                 # Hour classification drives both initiation and continuation:
-                #   offline  — every parameter absent or '—' (station not uploading)
+                #   offline  — every parameter absent or '—' at some observation
                 #   impaired — data arrived but a factor is missing or flagged
                 #   healthy  — complete, unflagged data
                 # An outage episode *starts* on an offline hour (all-parameter rule)
                 # and *continues* through impaired hours until a healthy one: after a
                 # network failure the station often returns with one factor still down
                 # or the backfill carrying flags, which is not a recovered station.
+                # Offline is judged on observation history (first_missing_at is
+                # sticky), so a platform backfill before report time does not erase
+                # the episode — a healed outage is listed inside the 24h window as
+                # recovered/已回补 and only leaves via the window rule below.
                 cells_all = list(db.execute('''SELECT * FROM cells WHERE code=? AND source=?
                     AND hour<=? ORDER BY hour''',
                     (station['code'], main_source, end.isoformat())))
 
                 def _status(cell):
-                    # Judged purely on the data present *now*: an hour already
-                    # refilled (including with Re/H flags) is no longer a gap. Only a
-                    # factor carrying no value at all (absent or '—') is unresolved.
-                    if not cell['present']:
+                    if cell['first_missing_at'] is not None or not cell['present']:
                         return 'offline'
                     if not cell['data_complete']:
                         return 'impaired'
@@ -322,11 +338,14 @@ class MonitorStore:
                         if not holes:
                             complete_sources.append(source)
                     backfilled = bool(complete_sources)
-                    # Parameters absent at any hour of the episode, from raw evidence.
+                    # Parameters absent at any hour of the episode. Backfilled hours
+                    # carry the refill in `raw`, so the first-seen raw from while the
+                    # hour was missing is the evidence that matters; a NULL record
+                    # means the station uploaded nothing at all.
                     missing_parameters = sorted({field for cell in group
-                        for field in POLLUTANTS
-                        if cell['raw'] is None
-                        or normalize(json.loads(cell['raw']))['values'][field] is None})
+                        for field in _missing_fields(
+                            cell['first_missing_raw'] if cell['first_missing_at'] is not None
+                            else cell['raw'])})
                     latest = db.execute('''SELECT hour,present,quality_complete,data_complete,
                         first_missing_at,first_missing_raw FROM cells
                         WHERE code=? AND source=? AND hour<=? ORDER BY hour DESC LIMIT 1''',

@@ -87,16 +87,23 @@ def test_either_source_must_fill_entire_gap_not_mixed_hours(tmp_path):
     assert entry['affected_hours']==5
 
 
-def test_fully_backfilled_outage_is_not_reported(tmp_path):
-    """数据完全回补、无残留问题：不再视为离线，不列入日报。"""
+def test_fully_backfilled_outage_is_reported_then_leaves_window(tmp_path):
+    """整站缺数被平台整段回补：事件不消失，窗口内按已恢复+已回补列出，窗口外脱落。"""
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
     # Nothing arrives on the first pass, then the whole window is backfilled.
     ingest(store,BASE,end,[],observed=end+timedelta(minutes=20))
     ingest(store,BASE,end,rows(BASE,end),observed=end+timedelta(minutes=30))
+    entry=[e for e in report(store,end)['entries'] if e['code']=='A'][0]
+    assert entry['affected_hours']==24 and entry['recovered']
+    assert entry['backfill_status']=='已回补'
+    assert entry['missing_parameters']==['co','nO2','o3','pM10','pM2_5','sO2']
     # A stale re-check with an older timestamp must not resurrect the gap.
     ingest(store,BASE,end,[],observed=end+timedelta(minutes=25))
-    assert [e for e in report(store,BASE+timedelta(hours=6))['entries'] if e['code']=='A']==[]
+    entry=[e for e in report(store,end)['entries'] if e['code']=='A'][0]
+    assert entry['recovered'] and entry['backfill_status']=='已回补'
+    # Once the healed episode falls out of the 24h window it stops being listed.
+    assert report(store,end+timedelta(days=1))['entries']==[]
 
 
 def test_only_gaps_over_four_hours_are_recorded(tmp_path):
@@ -842,8 +849,8 @@ def test_offline_then_single_factor_gap_stays_unrecovered(tmp_path):
     assert local_time(entry['offline_start']).day==9 and local_time(entry['offline_start']).hour==21
 
 
-def test_flagged_backfill_counts_as_recovered(tmp_path):
-    """质控/回补标记（Re、H）是有效数据：因子补回后即算恢复。"""
+def test_flagged_backfill_is_reported_recovered(tmp_path):
+    """质控/回补标记（Re、H）是有效数据：回补后窗口内仍列为已恢复+已回补。"""
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
     gap=BASE+timedelta(hours=4)
@@ -853,8 +860,48 @@ def test_flagged_backfill_counts_as_recovered(tmp_path):
     refill=[{'code':'A','timePoint':h,'sO2':'9','nO2':'6','pM10':'24',
              'co':'1.0','o3':'67','pM2_5':'10(Re)'} for h in hours(BASE,gap)]
     ingest(store,BASE,gap,refill,observed=end+timedelta(minutes=30))
-    # Nothing left unresolved, so the healed episode is not reported at all.
-    assert [e for e in report(store,end)['entries'] if e['code']=='A']==[]
+    # The healed episode still forms and is listed as recovered + backfilled.
+    entry=[e for e in report(store,end)['entries'] if e['code']=='A'][0]
+    assert entry['affected_hours']==4 and entry['recovered']
+    assert entry['backfill_status']=='已回补'
+    assert entry['missing_parameters']==['co','nO2','o3','pM10','pM2_5','sO2']
+
+
+def test_hour_by_hour_outage_backfilled_before_report_is_listed(tmp_path):
+    """金山/龙仙模式：整站缺数被逐小时观察到、出报前已被平台回补，仍列入日报。"""
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    gap=list(hours(BASE+timedelta(hours=16),BASE+timedelta(hours=20)))
+    # Each collection pass sees the outage grow hour by hour; the platform then
+    # backfills the whole gap before the report cutoff. The sticky first-missing
+    # evidence must keep the 4h episode reportable.
+    for depth,label in enumerate(gap,start=1):
+        cut=local_time(label)
+        missing={('A',h) for h in gap[:depth]}
+        ingest(store,BASE,cut,rows(BASE,cut,missing=missing),
+               observed=cut+timedelta(minutes=30))
+    ingest(store,BASE,end,rows(BASE,end),observed=end+timedelta(minutes=30))
+    entry=[e for e in report(store,end)['entries'] if e['code']=='A'][0]
+    assert entry['affected_hours']==4
+    assert entry['offline_span']=={'start':(BASE+timedelta(hours=16)).isoformat(),
+                                   'end':(BASE+timedelta(hours=20)).isoformat()}
+    assert entry['recovered'] and entry['backfill_status']=='已回补'
+    assert entry['evidence_kind'].startswith('整站小时数据无数据达到4小时')
+    assert entry['missing_parameters']==['co','nO2','o3','pM10','pM2_5','sO2']
+
+
+def test_record_feedback_matches_backfilled_gap(tmp_path):
+    """已回补的缺数区间仍能匹配反馈：事后核实的离线原因可以挂到事件上。"""
+    from app.services.station_operation_monitor.feedback import record_feedback
+    store=MonitorStore(tmp_path/'monitor.sqlite3');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    absent={('A',h) for h in hours(BASE,BASE+timedelta(hours=6))}
+    ingest(store,BASE,BASE+timedelta(hours=6),
+           rows(BASE,BASE+timedelta(hours=6),missing=absent))
+    ingest(store,BASE,end,rows(BASE,end))
+    result=record_feedback(config(),station='A',reason='网络故障',unrecoverable=False,
+                           start=BASE,end=BASE+timedelta(hours=6),root=tmp_path)
+    assert result['matched_events']
 
 
 def test_four_hour_offline_with_clean_backfill_is_reported_recovered(tmp_path):
