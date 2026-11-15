@@ -1,9 +1,7 @@
-"""②企业核查线索周报工作流：LLM 生成周报 → APP 广播 + 公众号订阅通知（科长/区县/执法）。
+"""②企业核查线索周报工作流：LLM 生成周报 → APP 广播（科长/区县/执法）。
 
 代理口径（CEMS 接入前）：周报只呈现"站点告警 × 静态清单上风向筛查"的
-核查线索，红线是不得写成贡献率或企业责任认定。通道为 APP 广播，另经
-公众号订阅通知向已绑定 openid 的同一受众发摘要提醒（第三渠道，独立
-隔离，失败不影响 APP 投递）。
+核查线索，红线是不得写成贡献率或企业责任认定。通道为 APP 广播。
 """
 
 from __future__ import annotations
@@ -18,11 +16,6 @@ import structlog
 from app.scheduled_tasks.event_delivery import EventTaskDelivery
 from app.scheduled_tasks.event_output import BroadcastPayload, EventTaskOutput
 from app.scenarios.xuchang_push_common.audiences import resolve_audience_accounts
-from app.scenarios.xuchang_push_common.wechat_mp_delivery import (
-    first_notice_line,
-    push_wechat_mp_notice,
-    today_str,
-)
 from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
@@ -142,35 +135,10 @@ async def run_enterprise_clue_weekly_workflow(
         )
     sent_count = sum(1 for row in delivery_results if row.get("sent"))
 
-    # 公众号订阅通知（第三渠道，独立隔离，失败不影响 APP 投递）
-    wechat_mp: dict[str, Any] = {"enabled": False}
-    window = evidence.get("window") or {}
-    try:
-        wechat_mp = await push_wechat_mp_notice(
-            "enterprise_clue",
-            fields=[
-                "企业核查线索周报",
-                f"{window.get('start')}~{window.get('end')}",
-                first_notice_line(message) or "周报已生成",
-                today_str(),
-            ],
-            roles=list(REPORT_ROLES),
-            accounts=[
-                str(uid)
-                for uid in (task.target_user_ids or [])
-                if str(uid).startswith("app:")
-            ],
-        )
-    except Exception as exc:
-        logger.warning(
-            "xuchang_enterprise_clue_wechat_mp_failed", error=str(exc)[:300]
-        )
-
     summary = (
         f"企业核查线索周报已生成并投递"
-        f"（{window.get('start')}~{window.get('end')}）："
-        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个；"
-        f"公众号订阅通知成功{wechat_mp.get('sent', 0)}个。"
+        f"（{evidence.get('window', {}).get('start')}~{evidence.get('window', {}).get('end')}）："
+        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个。"
     )
     logger.info("xuchang_enterprise_clue_workflow_done", summary=summary)
     return {
@@ -179,7 +147,6 @@ async def run_enterprise_clue_weekly_workflow(
         "message": message,
         "app_recipients": len(recipients),
         "app_sent": sent_count,
-        "wechat_mp": wechat_mp,
     }
 
 

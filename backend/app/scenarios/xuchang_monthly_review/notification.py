@@ -1,12 +1,10 @@
-"""①月度特征分析通报工作流：LLM 生成月度通报 → APP 广播 + 公众号订阅通知（局长/科长）。
+"""①月度特征分析通报工作流：LLM 生成月度通报 → APP 广播（局长/科长）。
 
 事件链：XuchangMonthlyReviewEvidenceFetcher 每月 2 日冻结上月证据包并发布
 ``xuchang.monthly_review.completed`` → 本 workflow（注册名
 ``xuchang_monthly_review_analysis``）读取证据包，LLM 生成月度特征分析
 通报（超时/失败回退确定性模板），经 EventTaskDelivery 投递
-task.target_user_ids ∪ 受众组(局长/科长)。通道为 APP 广播（不走微信群），
-另经公众号订阅通知向已绑定 openid 的同一受众发摘要提醒（第三渠道，
-独立隔离，失败不影响 APP 投递）。
+task.target_user_ids ∪ 受众组(局长/科长)。通道为 APP 广播，不走微信群。
 """
 
 from __future__ import annotations
@@ -25,11 +23,6 @@ from app.scenarios.xuchang_monthly_review.constants import (
     REPORT_ROLES,
 )
 from app.scenarios.xuchang_push_common.audiences import resolve_audience_accounts
-from app.scenarios.xuchang_push_common.wechat_mp_delivery import (
-    first_notice_line,
-    push_wechat_mp_notice,
-    today_str,
-)
 from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
@@ -338,33 +331,9 @@ async def run_monthly_review_workflow(
         )
     sent_count = sum(1 for row in delivery_results if row.get("sent"))
 
-    # 公众号订阅通知（第三渠道，独立隔离，失败不影响 APP 投递）
-    wechat_mp: dict[str, Any] = {"enabled": False}
-    try:
-        wechat_mp = await push_wechat_mp_notice(
-            "monthly_review",
-            fields=[
-                "月度特征分析",
-                str(evidence.get("month") or ""),
-                first_notice_line(message) or "月度通报已生成",
-                today_str(),
-            ],
-            roles=list(REPORT_ROLES),
-            accounts=[
-                str(uid)
-                for uid in (task.target_user_ids or [])
-                if str(uid).startswith("app:")
-            ],
-        )
-    except Exception as exc:
-        logger.warning(
-            "xuchang_monthly_review_wechat_mp_failed", error=str(exc)[:300]
-        )
-
     summary = (
         f"月度特征分析通报已生成并投递（{evidence.get('month')}）："
-        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个；"
-        f"公众号订阅通知成功{wechat_mp.get('sent', 0)}个。"
+        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个。"
     )
     logger.info("xuchang_monthly_review_workflow_done", summary=summary)
     return {
@@ -373,5 +342,4 @@ async def run_monthly_review_workflow(
         "message": message,
         "app_recipients": len(recipients),
         "app_sent": sent_count,
-        "wechat_mp": wechat_mp,
     }
