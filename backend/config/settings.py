@@ -1295,6 +1295,35 @@ class Settings(BaseSettings):
     push_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
     push_offline_ttl_ms: int = Field(default=86400000, ge=0, le=259200000)
 
+    # WeCom (企业微信) external-contact channel.  Delivery targets are app
+    # accounts; the account-to-external_userid binding lives in the social
+    # directory (wecom_bindings.json).  Group-msg tasks are confirmed by the
+    # operator member inside the WeCom app (platform design).  Empty
+    # token/AES key keeps the callback path closed at the gateway.
+    wecom_enabled: bool = Field(
+        default=False,
+        description="Enable the WeCom external-contact push channel",
+    )
+    wecom_corpid: str = Field(default="")
+    wecom_contact_secret: str = Field(
+        default="",
+        description="Secret of the 客户联系 (external contact) app for API calls",
+    )
+    wecom_default_member: str = Field(
+        default="",
+        description="Operator member userid used for bind QR codes and group-msg sender fallback",
+    )
+    wecom_token: str = Field(
+        default="",
+        description="Callback signature token; empty = callback closed",
+    )
+    wecom_aes_key: str = Field(
+        default="",
+        description="43-char EncodingAESKey for callback encryption; empty = callback closed",
+    )
+    wecom_api_prefix: str = Field(default="/api/wecom")
+    wecom_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+
     @property
     def redis_url(self) -> str:
         """Construct Redis URL."""

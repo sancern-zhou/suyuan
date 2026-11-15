@@ -1,7 +1,9 @@
-"""②企业核查线索周报工作流：LLM 生成周报 → APP 广播（科长/区县/执法）。
+"""②企业核查线索周报工作流：LLM 生成周报 → APP 广播 + 企业微信推送（科长/区县/执法）。
 
 代理口径（CEMS 接入前）：周报只呈现"站点告警 × 静态清单上风向筛查"的
-核查线索，红线是不得写成贡献率或企业责任认定。通道为 APP 广播。
+核查线索，红线是不得写成贡献率或企业责任认定。通道为 APP 广播，另经
+企业微信客户联系向已绑定的同一受众创建群发任务（第三渠道，独立隔离，
+失败不影响 APP 投递；任务需运营成员在企微客户端确认发送）。
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import structlog
 from app.scheduled_tasks.event_delivery import EventTaskDelivery
 from app.scheduled_tasks.event_output import BroadcastPayload, EventTaskOutput
 from app.scenarios.xuchang_push_common.audiences import resolve_audience_accounts
+from app.scenarios.xuchang_push_common.wecom_delivery import push_wecom_report
 from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
@@ -135,10 +138,32 @@ async def run_enterprise_clue_weekly_workflow(
         )
     sent_count = sum(1 for row in delivery_results if row.get("sent"))
 
+    # 企业微信客户联系（第三渠道，独立隔离，失败不影响 APP 投递）
+    wecom: dict[str, Any] = {"enabled": False}
+    window = evidence.get("window") or {}
+    try:
+        wecom = await push_wecom_report(
+            "enterprise_clue",
+            title=MESSAGE_TITLE,
+            content=message,
+            roles=list(REPORT_ROLES),
+            accounts=[
+                str(uid)
+                for uid in (task.target_user_ids or [])
+                if str(uid).startswith("app:")
+            ],
+        )
+    except Exception as exc:
+        logger.warning(
+            "xuchang_enterprise_clue_wecom_failed", error=str(exc)[:300]
+        )
+
     summary = (
         f"企业核查线索周报已生成并投递"
-        f"（{evidence.get('window', {}).get('start')}~{evidence.get('window', {}).get('end')}）："
-        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个。"
+        f"（{window.get('start')}~{window.get('end')}）："
+        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个；"
+        f"企业微信任务{len(wecom.get('tasks') or [])}个覆盖{wecom.get('recipients', 0)}人"
+        f"（待运营成员在企微确认发送）。"
     )
     logger.info("xuchang_enterprise_clue_workflow_done", summary=summary)
     return {
@@ -147,6 +172,7 @@ async def run_enterprise_clue_weekly_workflow(
         "message": message,
         "app_recipients": len(recipients),
         "app_sent": sent_count,
+        "wecom": wecom,
     }
 
 

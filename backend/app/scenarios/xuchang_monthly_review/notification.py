@@ -1,10 +1,12 @@
-"""①月度特征分析通报工作流：LLM 生成月度通报 → APP 广播（局长/科长）。
+"""①月度特征分析通报工作流：LLM 生成月度通报 → APP 广播 + 企业微信推送（局长/科长）。
 
 事件链：XuchangMonthlyReviewEvidenceFetcher 每月 2 日冻结上月证据包并发布
 ``xuchang.monthly_review.completed`` → 本 workflow（注册名
 ``xuchang_monthly_review_analysis``）读取证据包，LLM 生成月度特征分析
 通报（超时/失败回退确定性模板），经 EventTaskDelivery 投递
-task.target_user_ids ∪ 受众组(局长/科长)。通道为 APP 广播，不走微信群。
+task.target_user_ids ∪ 受众组(局长/科长)。通道为 APP 广播（不走微信群），
+另经企业微信客户联系向已绑定的同一受众创建群发任务（第三渠道，独立
+隔离，失败不影响 APP 投递；任务需运营成员在企微客户端确认发送）。
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from app.scenarios.xuchang_monthly_review.constants import (
     REPORT_ROLES,
 )
 from app.scenarios.xuchang_push_common.audiences import resolve_audience_accounts
+from app.scenarios.xuchang_push_common.wecom_delivery import push_wecom_report
 from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
@@ -331,9 +334,30 @@ async def run_monthly_review_workflow(
         )
     sent_count = sum(1 for row in delivery_results if row.get("sent"))
 
+    # 企业微信客户联系（第三渠道，独立隔离，失败不影响 APP 投递）
+    wecom: dict[str, Any] = {"enabled": False}
+    try:
+        wecom = await push_wecom_report(
+            "monthly_review",
+            title=MESSAGE_TITLE,
+            content=message,
+            roles=list(REPORT_ROLES),
+            accounts=[
+                str(uid)
+                for uid in (task.target_user_ids or [])
+                if str(uid).startswith("app:")
+            ],
+        )
+    except Exception as exc:
+        logger.warning(
+            "xuchang_monthly_review_wecom_failed", error=str(exc)[:300]
+        )
+
     summary = (
         f"月度特征分析通报已生成并投递（{evidence.get('month')}）："
-        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个。"
+        f"APP接收对象{len(recipients)}个、投递成功{sent_count}个；"
+        f"企业微信任务{len(wecom.get('tasks') or [])}个覆盖{wecom.get('recipients', 0)}人"
+        f"（待运营成员在企微确认发送）。"
     )
     logger.info("xuchang_monthly_review_workflow_done", summary=summary)
     return {
@@ -342,4 +366,5 @@ async def run_monthly_review_workflow(
         "message": message,
         "app_recipients": len(recipients),
         "app_sent": sent_count,
+        "wecom": wecom,
     }
