@@ -1,10 +1,9 @@
-"""App-account ↔ WeChat MP openid binding registry.
+"""App 账号 ↔ 企业微信外部联系人（external_userid）绑定注册表。
 
-Same atomic-JSON pattern as PushDeviceStore: one file under the social
-directory, temp write + os.replace, one asyncio lock per process.  An
-openid identifies one human WeChat user; when the same openid binds to
-another app account the binding moves, so subscribe notices cannot leak
-across accounts.
+与 PushDeviceStore 同款原子 JSON 模式（temp + os.replace + 进程级锁）。
+一个 external_userid 标识一个微信用户：换绑到别的 App 账号时自动搬家，
+防止推送跨账号泄漏。owner 记录该客户当前由哪个企微成员跟进——企业群发
+任务的客户必须是发送成员自己的客户，投递时按 owner 分组。
 """
 
 from __future__ import annotations
@@ -24,24 +23,22 @@ from app.utils.path_config import get_social_dir
 logger = structlog.get_logger(__name__)
 
 BINDING_STATUS_BOUND = "bound"
-BINDING_STATUS_UNSUBSCRIBED = "unsubscribed"
+BINDING_STATUS_UNBOUND = "unbound"
 
 
 def normalize_account(account: str) -> str:
-    """Accept both bare app-account ids and ``app:android:<id>`` identities."""
+    """同时接受裸账号 id 与 ``app:android:<id>`` 身份形式。"""
     value = str(account or "").strip()
     if value.startswith("app:android:"):
         value = value.removeprefix("app:android:")
     return value.strip()
 
 
-class WechatMpBindingStore:
-    """JSON registry: app account → {openid, status, template states}."""
-
+class WecomBindingStore:
     _lock = asyncio.Lock()
 
     def __init__(self, path: Path | None = None):
-        self.path = path or (get_social_dir() / "wechat_mp_bindings.json")
+        self.path = path or (get_social_dir() / "wecom_bindings.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def _read(self) -> dict[str, dict[str, Any]]:
@@ -50,7 +47,7 @@ class WechatMpBindingStore:
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            logger.warning("wechat_mp_bindings_read_failed", path=str(self.path))
+            logger.warning("wecom_bindings_read_failed", path=str(self.path))
             return {}
         return value if isinstance(value, dict) else {}
 
@@ -62,36 +59,39 @@ class WechatMpBindingStore:
     async def bind(
         self,
         account: str,
-        openid: str,
+        external_userid: str,
         *,
-        nickname: str | None = None,
+        owner: str = "",
+        name: str | None = None,
     ) -> dict[str, Any]:
         account = normalize_account(account)
-        openid = str(openid or "").strip()
+        external_userid = str(external_userid or "").strip()
         now = int(time.time())
         async with self._lock:
             data = self._read()
-            # One openid is one person: move the binding if it was claimed by
-            # another account, mirroring the shared-CID rule in PushDeviceStore.
+            # 一个 external_userid 是一个人：被其他账号认领时搬家。
             for other, row in list(data.items()):
-                if other != account and isinstance(row, dict) and row.get("openid") == openid:
+                if (
+                    other != account
+                    and isinstance(row, dict)
+                    and row.get("external_userid") == external_userid
+                ):
                     data.pop(other, None)
                     logger.info(
-                        "wechat_mp_binding_moved", previous=other, account=account
+                        "wecom_binding_moved", previous=other, account=account
                     )
             row = data.get(account) if isinstance(data.get(account), dict) else {}
             row.update(
                 {
-                    "openid": openid,
-                    # Re-following after unsubscribe restores delivery.
+                    "external_userid": external_userid,
+                    "owner": owner or row.get("owner") or "",
                     "status": BINDING_STATUS_BOUND,
                     "bound_at": row.get("bound_at") or now,
                     "updated_at": now,
                 }
             )
-            if nickname:
-                row["nickname"] = nickname
-            row.setdefault("templates", {})
+            if name:
+                row["name"] = name
             data[account] = row
             self._write(data)
             return dict(row)
@@ -106,40 +106,22 @@ class WechatMpBindingStore:
             self._write(data)
             return True
 
-    async def mark_unsubscribed(self, openid: str) -> str | None:
-        """Flag the account bound to ``openid`` as unfollowed; return account."""
-        openid = str(openid or "").strip()
+    async def mark_unbound(self, external_userid: str) -> str | None:
+        """客户删除企微好友/成员删除跟进：标记对应账号为 unbound。"""
+        external_userid = str(external_userid or "").strip()
         async with self._lock:
             data = self._read()
             for account, row in data.items():
-                if isinstance(row, dict) and row.get("openid") == openid:
-                    row["status"] = BINDING_STATUS_UNSUBSCRIBED
+                if (
+                    isinstance(row, dict)
+                    and row.get("external_userid") == external_userid
+                ):
+                    row["status"] = BINDING_STATUS_UNBOUND
                     row["updated_at"] = int(time.time())
                     data[account] = row
                     self._write(data)
                     return account
         return None
-
-    async def record_template_state(
-        self, openid: str, template_id: str, state: str
-    ) -> None:
-        openid = str(openid or "").strip()
-        template_id = str(template_id or "").strip()
-        state = str(state or "").strip().lower()
-        if state not in ("accept", "reject"):
-            return
-        async with self._lock:
-            data = self._read()
-            for row in data.values():
-                if not isinstance(row, dict) or row.get("openid") != openid:
-                    continue
-                templates = row.get("templates")
-                if not isinstance(templates, dict):
-                    templates = {}
-                templates[template_id] = state
-                row["templates"] = templates
-                row["updated_at"] = int(time.time())
-            self._write(data)
 
     async def get(self, account: str) -> dict[str, Any] | None:
         account = normalize_account(account)

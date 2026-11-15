@@ -97,7 +97,7 @@ class GatewayAuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if method in {"GET", "POST"} and self._valid_wechat_mp_callback(path):
+        if method in {"GET", "POST"} and self._valid_wecom_callback(path):
             await self.app(scope, receive, send)
             return
 
@@ -243,17 +243,18 @@ class GatewayAuthenticationMiddleware:
         supplied = (query.get("access_token") or [""])[0]
         return bool(supplied) and hmac.compare_digest(supplied, configured)
 
-    def _valid_wechat_mp_callback(self, path: str) -> bool:
-        """Exact-match whitelist for the WeChat MP server callback.
+    def _valid_wecom_callback(self, path: str) -> bool:
+        """Exact-match whitelist for the WeCom (企业微信) server callback.
 
-        WeChat's servers cannot carry gateway credentials.  The whitelist
-        only opens when a callback token is configured; signature
-        verification (sha1 over token+timestamp+nonce) happens inside the
-        route handler, so a forged request is still rejected there.
+        WeCom's servers cannot carry gateway credentials.  The whitelist only
+        opens when the callback token/AES key are configured; signature
+        verification and AES decryption happen inside the route handler, so a
+        forged request is still rejected there.
         """
-        token = getattr(self.settings, "wechat_mp_token", "")
-        prefix = getattr(self.settings, "wechat_mp_api_prefix", "")
-        if not token or not prefix:
+        token = getattr(self.settings, "wecom_token", "")
+        aes_key = getattr(self.settings, "wecom_aes_key", "")
+        prefix = getattr(self.settings, "wecom_api_prefix", "")
+        if not token or not aes_key or not prefix:
             return False
         return path == f"{prefix.rstrip('/')}/callback"
 

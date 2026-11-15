@@ -85,9 +85,9 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
     RouterSpec("app.api.social_app_routes", description="Android App Social Gateway", owner="core"),
     RouterSpec(
-        "app.api.wechat_mp_routes",
+        "app.api.wecom_routes",
         optional=True,
-        description="WeChat Official Account callback + binding admin",
+        description="WeCom external-contact callback + binding admin",
         owner="core",
     ),
     RouterSpec("app.api.shared_conversation_routes", description="Shared conversation board", owner="core"),

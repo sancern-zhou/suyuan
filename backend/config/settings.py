@@ -1268,22 +1268,34 @@ class Settings(BaseSettings):
     push_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
     push_offline_ttl_ms: int = Field(default=86400000, ge=0, le=259200000)
 
-    # WeChat Official Account (MP) subscribe-message channel.  Delivery
-    # targets are app accounts; the account-to-openid binding lives in the
-    # social directory (wechat_mp_bindings.json).  An empty callback token
-    # keeps the callback path closed at the gateway.
-    wechat_mp_enabled: bool = Field(
+    # WeCom (企业微信) external-contact channel.  Delivery targets are app
+    # accounts; the account-to-external_userid binding lives in the social
+    # directory (wecom_bindings.json).  Group-msg tasks are confirmed by the
+    # operator member inside the WeCom app (platform design).  Empty
+    # token/AES key keeps the callback path closed at the gateway.
+    wecom_enabled: bool = Field(
         default=False,
-        description="Enable the WeChat Official Account subscribe-message channel",
+        description="Enable the WeCom external-contact push channel",
     )
-    wechat_mp_app_id: str = Field(default="")
-    wechat_mp_app_secret: str = Field(default="")
-    wechat_mp_token: str = Field(
+    wecom_corpid: str = Field(default="")
+    wecom_contact_secret: str = Field(
         default="",
-        description="Callback signature token configured in the MP console; empty = callback closed",
+        description="Secret of the 客户联系 (external contact) app for API calls",
     )
-    wechat_mp_api_prefix: str = Field(default="/api/wechat-mp")
-    wechat_mp_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+    wecom_default_member: str = Field(
+        default="",
+        description="Operator member userid used for bind QR codes and group-msg sender fallback",
+    )
+    wecom_token: str = Field(
+        default="",
+        description="Callback signature token; empty = callback closed",
+    )
+    wecom_aes_key: str = Field(
+        default="",
+        description="43-char EncodingAESKey for callback encryption; empty = callback closed",
+    )
+    wecom_api_prefix: str = Field(default="/api/wecom")
+    wecom_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
 
     @property
     def redis_url(self) -> str:
