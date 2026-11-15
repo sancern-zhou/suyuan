@@ -1,0 +1,9 @@
+[Unit]
+Description=suyuan L0 liveness probe (web/worker/embedding health)
+After=network.target
+
+[Service]
+Type=oneshot
+# 部署位置见 README.md；环境变量文件与脚本同目录
+ExecStart=/usr/bin/python3 /opt/suyuan-monitor/l0_probe.py --env-file /opt/suyuan-monitor/l0_probe.env
+# 探针必须与被监控进程解耦：不依赖 conda 环境、不依赖 suyuan 代码

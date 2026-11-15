@@ -13,6 +13,29 @@ from .models import ScheduledTask
 
 logger = structlog.get_logger()
 
+_MONITOR_TAG = "runtime-monitor"
+# 监控任务中代码拥有的字段：种子变更需向已存在任务传播。
+# enabled/调度/推送目标等运行时字段不在此列（部署侧可自主调整）。
+_MONITOR_CODE_OWNED_FIELDS = (
+    "name",
+    "description",
+    "prompt",
+    "tool_names",
+    "timeout_seconds",
+    "tags",
+    "history_learning",
+)
+
+
+def _monitor_definition_changed(definition: ScheduledTask, existing: ScheduledTask) -> bool:
+    """监控任务（tags 含 runtime-monitor）的代码拥有字段是否与种子不一致。"""
+    if _MONITOR_TAG not in (definition.tags or []):
+        return False
+    return any(
+        getattr(definition, field) != getattr(existing, field)
+        for field in _MONITOR_CODE_OWNED_FIELDS
+    )
+
 
 def sync_project_scheduled_tasks(
     *,
@@ -68,6 +91,24 @@ def sync_project_scheduled_tasks(
             task_data["timeout_seconds"] = definition.timeout_seconds
             service.update_task(ScheduledTask.model_validate(task_data))
             action = "updated_workflow_instruction"
+        elif _monitor_definition_changed(definition, existing):
+            # Runtime-monitor tasks are system-owned infrastructure (tagged
+            # runtime-monitor): prompts/toolsets are code-owned and seeds must
+            # propagate on redeploy.  Runtime-owned fields (enabled, schedule,
+            # delivery targets) stay untouched.
+            task_data = existing.model_dump()
+            for field in (
+                "name",
+                "description",
+                "prompt",
+                "tool_names",
+                "timeout_seconds",
+                "tags",
+                "history_learning",
+            ):
+                task_data[field] = getattr(definition, field)
+            service.update_task(ScheduledTask.model_validate(task_data))
+            action = "updated_monitor_definition"
         else:
             action = "unchanged"
         results.append({"task_id": task_id, "action": action, "path": str(path)})

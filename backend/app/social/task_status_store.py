@@ -1,6 +1,11 @@
 """Task status persistence store for spawn tasks.
 
-Supports both PostgreSQL (production) and JSON file (development) storage.
+Supports both PostgreSQL (production, default when DB is available) and JSON
+file (development fallback) storage.
+
+PostgreSQL 是默认选择：Web/App 助手会话派发的后台任务在派发与查询之间可能
+落在不同 uvicorn worker 进程，且需要长期回查——属业务事实而非常态缓存，
+必须跨进程可见并持久化（见 app/db/models/spawn_task_db.py）。
 """
 
 import asyncio
@@ -16,6 +21,19 @@ import structlog
 from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger(__name__)
+
+_DEFAULT_FACTORY_SENTINEL = object()
+
+
+def _default_session_factory():
+    """解析默认 DB session 工厂；导入失败（无 SQLAlchemy/无库环境）回退 None。"""
+    try:
+        from app.db.session_database import session_async_session
+
+        return session_async_session
+    except Exception as exc:  # noqa: BLE001 - 无库环境回退 JSON
+        logger.warning("spawn_task_store_db_factory_unavailable", error=str(exc))
+        return None
 
 
 class TaskStatusStore:
@@ -34,17 +52,21 @@ class TaskStatusStore:
         Initialize task status store.
 
         Args:
-            db_manager: Database manager for PostgreSQL storage
+            db_manager: SQLAlchemy async session factory（默认
+                app.db.session_database.session_async_session）；
+                显式传 False 可强制使用 JSON 存储（测试/无库环境）
             json_path: JSON file path for fallback storage
         """
-        self.db_manager = db_manager
+        if db_manager is None:
+            db_manager = _default_session_factory()
+        self.db_manager = db_manager if db_manager is not False else None
         self.json_path = (
             str(Path(json_path))
             if json_path
             else str(get_data_registry() / "spawn_tasks.json")
         )
         self._lock = asyncio.Lock()
-        self._use_json = db_manager is None
+        self._use_json = self.db_manager is None
 
         # Ensure JSON directory exists
         if self._use_json:
@@ -312,106 +334,156 @@ class TaskStatusStore:
             json.dump(tasks, f, ensure_ascii=False, indent=2)
 
     # ===== PostgreSQL Storage Implementation =====
+    #
+    # db_manager 是 SQLAlchemy async session factory（sessionmaker），与
+    # app.db.session_database.session_async_session 同型。此前的实现假设
+    # 一个提供 execute/fetch_one/fetch_all 的管理器，但项目里不存在该类型，
+    # 该分支从未被接通（所有调用点都传 db_manager=None）。改用项目既有
+    # ORM 模式重写。
+
+    @staticmethod
+    def _to_record(row) -> Dict[str, Any]:
+        """ORM 行 → 存储层字典（保持与 JSON 分支一致的字段形态）。"""
+        def _ts(value):
+            return value.isoformat() if isinstance(value, datetime) else value
+
+        return {
+            "task_id": row.task_id,
+            "social_user_id": row.social_user_id,
+            "task": row.task,
+            "label": row.label,
+            "status": row.status,
+            "progress": row.progress,
+            "result": row.result,
+            "error": row.error,
+            "created_at": _ts(row.created_at),
+            "started_at": _ts(row.started_at),
+            "completed_at": _ts(row.completed_at),
+            "origin_channel": row.origin_channel,
+            "origin_chat_id": row.origin_chat_id,
+            "origin_sender_id": row.origin_sender_id,
+            "bot_account": row.bot_account,
+        }
+
+    @staticmethod
+    def _parse_ts(value):
+        """ISO 字符串 → datetime（JSON 记录与 DB 记录混用时统一）。"""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str) and value:
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                return None
+        return None
 
     async def _save_to_db(self, task_record: Dict[str, Any]) -> None:
         """Save task to PostgreSQL database."""
         if not self.db_manager:
             raise RuntimeError("Database manager not configured")
 
-        query = """
-            INSERT INTO spawn_tasks (
-                task_id, social_user_id, task, label, status, progress,
-                result, error, created_at, started_at, completed_at,
-                origin_channel, origin_chat_id, origin_sender_id, bot_account
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
-            )
-        """
+        from app.db.models.spawn_task_db import SpawnTaskDB
 
-        await self.db_manager.execute(
-            query,
-            task_record["task_id"],
-            task_record["social_user_id"],
-            task_record["task"],
-            task_record["label"],
-            task_record["status"],
-            task_record["progress"],
-            task_record["result"],
-            task_record["error"],
-            task_record["created_at"],
-            task_record["started_at"],
-            task_record["completed_at"],
-            task_record["origin_channel"],
-            task_record["origin_chat_id"],
-            task_record["origin_sender_id"],
-            task_record["bot_account"]
-        )
+        async with self.db_manager() as session:
+            session.add(
+                SpawnTaskDB(
+                    task_id=task_record["task_id"],
+                    social_user_id=task_record["social_user_id"],
+                    task=task_record["task"],
+                    label=task_record.get("label"),
+                    status=task_record.get("status") or "pending",
+                    progress=task_record.get("progress") or 0.0,
+                    result=task_record.get("result"),
+                    error=task_record.get("error"),
+                    created_at=self._parse_ts(task_record.get("created_at")),
+                    started_at=self._parse_ts(task_record.get("started_at")),
+                    completed_at=self._parse_ts(task_record.get("completed_at")),
+                    origin_channel=task_record.get("origin_channel") or "unknown",
+                    origin_chat_id=task_record.get("origin_chat_id") or "unknown",
+                    origin_sender_id=task_record.get("origin_sender_id") or "unknown",
+                    bot_account=task_record.get("bot_account"),
+                )
+            )
+            await session.commit()
 
     async def _get_from_db(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get task from PostgreSQL database."""
         if not self.db_manager:
             raise RuntimeError("Database manager not configured")
 
-        query = """
-            SELECT * FROM spawn_tasks WHERE task_id = $1
-        """
+        from sqlalchemy import select
 
-        row = await self.db_manager.fetch_one(query, task_id)
-        if not row:
-            return None
+        from app.db.models.spawn_task_db import SpawnTaskDB
 
-        return dict(row)
+        async with self.db_manager() as session:
+            row = (
+                await session.execute(
+                    select(SpawnTaskDB).where(SpawnTaskDB.task_id == task_id)
+                )
+            ).scalar_one_or_none()
+            return self._to_record(row) if row is not None else None
 
     async def _update_db(self, task_record: Dict[str, Any]) -> None:
         """Update task in PostgreSQL database."""
         if not self.db_manager:
             raise RuntimeError("Database manager not configured")
 
-        query = """
-            UPDATE spawn_tasks SET
-                status = $2, progress = $3, result = $4, error = $5,
-                started_at = $6, completed_at = $7
-            WHERE task_id = $1
-        """
+        from sqlalchemy import update
 
-        await self.db_manager.execute(
-            query,
-            task_record["task_id"],
-            task_record["status"],
-            task_record["progress"],
-            task_record["result"],
-            task_record["error"],
-            task_record["started_at"],
-            task_record["completed_at"]
-        )
+        from app.db.models.spawn_task_db import SpawnTaskDB
+
+        async with self.db_manager() as session:
+            await session.execute(
+                update(SpawnTaskDB)
+                .where(SpawnTaskDB.task_id == task_record["task_id"])
+                .values(
+                    status=task_record.get("status"),
+                    progress=task_record.get("progress"),
+                    result=task_record.get("result"),
+                    error=task_record.get("error"),
+                    started_at=self._parse_ts(task_record.get("started_at")),
+                    completed_at=self._parse_ts(task_record.get("completed_at")),
+                )
+            )
+            await session.commit()
 
     async def _get_all_from_db(self, social_user_id: str) -> List[Dict[str, Any]]:
         """Get all tasks for user from PostgreSQL database."""
         if not self.db_manager:
             raise RuntimeError("Database manager not configured")
 
-        query = """
-            SELECT * FROM spawn_tasks
-            WHERE social_user_id = $1
-            ORDER BY created_at DESC
-        """
+        from sqlalchemy import select
 
-        rows = await self.db_manager.fetch_all(query, social_user_id)
-        return [dict(row) for row in rows]
+        from app.db.models.spawn_task_db import SpawnTaskDB
+
+        async with self.db_manager() as session:
+            rows = (
+                await session.execute(
+                    select(SpawnTaskDB)
+                    .where(SpawnTaskDB.social_user_id == social_user_id)
+                    .order_by(SpawnTaskDB.created_at.desc())
+                )
+            ).scalars().all()
+            return [self._to_record(row) for row in rows]
 
     async def _cleanup_db(self, cutoff: datetime) -> int:
         """Clean up old tasks from PostgreSQL database."""
         if not self.db_manager:
             raise RuntimeError("Database manager not configured")
 
-        query = """
-            DELETE FROM spawn_tasks
-            WHERE status IN ('completed', 'failed')
-            AND created_at < $1
-        """
+        from sqlalchemy import delete
 
-        result = await self.db_manager.execute(query, cutoff)
-        deleted_count = result.rowcount if hasattr(result, 'rowcount') else 0
+        from app.db.models.spawn_task_db import SpawnTaskDB
+
+        async with self.db_manager() as session:
+            result = await session.execute(
+                delete(SpawnTaskDB).where(
+                    SpawnTaskDB.status.in_(["completed", "failed"]),
+                    SpawnTaskDB.created_at < cutoff,
+                )
+            )
+            await session.commit()
+            deleted_count = result.rowcount or 0
 
         if deleted_count > 0:
             logger.info("old_tasks_cleaned", count=deleted_count, storage="postgresql")

@@ -355,3 +355,7 @@ deploy/nginx/templates-local/
 
 # ZCode 会话产物（计划存档等本地文件）
 .zcode/
+
+# 维护守护进程本地配置与缰绳状态
+deploy/maintenance/maintenance.env
+deploy/maintenance/maintenance_state.json

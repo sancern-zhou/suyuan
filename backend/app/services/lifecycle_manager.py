@@ -35,6 +35,10 @@ from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDai
 from app.fetchers.xuchang_weather_situation import (
     XuchangWeatherSituationEvidenceFetcher,
 )
+try:
+    from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+except ImportError:  # xuchang 分支专属模块，main 工作树上不存在（可选导入）
+    XuchangTownFiveMinuteFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -121,6 +125,19 @@ def _configured_fetchers(project_context):
     }
     # 广东工单同步已 data-ops 化（2026-10-24）：sync_table.py + dbt 计划任务负责
     # ODS/mart 刷新，不再经 worker fetcher；语义层见 projects/guangdong/data-ops。
+    if XuchangTownFiveMinuteFetcher is not None:
+        # 仅 xuchang 分支工作树提供该模块；main 工作树跳过注册。
+        factories["xuchang_town_five_minute_fetcher"] = XuchangTownFiveMinuteFetcher
+    from app.services.station_operation_monitor.runtime import config_path
+    if config_path().is_file():
+        try:
+            # 站点小时采集已改为计划任务 gd_station_operation_hourly_collect；
+            # 本分支删除该 fetcher 模块，main 仍有，故按可选导入处理。
+            from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher
+        except ImportError:
+            StationOperationMonitorFetcher = None
+        if StationOperationMonitorFetcher is not None:
+            factories["station_operation_monitor"] = StationOperationMonitorFetcher
     configured = project_context.manifest.backend.fetchers
     history_config = project_context.manifest.backend.weather_history
     if history_config is not None:
