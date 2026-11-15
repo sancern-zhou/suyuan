@@ -49,6 +49,13 @@ class Settings(BaseSettings):
         default=False,
         description="Route scheduled task results through an assistant follow-up turn before replying",
     )
+    agent_deferred_tools_enabled: bool = Field(
+        default=True,
+        description=(
+            "Global kill switch for the tool_search deferred-tools mechanism; "
+            "False restores full resident schemas even for opted-in modes"
+        ),
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
