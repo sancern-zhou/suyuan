@@ -1268,6 +1268,23 @@ class Settings(BaseSettings):
     push_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
     push_offline_ttl_ms: int = Field(default=86400000, ge=0, le=259200000)
 
+    # WeChat Official Account (MP) subscribe-message channel.  Delivery
+    # targets are app accounts; the account-to-openid binding lives in the
+    # social directory (wechat_mp_bindings.json).  An empty callback token
+    # keeps the callback path closed at the gateway.
+    wechat_mp_enabled: bool = Field(
+        default=False,
+        description="Enable the WeChat Official Account subscribe-message channel",
+    )
+    wechat_mp_app_id: str = Field(default="")
+    wechat_mp_app_secret: str = Field(default="")
+    wechat_mp_token: str = Field(
+        default="",
+        description="Callback signature token configured in the MP console; empty = callback closed",
+    )
+    wechat_mp_api_prefix: str = Field(default="/api/wechat-mp")
+    wechat_mp_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+
     @property
     def redis_url(self) -> str:
         """Construct Redis URL."""
