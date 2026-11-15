@@ -42,6 +42,31 @@ HEALTH_WAIT_SECONDS = 240
 HEALTH_INTERVAL_SECONDS = 5
 
 _state: dict = {"restarts": {}, "snapshots": {}}
+_state_path: Path | None = None
+
+
+def _load_state(path: Path) -> None:
+    """缰绳状态落盘读取：进程重启不重置冷却/日限（否则重启守护进程即可绕过）。"""
+    global _state, _state_path
+    _state_path = path
+    try:
+        if path.is_file():
+            _state.update(json.loads(path.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+def _save_state() -> None:
+    if _state_path is None:
+        return
+    try:
+        tmp = _state_path.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(_state, ensure_ascii=False), encoding="utf-8"
+        )
+        tmp.replace(_state_path)
+    except OSError:
+        pass
 
 
 def log(message: str) -> None:
@@ -138,6 +163,7 @@ class Maintenance:
             "label": label,
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
+        _save_state()
         return {"snapshot_id": snapshot_id, "head": head[:12], "stash": stash[:12] or None}
 
     def rollback(self, snapshot_id: str) -> dict:
@@ -171,6 +197,7 @@ class Maintenance:
         _state["restarts"][f"{service}:{day}"] = (
             _state["restarts"].get(f"{service}:{day}", 0) + 1
         )
+        _save_state()
 
     # ---- 组合动作 ----
     def restart_with_verify(self, service: str, snapshot_id: str | None) -> dict:
@@ -286,6 +313,10 @@ def main() -> int:
     env = load_env_file(Path(args.env_file))
     daemon = Maintenance(env)
     Handler.daemon = daemon
+    state_file = env.get("MAINTENANCE_STATE_FILE") or str(
+        Path(args.env_file).with_name("maintenance_state.json")
+    )
+    _load_state(Path(state_file))
 
     if args.test_restart:
         reason = daemon.check_restart_reins(args.test_restart)
