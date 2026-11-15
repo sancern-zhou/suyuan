@@ -26,11 +26,7 @@ async def init_session_tables():
         ScheduledTaskExecutionDB,
     )
     from app.db.models.scheduled_task_result_db import ScheduledTaskResultDB
-    from app.social.models import (
-        SocialSessionMapping,
-        SocialUser,
-        WeixinScanTask,
-    )
+    from app.social.models import SocialSessionMapping
     from app.social.report_models import SocialReportResult
 
     session_scoped_tables = [
@@ -40,9 +36,7 @@ async def init_session_tables():
         ConversationReadDB.__table__,
         Board.__table__,
         BoardVersion.__table__,  # 依赖 drawio_boards
-        SocialUser.__table__,
         SocialSessionMapping.__table__,
-        WeixinScanTask.__table__,
         SocialReportResult.__table__,
     ]
 
@@ -67,8 +61,7 @@ async def init_session_tables():
                     'sessions', 'session_messages', 'session_resources',
                     'session_resource_versions', 'scheduled_task_executions',
                     'conversation_catalog', 'conversation_reads', 'drawio_boards',
-                    'drawio_board_versions', 'social_users',
-                    'social_session_mappings', 'weixin_scan_tasks',
+                    'drawio_board_versions', 'social_session_mappings',
                     'social_report_results'
                 )
             """))
@@ -86,9 +79,7 @@ async def init_session_tables():
                 "conversation_reads",
                 "drawio_boards",
                 "drawio_board_versions",
-                "social_users",
                 "social_session_mappings",
-                "weixin_scan_tasks",
                 "social_report_results",
             }
             if expected.issubset(set(tables)):
