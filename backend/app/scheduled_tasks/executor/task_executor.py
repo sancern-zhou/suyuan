@@ -151,6 +151,7 @@ class ScheduledTaskExecutor:
                 "task_id": task.task_id,
                 "task_name": task.name,
                 "execution_id": execution.execution_id,
+                "tags": list(task.tags or []),
                 "history_learning": task.history_learning.model_dump(mode="json"),
                 "result_requirements": [rule.model_dump(mode="json") for rule in task.result_requirements],
                 "model_tier": task.model_tier,

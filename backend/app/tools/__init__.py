@@ -1102,6 +1102,36 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="runtime_monitor_self_heal", error=str(e))
 
     try:
+        from app.tools.runtime_monitor.service_ops import (
+            restart_service_tool,
+            verify_service_health_tool,
+        )
+        registry.register(
+            restart_service_tool,
+            priority=368,
+            metadata={
+                "data_type": "service_ops",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        registry.register(
+            verify_service_health_tool,
+            priority=368,
+            metadata={
+                "data_type": "service_ops",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="restart_service")
+        logger.info("tool_loaded", tool="verify_service_health")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="runtime_monitor_service_ops", error=str(e))
+
+    try:
         from app.tools.scheduled_tasks import query_scheduled_task_results_tool
         registry.register(
             query_scheduled_task_results_tool,

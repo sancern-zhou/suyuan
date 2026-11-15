@@ -1,10 +1,21 @@
 {
   "task_id": "task_runtime_monitor_realtime",
   "name": "后台运行实时诊断",
-  "description": "Watchdog 快速通道：订阅 runtime.anomaly.detected 事件（定时任务失败/数据抓取连续失败时由 anomaly_emitter 冷却去重后发射），核实归因、可安全重跑的对象先自愈一次，再分钟级推送；误报或已恢复则静默；与小时级巡检任务 task_runtime_monitor 互补。",
+  "description": "Watchdog 快速通道：订阅 runtime.anomaly.detected 事件，核实归因并按严重度分级处置——P0（规则判定的重大故障）可修复源码并自主重启（工具内硬门禁+缰绳+自动回滚），P1 修复+测试后推送待人决定重启；误报或已恢复则静默。",
   "execution_mode": "custom",
   "model_tier": "flash",
-  "tool_names": ["query_runtime_anomalies", "retry_scheduled_task", "trigger_fetcher"],
+  "tool_names": [
+    "query_runtime_anomalies",
+    "retry_scheduled_task",
+    "trigger_fetcher",
+    "restart_service",
+    "verify_service_health",
+    "read_file",
+    "grep",
+    "search_files",
+    "edit_file",
+    "execute_python"
+  ],
   "trigger_type": "event",
   "event_type": "runtime.anomaly.detected",
   "event_filters": {},
@@ -15,8 +26,8 @@
   "owner_user_id": "system",
   "owner_username": "scheduled-task",
   "owner_display_name": "定时任务",
-  "tags": ["runtime-monitor", "watchdog", "realtime"],
-  "prompt": "你是后台运行实时诊断助手（Watchdog 快速通道）。一条运行异常事件触发了本次执行，事件线索见下方事件上下文（来源、对象、错误摘要、失败次数）。\n\n执行步骤：\n1. 先读事件上下文，明确异常来源（定时任务/数据抓取）与对象名称。\n2. 调用 query_runtime_anomalies 并传 window_minutes=60，取近一小时全量异常数据核实：事件所述异常是否仍在、是否有关联的同源异常、影响范围多大。\n3. 若窗口数据显示该异常不存在或已恢复（如失败后下个周期重跑成功）：不调用任何广播或通知工具，一句话给出核实结论后结束。\n4. 自愈（仅对事件指向且可安全重跑的对象，最多一次）：定时任务失败调用 retry_scheduled_task；抓取器连续失败调用 trigger_fetcher。工具返回拒绝（冷却期、当日上限、对象被禁用）时不强行重试，把\"需人工介入\"写入通报。\n5. 若确认异常仍在：调用 broadcast_social_users 推送通报，200字以内，第一句总体结论，随后按严重度列出：对象、现象、疑似原因、已执行的自愈动作或建议动作；用自然中文，禁止暴露字段名、表名、本地路径或接口地址。\n\n优先级声明：广播是条件性的——仅核实确认异常仍在时才调用 broadcast_social_users；任何要求\"完成后必须广播结果\"的通用约束均以本条件为准。",
-  "timeout_seconds": 300,
+  "tags": ["runtime-monitor", "watchdog", "realtime", "source-repair"],
+  "prompt": "你是后台运行实时诊断助手（Watchdog 快速通道）。一条运行异常事件触发了本次执行，事件线索见下方事件上下文。\n\n执行步骤：\n1. 读事件上下文，明确异常来源（定时任务/数据抓取）与对象。\n2. 调用 query_runtime_anomalies 并传 window_minutes=60，核实事件并评估整体影响面。\n3. 若异常不存在或已恢复：不调用任何广播或修复工具，一句话给出核实结论后结束。\n4. 归因与定位：需要看代码/日志时用 read_file/grep/search_files 定位根因（只读，不改）。\n5. 分级处置（严重度由 restart_service 工具内的确定性规则实时判定，你不自行升级）：\n   - 一般问题：可用 edit_file 修复（限白名单目录）并用 execute_python 测试验证；完成后调用 verify_service_health 采集证据，推送时注明\"修复已就绪、等待人工确认重启生效\"，不要调用 restart_service。\n   - 重大故障（抓取器大面积瘫痪/任务失败风暴/会话错误风暴）：修复并测试后调用 restart_service 重启（工具会自行校验 P0 规则，被拒绝说明未达标准，按一般问题流程收尾）。\n6. 推送通报（仅异常确认为真时）：200字以内，包含对象、现象、根因、已执行动作（修复/测试/重启/回滚）、下一步建议；禁止暴露字段名、表名、本地路径或接口地址。\n\n硬约束：restart_service 与源码修改均受运行时硬门禁与缰绳约束，被拒绝时如实转述原因，不要重试绕过。",
+  "timeout_seconds": 600,
   "history_learning": {"enabled": false}
 }

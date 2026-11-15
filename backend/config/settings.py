@@ -755,6 +755,26 @@ class Settings(BaseSettings):
             "the interactive path entirely"
         ),
     )
+    maintenance_daemon_url: str = Field(
+        default="http://host.docker.internal:8013",
+        description="Host maintenance daemon base URL (restart/snapshot/rollback)",
+    )
+    maintenance_daemon_token: str = Field(
+        default="",
+        description=(
+            "Shared token for the maintenance daemon; empty disables all "
+            "service-level operations (restart_service reports unavailable)"
+        ),
+    )
+    source_repair_allowed_dirs: str = Field(
+        default="",
+        description=(
+            "CSV of project-relative source dirs the source-repair task tag "
+            "may modify (e.g. 'backend/app/fetchers,backend/app/tools'); "
+            "empty disables source repair entirely. config/.env/deploy stay "
+            "hard-denied regardless"
+        ),
+    )
 
     ops_attachment_root: Optional[str] = Field(default=None, description="Local root used to resolve /WebFiles attachments")
     attachment_root: Optional[str] = Field(default=None, description="Fallback local attachment root")
