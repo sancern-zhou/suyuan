@@ -16,6 +16,8 @@ logger = structlog.get_logger()
 _MONITOR_TAG = "runtime-monitor"
 # 监控任务中代码拥有的字段：种子变更需向已存在任务传播。
 # enabled/调度/推送目标等运行时字段不在此列（部署侧可自主调整）。
+# broadcast_enabled 属于通报通道设计（直推→助手会话迁移），随种子走：
+# 否则已部署实例保留旧直推开关，与新 prompt 的助手通报叠加双重投递。
 _MONITOR_CODE_OWNED_FIELDS = (
     "name",
     "description",
@@ -24,6 +26,7 @@ _MONITOR_CODE_OWNED_FIELDS = (
     "timeout_seconds",
     "tags",
     "history_learning",
+    "broadcast_enabled",
 )
 
 
@@ -97,15 +100,7 @@ def sync_project_scheduled_tasks(
             # propagate on redeploy.  Runtime-owned fields (enabled, schedule,
             # delivery targets) stay untouched.
             task_data = existing.model_dump()
-            for field in (
-                "name",
-                "description",
-                "prompt",
-                "tool_names",
-                "timeout_seconds",
-                "tags",
-                "history_learning",
-            ):
+            for field in _MONITOR_CODE_OWNED_FIELDS:
                 task_data[field] = getattr(definition, field)
             service.update_task(ScheduledTask.model_validate(task_data))
             action = "updated_monitor_definition"

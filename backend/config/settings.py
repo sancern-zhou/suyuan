@@ -49,6 +49,13 @@ class Settings(BaseSettings):
         default=False,
         description="Route scheduled task results through an assistant follow-up turn before replying",
     )
+    agent_deferred_tools_enabled: bool = Field(
+        default=True,
+        description=(
+            "Global kill switch for the tool_search deferred-tools mechanism; "
+            "False restores full resident schemas even for opted-in modes"
+        ),
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -781,6 +788,18 @@ class Settings(BaseSettings):
             "from interactive (non-scheduled-task) sessions; empty disables "
             "the interactive path entirely"
         ),
+    )
+    monitor_report_owner: str = Field(
+        default="",
+        description=(
+            "User id whose assistant inbox receives watchdog monitor reports "
+            "(hourly inspection + realtime diagnosis); empty disables "
+            "assistant routing and submit_monitor_report refuses delivery"
+        ),
+    )
+    monitor_report_session_title: str = Field(
+        default="后台运行通报",
+        description="Conversation title for the deterministic monitor-report assistant session",
     )
     maintenance_daemon_url: str = Field(
         default="http://host.docker.internal:8013",

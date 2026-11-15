@@ -1,5 +1,27 @@
 项目的运行环境是 conda 环境 `backend_py311`，本机路径为 `M:\suyuan-tools\envs\backend_py311`（Python 解释器 `M:\suyuan-tools\envs\backend_py311\Scripts\python.exe`）。
 
+## 智能体架构与开发理念（提炼自《溯源智能体项目开发规范》2026-11-12，已按 main 代码实际校准）
+
+### 核心架构理念
+
+- **上下文管理是 Agent 项目的核心**：涵盖系统提示词、工具描述（Tools Schema）、对话历史、会话状态、工作记忆（最近 N 轮详细记录 + 压缩摘要）、长期记忆、会话资源目录；Skill 经 `list_skills`/`view_skill` 按需发现（无自动注入层，仅用户显式选中的技能按轮注入正文）；RAG 召回 + web search 的首轮预取证据包为知识问答模式专属（两个工具本身在 expert/ppt 等多模式可用）；知识图谱检索已在问数与运维故障诊断模式落地（`knowledge_graph_query`），问数入口的确定性图谱注入层按项目配置 `graph_entry_modes` 启用（当前各项目默认未开启）。大部分开发调试工作围绕这些内容展开（实现在 `backend/app/agent/context/context_builder.py`）。
+- **任务编排三级**：循环编排是各智能体模式的基础编排；固定工作流编排（确定性有序阶段序列，定时任务直接走 workflow handler 绕过 Agent 循环）用于确定性高的定时任务（例行全网巡检日报、站点快速告警推送）；动态 DAG 编排由主 Agent 把大目标自动拆成子任务（数量、依赖每次不同），适合探索性的综合分析报告生成（引擎在 `backend/app/agent/workflow/`）。
+- **工具（Tool/MCP）是业务场景的核心区分**，也是本项目区别于通用智能体的主要能力：每个工具仅开放必要资源、解决具体问题（取某一类数据、绘图、专项分析、报告生成）；工具与 Agent 不耦合、可插拔（全局 tool registry + 各模式工具白名单 + 管理端运行时启停）；工具 Schema 默认全量注入上下文，复杂工具说明走渐进式文档读取，工具数量多的模式可 opt-in deferred tools（tool_search 按需注入参数契约，默认关闭）（选型细则见下文"上下文注入选型策略"）。
+- **业务知识注入五层分工**：系统提示词只写场景定位、工作流程和输出规范，禁止包含具体工具使用说明（存量模式提示词中的工具指引属待收敛项，新写/改写提示词时不得再添加）；工具描述只放路由（是什么/何时用/如何用/红线）；Skill 放灵活、偏业务流程、可跨 Agent 复用的知识（人编常调、改文件即生效）；知识库放非结构化业务知识，由 Agent 主动检索；知识图谱放关系型业务知识（如站点-城市-运维单位-运维人员图谱），自动检索注入与主动检索并用。
+- **多 Agent 协作两种方式**：`call_sub_agent`（子代理）适合把单个轻量任务委派给特定 Agent；`run_agent_workflow`（DAG 编排）由主 Agent 以工具调用提交 DAG 定义动态发起工作流（节点数量与依赖由模型每次生成），适合探索性综合任务（如运维风险分析报告），子节点以委派精简子模式执行（不再二次委派或编排）以提高效率。
+- **跨会话长期记忆两层**：常驻层为确认长期有效的规则与偏好，每次全量注入（一般手动维护，`MEMORY.md`）；事实层为一次性、时间敏感、待观察的事实，注入只读已整理事实索引（≤200 条 / 25K 字符），核实事实沿索引链接读原文（`backend/app/agent/memory/curated_facts.py`）。
+- **安全护栏四件套**：文件系统沙箱（读根白名单 + 敏感文件拦截，`backend/app/utils/path_config.py`）、提示词层业务红线（不编造数据）、SQL 数据层护栏（数据只读、表白名单，`backend/app/utils/sql_validator.py`）、会话用户隔离（会话目录/数据文件/流式输出均按 owner 隔离）；鉴权复用公司基础架构，后续引入更完整的权限管理。
+- **文件资源统一路径契约**：相对路径统一以仓库根解析（绝对路径输入亦接受并归一化，Agent 可见输出一律为相对路径；安全 + 多服务器多项目部署方便），持久化产物全部收敛在 data registry 目录下，会话内资源经资源目录统一登记与交付，跨会话与多 Agent 共享一律走共享文件路径（细则见"Agent 文件系统路径规范"）。
+- **架构层归属 main 共享底座**，项目逻辑代码归 `project/*` 分支（细则见"分支与更新归属规范"）。
+
+### 开发理念
+
+- **确定性逻辑优先写代码，不确定推理交给 LLM**：LLM 只负责推理、规划、评审，不让大模型控制全部流程；通过定时任务、工具提供确定性输出。
+- **谨慎使用兜底代码逻辑**，避免真实问题被吞掉忽略。
+- **避免字符匹配等硬编码路由策略**，智能体项目尽量由 LLM 推理路由。
+- **新场景标准开发流程**：场景定义 → 新增 Agent 模式 → 系统提示词设计 → 工具白名单配置（需要哪些数据、做哪些分析、是否绘图、交互方式、是否生成报告）→ 前端新增入口 → 专属工具开发（已有工具无法满足时）→ 右侧面板调用轨迹核查（工具调用与上下文管理是否符合预期）→ 确认输出结果。
+- 环境密钥等敏感信息不入跟踪提交范围；提交与推送是两步操作，先提交后推送。
+
 ## Agent 文件系统路径规范
 
 - 所有 Agent、子 Agent、工具和 Skill 接收的文件系统相对路径，统一以项目根目录（git 仓库根）为解析基准。
@@ -82,14 +104,15 @@ web/worker 进程的事件循环同时承载前端 API：worker 还承载 web �
 - 同步存储层（`scheduled_task_*_storage`）经 `app/db/sync_bridge.py` 的 `run_db()` 落到常驻线程池：**每个池线程持有私有事件循环和池化引擎**（asyncpg 连接不能跨事件循环复用）。禁止退回"每次查询 `create_async_engine` + `NullPool`"——本机 asyncpg 单次握手约 200ms，会让每个定时任务管理接口固定多付 200~300ms，并在 fetcher 批量落库时（每小时 504 行）造成连接风暴和数秒级尖峰。
 - `run_db()` 内部用 `loop.run_until_complete` 而非 `run_coroutine_threadsafe`（后者要求目标循环已在 `run_forever`）。池大小 6 容纳 1 层嵌套调用（协程内再同步调 `run_db`，见 `tests/scheduled_tasks/test_runtime_monitor_tool.py`）；加深嵌套层级必须同步调大 `_DB_POOL_SIZE`，否则会耗尽线程死锁。
 
-## 上下文注入选型策略（工具描述 / skill / describe_table）
+## 上下文注入选型策略（工具描述 / skill / describe_table / deferred tools）
 
 写入请求上下文的约束文本按"稳定性 × 内容类型"三选一，禁止把长文档整体内联进工具描述或系统提示词（单工具 schema 与单模式注入总量受 `backend/tests/test_agent_mode_context_budget.py` 预算上限守门）：
 
 - **工具描述**：只放路由（是什么/何时用/红线）与高频速查，保持缓存稳定前缀精炼。少变的基础规范（SQL 方言、白名单红线、路径约定等）通过引用固定文档路径渐进读取（read_file 按需整读）；引用路径优先由工具结果或错误信息给出（确定性触发），描述内只留一行指引。硬约束优先做成运行时校验，错误信息即召回钩子，不依赖模型自觉读文档。
 - **skill（list_skills/view_skill）**：灵活、偏业务流程的知识（编排方法、领域拆分、成稿风格等），人编常调、改文件即生效。工具描述在入口点名技能（如"编排前先 view_skill: xxx"），并配失败可见的确定性校验兜底。
 - **describe_table（工具参数按需取数）**：具体表/字段信息等由数据管道生成的契约，单一来源零漂移、按表粒度取用；支持批量与表名索引（如 `describe_table='tables'`），错误信息带模糊纠错提示。
-- 选型口诀：真相在管道 → 工具参数按需取；真相在人且常调 → skill；少变基础规范 → 引用文档渐进读取；真相在子模式 → 父侧只留一行定位。参考实现：`execute_guangdong_mart_sql`（describe_table 契约）、技能 `agent-workflow-orchestration`（编排细则）。
+- **deferred tools（tool_search 按需注入 schema）**：解决"模式工具**数量**多"（与前三通道解决"单工具**内容**大"正交、可叠加）。模式 opt-in 后非 always_on 工具以薄存根常驻（name+路由描述，参数契约不注入；≤600 字符小工具豁免），运行时注入 `tool_search` 检索入口；模型调用存根工具即自动升级回全 schema（调用即升级），盲调失败时 observation 附完整契约兜底。配置三层：共享表 `DEFERRED_TOOL_MODES`（`app/agent/prompts/tool_registry.py`，默认空=零行为变化）、项目声明 `backend.agent_mode_deferred_tools`（project.yaml，优先于共享表）、全局缰绳 `AGENT_DEFERRED_TOOLS_ENABLED`。高频工具必须进 always_on（发现多一轮 LLM 往返）；机制实现 `app/tools/agent_tools/tool_search_tool.py` + `app/agent/tool_adapter.py:apply_deferred_tool_stubs`。
+- 选型口诀：真相在管道 → 工具参数按需取；真相在人且常调 → skill；少变基础规范 → 引用文档渐进读取；真相在子模式 → 父侧只留一行定位；工具数量多 → 模式 opt-in deferred tools。参考实现：`execute_guangdong_mart_sql`（describe_table 契约）、技能 `agent-workflow-orchestration`（编排细则）、`tool_search` 三件套（deferred tools，江西 api_catalog 的运行时级推广）。
 
 ## 分支与更新归属规范
 

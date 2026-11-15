@@ -126,3 +126,58 @@ def test_all_mode_context_budgets():
         if total > MODE_TOOL_TOTAL_CAP:
             violations.append(f"{mode}: tools total {total} > {MODE_TOOL_TOTAL_CAP}")
     assert not violations, "上下文预算超限：\n" + "\n".join(violations)
+
+
+# ---- deferred tools（tool_search 按需注入 schema）常驻预算 ----
+# 存根 = 路由描述 + 提示行 + 宽松参数对象；2026-11 实测最大存根 ~2.55K
+# （get_weather_data，描述本身偏大）。超限优先怀疑描述回归膨胀，其次才考虑调阈值。
+DEFERRED_STUB_SCHEMA_CAP = 3_000
+TOOL_SEARCH_SCHEMA_CAP = 1_000     # tool_search 自身 schema
+
+
+def test_deferred_stub_resident_budget_under_synthetic_optin(monkeypatch):
+    """opt-in 模式按常驻量计：存根+always_on+tool_search 计入模式总量。
+
+    共享层默认零 opt-in；本测试用合成 opt-in（query，always_on=两大编排
+    工具）验证启用后的常驻预算纪律：存根化必须显著缩量且单存根不超限。
+    """
+    from app.agent.prompts import tool_registry
+    from app.agent.tool_adapter import apply_deferred_tool_stubs
+    from app.tools.agent_tools.tool_search_tool import ToolSearchTool
+
+    monkeypatch.setitem(
+        tool_registry.DEFERRED_TOOL_MODES,
+        "query",
+        ["run_agent_workflow", "call_sub_agent"],
+    )
+
+    schemas = get_tool_schemas(mode="query")
+    full_total = sum(len(json.dumps(s, ensure_ascii=False)) for s in schemas)
+
+    from app.agent.prompts.tool_registry import (
+        compute_deferred_tool_names,
+        resolve_deferred_tool_config,
+    )
+
+    config = resolve_deferred_tool_config("query")
+    assert config is not None, "合成 opt-in 必须生效"
+    deferred = compute_deferred_tool_names("query", config)
+    resident, stubbed, _saved = apply_deferred_tool_stubs(schemas, deferred_names=deferred)
+    resident.append(ToolSearchTool(mode="query").get_function_schema())
+
+    resident_total = sum(len(json.dumps(s, ensure_ascii=False)) for s in resident)
+    assert stubbed > 0
+    assert resident_total < full_total
+
+    violations = []
+    for schema in resident:
+        size = len(json.dumps(schema, ensure_ascii=False))
+        name = schema.get("name") or "?"
+        if name == "tool_search":
+            if size > TOOL_SEARCH_SCHEMA_CAP:
+                violations.append(f"tool_search schema {size} > {TOOL_SEARCH_SCHEMA_CAP}")
+        elif schema.get("parameters", {}).get("properties") == {}:
+            # 存根形态：宽松参数对象是存根的标志
+            if size > DEFERRED_STUB_SCHEMA_CAP:
+                violations.append(f"stub {name}: {size} > {DEFERRED_STUB_SCHEMA_CAP}")
+    assert not violations, "deferred 常驻预算超限：\n" + "\n".join(violations)
