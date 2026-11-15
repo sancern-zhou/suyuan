@@ -1255,15 +1255,8 @@ class Settings(BaseSettings):
         description="Station-level pollutant query template"
     )
 
-    # Social Platform Configuration
-    social_config_path: str = Field(
-        default="backend/config/social_config.yaml",
-        description="Path to social platform configuration file"
-    )
-    social_enabled: bool = Field(
-        default=False,
-        description="Enable social platform integration"
-    )
+    # Social worker internal API (App broadcast web->worker transport).
+    # The chat-channel platform (personal WeChat / QQ) is retired.
     social_worker_internal_host: str = Field(
         default="127.0.0.1",
         description="Host for the worker-only social account internal API"
@@ -1424,59 +1417,6 @@ class Settings(BaseSettings):
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")
-
-    def load_social_config(self) -> Dict[str, Any]:
-        """
-        Load social platform configuration from YAML file.
-
-        Returns:
-            Dictionary with channel configurations
-        """
-        from app.utils.path_config import resolve_agent_path
-
-        config_path = resolve_agent_path(self.social_config_path)
-
-        if not config_path.exists():
-            # Return default empty config
-            return {
-                "qq": {"enabled": False, "allow_from": ["*"]},
-                "weixin": {"enabled": False, "allow_from": ["*"]},
-                "dingtalk": {"enabled": False, "allow_from": ["*"]},
-                "channels": {
-                    "send_progress": True,
-                    "send_tool_hints": False,
-                    "send_max_retries": 3
-                }
-            }
-
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-
-            # Validate config structure
-            if not isinstance(config, dict):
-                raise ValueError("Invalid social config structure")
-
-            return config
-        except Exception as e:
-            import structlog
-            logger = structlog.get_logger()
-            logger.warning("Failed to load social config, using defaults", error=str(e))
-            return self._default_social_config()
-
-    @staticmethod
-    def _default_social_config() -> Dict[str, Any]:
-        """Return a fresh, side-effect-free fallback social configuration."""
-        return {
-            "qq": {"enabled": False, "allow_from": ["*"]},
-            "weixin": {"enabled": False, "allow_from": ["*"]},
-            "dingtalk": {"enabled": False, "allow_from": ["*"]},
-            "channels": {
-                "send_progress": True,
-                "send_tool_hints": False,
-                "send_max_retries": 3,
-            },
-        }
 
 
 # Global settings instance

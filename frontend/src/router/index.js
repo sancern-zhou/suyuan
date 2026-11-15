@@ -4,7 +4,6 @@ import FetchersView from '@/views/FetchersView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import ToolsManagementView from '@/views/ToolsManagementView.vue'
 import SkillsManagementView from '@/views/SkillsManagementView.vue'
-import SocialAccountsView from '@/views/SocialAccountsView.vue'
 import ExpertDeliberationView from '@/views/ExpertDeliberationView.vue'
 import LoginView from '@/views/LoginView.vue'
 import { projectConfig } from '@/config/projectConfig.js'
@@ -73,12 +72,6 @@ const routes = [
       name: 'skills-management',
       component: SkillsManagementView,
       meta: { title: '技能管理', requiredModule: 'legacy' }
-    },
-    {
-      path: '/social-accounts',
-      name: 'social-accounts',
-      component: SocialAccountsView,
-      meta: { title: '社交账号管理', requiredModule: 'legacy' }
     },
     {
       path: '/expert-deliberation',

@@ -33,7 +33,6 @@ from app.scheduled_tasks.event_catalog import (
     get_event_definition,
     get_event_definitions,
 )
-from app.social.user_registry import get_social_user_registry
 from app.social.app_identity import _accounts
 from app.scheduled_tasks.custom_agent import (
     CustomToolValidationError,
@@ -257,7 +256,6 @@ async def _validate_event_task_config(task: ScheduledTask) -> None:
     if not task.broadcast_enabled:
         return
 
-    registry = get_social_user_registry()
     for user_id in task.target_user_ids:
         # App recipients may be represented by their direct social identity,
         # or by the synthetic id used by the management user list.
@@ -272,17 +270,11 @@ async def _validate_event_task_config(task: ScheduledTask) -> None:
             account = _accounts().get(account_id)
             if account and str(account.get("status", "active")).lower() == "active":
                 continue
-        user = await registry.get_user(user_id)
-        if (
-            not user
-            or user.status != "active"
-            or not user.social_user_id
-            or not str(user.channel or "").startswith(("weixin", "app"))
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"User {user_id} is not an active bound WeChat user or App user",
-            )
+        # 对话社交渠道（个人微信/QQ）已退役，广播接收人只支持 App 账号。
+        raise HTTPException(
+            status_code=400,
+            detail=f"User {user_id} is not an active App user",
+        )
 
 
 def _validate_custom_task_tools(task: ScheduledTask, user: CurrentUser) -> None:
