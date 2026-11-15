@@ -165,7 +165,7 @@ class AgentBridge:
 
         self.subagent_manager: Optional[SubagentManager] = None
         if mode == "assistant":
-            self.task_status_store = TaskStatusStore(db_manager=None)  # JSON storage
+            self.task_status_store = TaskStatusStore()  # PostgreSQL（无库环境自动回退 JSON）
             self.subagent_manager = SubagentManager(
                 agent=self.agent,
                 task_store=self.task_status_store,

@@ -100,7 +100,8 @@ class SubagentManager:
         origin_sender_id: str,
         label: Optional[str] = None,
         timeout: int = DEFAULT_TIMEOUT,
-        manual_mode: str = "assistant"
+        manual_mode: str = "assistant",
+        owner_user_identifier: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Spawn a background subagent to execute a long-running task.
@@ -114,6 +115,8 @@ class SubagentManager:
             label: Optional task label
             timeout: Task timeout in seconds (60-86400)
             manual_mode: Background agent mode (assistant/expert/query/ops)
+            owner_user_identifier: 发起会话的用户记忆身份（Web 助手路径），
+                透传给子 Agent 继承（个人记忆/偏好）；社交路径为 None
 
         Returns:
             Result dict with task_id and label
@@ -166,7 +169,8 @@ class SubagentManager:
                     "sender_id": origin_sender_id
                 },
                 timeout=timeout,
-                manual_mode=manual_mode
+                manual_mode=manual_mode,
+                owner_user_identifier=owner_user_identifier
             )
         )
 
@@ -200,7 +204,8 @@ class SubagentManager:
         social_user_id: str,
         origin_info: Dict[str, str],
         timeout: int,
-        manual_mode: str
+        manual_mode: str,
+        owner_user_identifier: Optional[str] = None
     ) -> None:
         """
         Run subagent in background.
@@ -212,6 +217,7 @@ class SubagentManager:
             origin_info: Origin information (channel, chat_id, sender_id)
             timeout: Timeout in seconds
             manual_mode: Background agent mode
+            owner_user_identifier: Owner memory identity to inherit (Web path)
         """
         try:
             # Update status to running
@@ -222,7 +228,12 @@ class SubagentManager:
 
             # Execute subagent with timeout
             result = await asyncio.wait_for(
-                self._execute_subagent(task, session_id, manual_mode=manual_mode),
+                self._execute_subagent(
+                    task,
+                    session_id,
+                    manual_mode=manual_mode,
+                    owner_user_identifier=owner_user_identifier,
+                ),
                 timeout=timeout
             )
 
@@ -296,7 +307,8 @@ class SubagentManager:
         self,
         task: str,
         session_id: str,
-        manual_mode: str = "assistant"
+        manual_mode: str = "assistant",
+        owner_user_identifier: Optional[str] = None
     ) -> str:
         """
         Execute subagent with tool isolation.
@@ -305,6 +317,8 @@ class SubagentManager:
             task: Task description
             session_id: Independent session ID
             manual_mode: Background agent mode
+            owner_user_identifier: Owner memory identity to inherit (Web path)；
+                assistant 模式下子 Agent 与发起会话共享个人记忆/偏好
 
         Returns:
             Final answer from subagent
@@ -337,12 +351,25 @@ class SubagentManager:
         events = []
         response_text = ""
 
-        async for event in subagent.analyze(
+        analyze_kwargs = dict(
             user_query=task,
             session_id=session_id,
             max_iterations=self.MAX_ITERATIONS,
-            manual_mode=manual_mode
-        ):
+            manual_mode=manual_mode,
+        )
+        if owner_user_identifier:
+            # Web 助手路径：子 Agent 继承发起会话的用户记忆身份。
+            # assistant 模式的个人记忆校验要求同时提供 user-scoped store
+            # （react_agent.analyze 的 assistant_memory_store 参数）。
+            analyze_kwargs["user_identifier"] = owner_user_identifier
+            if manual_mode == "assistant":
+                from app.agent.memory.memory_store import ImprovedMemoryStore
+
+                analyze_kwargs["assistant_memory_store"] = ImprovedMemoryStore(
+                    user_id=owner_user_identifier, mode="assistant"
+                )
+
+        async for event in subagent.analyze(**analyze_kwargs):
             events.append(event)
 
             # Extract response text
@@ -406,6 +433,13 @@ class SubagentManager:
 
 任务ID: {task_id}"""
 
+        if origin_info.get("channel") == "web":
+            # Web/App 助手会话路径：message_bus 无此渠道会话。事实回投是
+            # task_store 状态（wait_task/对话可查）；再 best-effort 试一条
+            # App 推送（owner 恰好绑定 App 账号时可收到），失败仅记日志。
+            await self._try_web_push(task_id, origin_info.get("chat_id", ""), notification)
+            return
+
         # Send notification
         try:
             outbound_msg = OutboundMessage(
@@ -430,6 +464,31 @@ class SubagentManager:
                 error=str(e),
                 exc_info=True
             )
+
+    async def _try_web_push(self, task_id: str, owner: str, message: str) -> None:
+        """Web 助手路径的 best-effort App 推送。
+
+        owner 是服务端认证工号；恰好绑定了同名 App 账号（app:android:{owner}）
+        时推送可达，否则静默（send_broadcast 对非 app: 前缀/无设备自动空转）。
+        事实回投始终是 task_store 状态，用户可经 wait_task/对话查询。
+        """
+        try:
+            from app.social.push_service import get_unified_push_service
+
+            if not owner:
+                return
+            result = await get_unified_push_service().send_broadcast(
+                social_user_id=f"app:android:{owner}", message=message
+            )
+            if result.get("sent"):
+                logger.info(
+                    "web_subagent_push_sent",
+                    task_id=task_id,
+                    owner=owner,
+                    sent=result.get("sent"),
+                )
+        except Exception as e:  # noqa: BLE001 - 推送失败不影响任务状态
+            logger.warning("web_subagent_push_failed", task_id=task_id, error=str(e))
 
     async def _send_failure_notification(
         self,
@@ -463,6 +522,10 @@ class SubagentManager:
 原因: {safe_error}
 
 任务ID: {task_id}"""
+
+        if origin_info.get("channel") == "web":
+            await self._try_web_push(task_id, origin_info.get("chat_id", ""), notification)
+            return
 
         try:
             outbound_msg = OutboundMessage(

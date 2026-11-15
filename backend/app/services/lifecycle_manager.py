@@ -61,7 +61,10 @@ from app.fetchers.xuchang_weather_situation import (
 from app.fetchers.xuchang_pollution_cause_trigger import XuchangPollutionCauseTriggerFetcher
 from app.fetchers.xuchang_monthly_review_evidence import XuchangMonthlyReviewEvidenceFetcher
 from app.fetchers.xuchang_enterprise_clue_weekly import XuchangEnterpriseClueWeeklyFetcher
-from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+try:
+    from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+except ImportError:  # xuchang 分支专属模块，main 工作树上不存在（可选导入）
+    XuchangTownFiveMinuteFetcher = None
 from app.fetchers.xuchang_town_hour_day import XuchangTownAirDataFetcher
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
@@ -175,6 +178,9 @@ def _configured_fetchers(project_context):
         "xuchang_enterprise_clue_weekly_fetcher": XuchangEnterpriseClueWeeklyFetcher,
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
+    if XuchangTownFiveMinuteFetcher is not None:
+        # 仅 xuchang 分支工作树提供该模块；main 工作树跳过注册。
+        factories["xuchang_town_five_minute_fetcher"] = XuchangTownFiveMinuteFetcher
     from app.services.station_operation_monitor.runtime import config_path
     if config_path().is_file():
         from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher
