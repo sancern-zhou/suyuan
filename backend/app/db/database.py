@@ -317,6 +317,7 @@ async def init_db():
     import app.db.models.agent_route_decision_db  # noqa: F401
     import app.db.report_package_model  # noqa: F401
     import app.db.models.scheduled_task_result_db  # noqa: F401
+    import app.db.models.spawn_task_db  # noqa: F401
     import app.db.models.xuchang_station_alert_episode_db  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the

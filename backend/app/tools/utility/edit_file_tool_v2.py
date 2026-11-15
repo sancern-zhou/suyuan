@@ -362,6 +362,9 @@ class EditFileToolV2(LLMTool):
 
         # 持久化目录可能位于代码工作树之外，必须使用部署配置。
         self.allowed_dirs = [BACKEND_ROOT.resolve(), get_data_registry(), TEMP_ROOT]
+        # 供 adapter 以 kwargs 注入 ExecutionContext（源码修复授权需要定时
+        # 任务上下文做受控例外判定；签名保持位置参数兼容）。
+        self.wants_context = True
 
         # 文件读取状态管理器
         self.read_state = get_file_read_state()
@@ -373,6 +376,7 @@ class EditFileToolV2(LLMTool):
         new_string: str,
         replace_all: bool = False,
         encoding: Optional[str] = None,
+        context: Any = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -398,9 +402,29 @@ class EditFileToolV2(LLMTool):
             new_string = normalize_line_endings(new_string)
 
             # ============================================================
-            # 1. 路径安全检查
+            # 1. 路径安全检查（受保护源码目录需通过 repair_auth 受控例外）
             # ============================================================
-            resolved_path = self._resolve_path(path)
+            allow_protected = False
+            if context is not None:
+                try:
+                    from app.tools.runtime_monitor.repair_auth import (
+                        ensure_source_repair_authorized,
+                    )
+
+                    probe = resolve_agent_path(path)
+                    if is_agent_protected_write_path(probe):
+                        allow_protected, note, _snap = await ensure_source_repair_authorized(
+                            context, probe
+                        )
+                        if not allow_protected:
+                            logger.warning(
+                                "edit_file_v2_source_repair_denied",
+                                requested_path=path,
+                                reason=note,
+                            )
+                except Exception as exc:  # noqa: BLE001 - 授权检查失败按拒绝处理
+                    logger.warning("edit_file_v2_repair_auth_error", error=str(exc))
+            resolved_path = self._resolve_path(path, allow_protected=allow_protected)
             if not resolved_path:
                 return {
                     "success": False,
@@ -601,7 +625,7 @@ class EditFileToolV2(LLMTool):
     # 辅助方法
     # ========================================================================
 
-    def _resolve_path(self, path: str) -> Optional[Path]:
+    def _resolve_path(self, path: str, allow_protected: bool = False) -> Optional[Path]:
         """解析文件路径，确保在允许目录范围内"""
         try:
             file_path = resolve_agent_path(path)
@@ -614,7 +638,7 @@ class EditFileToolV2(LLMTool):
                 )
                 return None
 
-            if is_agent_protected_write_path(file_path):
+            if is_agent_protected_write_path(file_path) and not allow_protected:
                 logger.warning(
                     "edit_file_v2_protected_path",
                     requested_path=path,

@@ -254,6 +254,8 @@ format:
         )
 
         self.allowed_project_dir = BACKEND_ROOT
+        # 供 adapter 以 kwargs 注入 ExecutionContext（源码修复授权）。
+        self.wants_context = True
         self.read_state = get_file_read_state()
         # 额外允许的路径列表（用于临时文件）
         self.allowed_extra_paths = [TEMP_ROOT]
@@ -264,6 +266,7 @@ format:
         content: str,
         encoding: str = "utf-8",
         create_dirs: bool = True,
+        context: Any = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -295,7 +298,27 @@ format:
             # ============================================================
             # 1. 路径安全检查
             # ============================================================
-            resolved_path = self._resolve_path(path)
+            allow_protected = False
+            if context is not None:
+                try:
+                    from app.tools.runtime_monitor.repair_auth import (
+                        ensure_source_repair_authorized,
+                    )
+
+                    probe = resolve_agent_path(path)
+                    if is_agent_protected_write_path(probe):
+                        allow_protected, note, _snap = await ensure_source_repair_authorized(
+                            context, probe
+                        )
+                        if not allow_protected:
+                            logger.warning(
+                                "write_file_source_repair_denied",
+                                requested_path=path,
+                                reason=note,
+                            )
+                except Exception as exc:  # noqa: BLE001 - 授权检查失败按拒绝处理
+                    logger.warning("write_file_repair_auth_error", error=str(exc))
+            resolved_path = self._resolve_path(path, allow_protected=allow_protected)
             if not resolved_path:
                 return {
                     "success": False,
@@ -582,7 +605,7 @@ format:
 
         return {"valid": True}
 
-    def _resolve_path(self, path: str) -> Optional[Path]:
+    def _resolve_path(self, path: str, allow_protected: bool = False) -> Optional[Path]:
         """
         解析文件路径，确保在工作目录或允许的额外路径范围内
         """
@@ -600,8 +623,9 @@ format:
                 )
                 return None
 
-            # 安全检查：禁止写入敏感文件与源码/配置/部署区（防止注入持久化 RCE）
-            if is_agent_protected_write_path(file_path):
+            # 安全检查：禁止写入敏感文件与源码/配置/部署区（防止注入持久化 RCE）；
+            # 源码修复任务经 repair_auth（白名单+git快照）受控例外放行。
+            if is_agent_protected_write_path(file_path) and not allow_protected:
                 logger.warning(
                     "write_file_protected_path",
                     requested_path=path,

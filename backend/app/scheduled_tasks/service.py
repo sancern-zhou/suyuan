@@ -29,6 +29,7 @@ from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
 from .event_output import parse_event_task_output
 from .event_bus import get_event_bus  # ✅ 导入EventBus
+from app.monitoring.anomaly_emitter import emit_task_failure
 
 logger = structlog.get_logger()
 
@@ -389,6 +390,9 @@ class ScheduledTaskService:
             )
             if execution.status != ExecutionStatus.SUCCESS:
                 self.task_storage.update_run_stats(task.task_id, success=False)
+                # Fast Path：cron 失败即发射异常事件（发射器内部做 tag/触发
+                # 类型排除与 Redis 冷却去重），实时诊断任务分钟级响应。
+                await emit_task_failure(task, execution)
                 return execution
 
             self.task_storage.update_run_stats(task.task_id, success=True)
@@ -421,6 +425,8 @@ class ScheduledTaskService:
                 execution.error_message = str(exc)
                 self.execution_storage.update(execution)
             self.task_storage.update_run_stats(task.task_id, success=False)
+            # 执行前异常（如广播收件人解析失败）同样按失败发射事件。
+            await emit_task_failure(task, execution)
             return execution
 
         finally:

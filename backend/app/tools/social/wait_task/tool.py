@@ -57,16 +57,16 @@ class WaitTaskTool(LLMTool):
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.1.0",
-            requires_context=False,
+            requires_context=True,
         )
 
     async def execute(
         self,
+        context: Any = None,
         task_id: str = "",
         task_type: str = "auto",
         wait_timeout: float = 60.0,
         wait_interval: float = 2.0,
-        context: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         task_id = (task_id or "").strip()
@@ -285,6 +285,9 @@ class WaitTaskTool(LLMTool):
         return "auto"
 
     def _get_user_key(self, context: Any = None) -> str:
+        # 归属校验键必须与 task_store 存储的 social_user_id 原始形态一致
+        # （{channel}:{bot}:{chat_id}，含冒号）；此前过 _safe_name 把冒号变
+        # 下划线导致归属校验恒失败（任何会话可读任何任务）。
         try:
             from app.social.message_bus_singleton import (
                 get_current_bot_account,
@@ -296,12 +299,25 @@ class WaitTaskTool(LLMTool):
             chat_id = get_current_chat_id()
             bot = get_current_bot_account() or "default"
             if channel and chat_id:
-                return self._safe_name(f"{channel}:{bot}:{chat_id}")
+                return f"{channel}:{bot}:{chat_id}"
         except Exception:
             pass
 
+        # Web/App 助手会话：与 spawn 工具的 Web 路径保持同一归属键
+        # （web:assistant:{服务端认证工号}），保证能查到自己派发的任务。
+        account = (getattr(context, "runtime_metadata", None) or {}).get(
+            "authenticated_account"
+        )
+        owner = (
+            str(account.get("username") or "").strip()
+            if isinstance(account, dict)
+            else ""
+        )
+        if owner:
+            return f"web:assistant:{owner}"
+
         session_id = getattr(context, "session_id", None) if context else None
-        return self._safe_name(session_id or "default")
+        return str(session_id or "default")
 
     def _clamp_float(self, value: Any, minimum: float, maximum: float, default: float) -> float:
         try:

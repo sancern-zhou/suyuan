@@ -359,6 +359,10 @@ class Settings(BaseSettings):
         return self._split_unique_csv(self.trusted_gateway_networks)
 
     @property
+    def runtime_monitor_query_users_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.runtime_monitor_query_users))
+
+    @property
     def company_oidc_scopes_list(self) -> List[str]:
         return self._split_unique_csv(self.company_oidc_scopes.replace(" ", ","))
 
@@ -768,6 +772,34 @@ class Settings(BaseSettings):
         description=(
             "Consecutive-failure streak resets after this quiet window, "
             "returning the cooldown to the base duration"
+        ),
+    )
+    runtime_monitor_query_users: str = Field(
+        default="",
+        description=(
+            "CSV of user ids/usernames allowed to query runtime anomalies "
+            "from interactive (non-scheduled-task) sessions; empty disables "
+            "the interactive path entirely"
+        ),
+    )
+    maintenance_daemon_url: str = Field(
+        default="http://host.docker.internal:8013",
+        description="Host maintenance daemon base URL (restart/snapshot/rollback)",
+    )
+    maintenance_daemon_token: str = Field(
+        default="",
+        description=(
+            "Shared token for the maintenance daemon; empty disables all "
+            "service-level operations (restart_service reports unavailable)"
+        ),
+    )
+    source_repair_allowed_dirs: str = Field(
+        default="",
+        description=(
+            "CSV of project-relative source dirs the source-repair task tag "
+            "may modify (e.g. 'backend/app/fetchers,backend/app/tools'); "
+            "empty disables source repair entirely. config/.env/deploy stay "
+            "hard-denied regardless"
         ),
     )
 
@@ -1262,6 +1294,23 @@ class Settings(BaseSettings):
     push_getui_base_url: str = Field(default="https://restapi.getui.com/v2")
     push_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
     push_offline_ttl_ms: int = Field(default=86400000, ge=0, le=259200000)
+
+    # WeChat Official Account (MP) subscribe-message channel.  Delivery
+    # targets are app accounts; the account-to-openid binding lives in the
+    # social directory (wechat_mp_bindings.json).  An empty callback token
+    # keeps the callback path closed at the gateway.
+    wechat_mp_enabled: bool = Field(
+        default=False,
+        description="Enable the WeChat Official Account subscribe-message channel",
+    )
+    wechat_mp_app_id: str = Field(default="")
+    wechat_mp_app_secret: str = Field(default="")
+    wechat_mp_token: str = Field(
+        default="",
+        description="Callback signature token configured in the MP console; empty = callback closed",
+    )
+    wechat_mp_api_prefix: str = Field(default="/api/wechat-mp")
+    wechat_mp_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
 
     @property
     def redis_url(self) -> str:

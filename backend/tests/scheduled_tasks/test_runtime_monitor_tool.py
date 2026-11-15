@@ -230,10 +230,13 @@ class _Stub:
         return _coro().__await__()
 
 
-def _tool_context(monkeypatch, task_id="task-monitor", execution_id="exec-9"):
-    context = SimpleNamespace(
-        scheduled_task_context={"task_id": task_id, "execution_id": execution_id}
-    )
+def _tool_context(monkeypatch, task_id="task-monitor", execution_id="exec-9", user=None):
+    if task_id is None:
+        context = SimpleNamespace(scheduled_task_context=None, user_identifier=user)
+    else:
+        context = SimpleNamespace(
+            scheduled_task_context={"task_id": task_id, "execution_id": execution_id}
+        )
     empty = {"available": True, "count": 0, "items": []}
     monkeypatch.setattr(
         collector, "collect_agent_session_errors",
@@ -264,6 +267,95 @@ def test_tool_requires_scheduled_task_context():
     )
     assert result["success"] is False
     assert "定时任务" in result["summary"]
+
+
+def _set_whitelist(monkeypatch, value):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "runtime_monitor_query_users", value)
+
+
+def test_tool_interactive_denied_without_whitelist():
+    from app.tools.runtime_monitor.tool import QueryRuntimeAnomaliesTool
+
+    # 默认 settings 白名单为空：交互路径整体关闭
+    result = run(
+        QueryRuntimeAnomaliesTool().execute(
+            context=SimpleNamespace(
+                scheduled_task_context=None, user_identifier="ops-admin"
+            )
+        )
+    )
+    assert result["success"] is False
+    assert "白名单" in result["summary"]
+
+
+def test_tool_interactive_allowed_for_whitelisted_user(tmp_path, monkeypatch):
+    from app.tools.runtime_monitor.tool import QueryRuntimeAnomaliesTool
+
+    _set_whitelist(monkeypatch, "ops-admin, ops-viewer")
+    engine, loop, storage = _storage(tmp_path)
+    monkeypatch.setattr(
+        "app.scheduled_tasks.service.get_scheduled_task_service",
+        lambda: _FakeService(storage),
+    )
+    context = _tool_context(monkeypatch, task_id=None, user="app:android:ops-admin")
+    try:
+        result = run(QueryRuntimeAnomaliesTool().execute(context=context))
+        assert result["success"] is True
+        data = result["data"]
+        assert data["has_anomalies"] is False
+        # 交互路径默认显式窗口（12 小时），不依赖"上次成功执行"锚点
+        assert data["window"]["source"] == "manual"
+        from datetime import datetime as _dt
+
+        span_minutes = (
+            _dt.fromisoformat(data["window"]["end"])
+            - _dt.fromisoformat(data["window"]["start"])
+        ).total_seconds() / 60
+        assert 700 < span_minutes <= 720
+    finally:
+        engine.dispose()
+        loop.close()
+
+
+def test_tool_interactive_denied_for_non_whitelisted_user(monkeypatch):
+    from app.tools.runtime_monitor.tool import QueryRuntimeAnomaliesTool
+
+    _set_whitelist(monkeypatch, "ops-admin, ops-viewer")
+    result = run(
+        QueryRuntimeAnomaliesTool().execute(
+            context=SimpleNamespace(
+                scheduled_task_context=None, user_identifier="random-user"
+            )
+        )
+    )
+    assert result["success"] is False
+    assert "白名单" in result["summary"]
+
+
+def test_tool_interactive_allowed_via_authenticated_account(tmp_path, monkeypatch):
+    """assistant 会话 user_identifier 是 web:<sha256> 记忆 ID，白名单按
+    服务端认证身份 runtime_metadata.authenticated_account.username 匹配。"""
+    from app.tools.runtime_monitor.tool import QueryRuntimeAnomaliesTool
+
+    _set_whitelist(monkeypatch, "ops-admin")
+    engine, loop, storage = _storage(tmp_path)
+    monkeypatch.setattr(
+        "app.scheduled_tasks.service.get_scheduled_task_service",
+        lambda: _FakeService(storage),
+    )
+    context = SimpleNamespace(
+        scheduled_task_context=None,
+        user_identifier="web:9f2c1a",
+        runtime_metadata={"authenticated_account": {"username": "ops-admin"}},
+    )
+    try:
+        result = run(QueryRuntimeAnomaliesTool().execute(context=context))
+        assert result["success"] is True
+    finally:
+        engine.dispose()
+        loop.close()
 
 
 def test_tool_success_no_anomalies(tmp_path, monkeypatch):

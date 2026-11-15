@@ -22,6 +22,9 @@ class AgentRouteDecisionDB(Base):
     reason_code = Column(String(64), nullable=False)
     reason_values = Column(JSON, nullable=False, default=dict)
     route_hint = Column(String(255), nullable=True)
+    # text() 使 DDL 渲染为裸 DEFAULT CURRENT_TIMESTAMP；裸字符串会被
+    # asyncpg 方言加引号成字面量 'CURRENT_TIMESTAMP'，全新建库即报
+    # InvalidDatetimeFormatError（已存在表不受影响，故生产此前未暴露）。
     created_at = Column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

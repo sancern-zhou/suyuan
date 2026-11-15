@@ -394,6 +394,12 @@ ASSISTANT_TOOL_NAMES = [
     "manage_assistant_runs",
     "session_search",
     "ask_user_question",
+    # 长任务后台派发（不阻塞对话）与进度查询；spawn 的 Web 路径按服务端
+    # 认证身份归属任务，wait_task 同键校验。
+    "spawn",
+    "wait_task",
+    # 运维质询：仅白名单用户可成功调用（工具内运行时校验）
+    "query_runtime_anomalies",
 ]
 
 # ===== 生态环境执法备考模式（微信专业场景） =====
