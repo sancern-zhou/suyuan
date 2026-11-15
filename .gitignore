@@ -323,6 +323,9 @@ frontend/dist-*/
 backend/backend_data_registry*/
 deploy/postgres/backups/
 deploy/postgres/.env
+# nginx -p 前缀目录下的运行时临时目录（client_body/proxy 缓冲），删掉会让代理请求报错
+deploy-local/nginx-8092/temp/
+deploy-local/nginx-*/logs/
 
 # Vendor SDK clones
 suncere*/
