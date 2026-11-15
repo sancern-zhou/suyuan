@@ -1102,6 +1102,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="runtime_monitor_self_heal", error=str(e))
 
     try:
+        from app.tools.runtime_monitor.report import submit_monitor_report_tool
+        registry.register(
+            submit_monitor_report_tool,
+            priority=368,
+            metadata={
+                "data_type": "monitor_report",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="submit_monitor_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="submit_monitor_report", error=str(e))
+
+    try:
         from app.tools.runtime_monitor.service_ops import (
             restart_service_tool,
             verify_service_health_tool,
