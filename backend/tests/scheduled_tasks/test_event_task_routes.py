@@ -73,7 +73,7 @@ class FakeService:
         }
 
 
-def _fake_event_definitions():
+def _fake_event_definitions(manifest=None):
     return [
         SimpleNamespace(
             event_type="xuchang.station_deviation.alert_created",
@@ -98,8 +98,8 @@ def _client(monkeypatch, user=None):
     monkeypatch.setattr(
         routes,
         "get_event_definition",
-        lambda event_type: next(
-            (item for item in _fake_event_definitions() if item.event_type == event_type),
+        lambda event_type, manifest=None: next(
+            (item for item in _fake_event_definitions(manifest) if item.event_type == event_type),
             None,
         ),
     )

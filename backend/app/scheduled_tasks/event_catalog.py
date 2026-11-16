@@ -1,6 +1,11 @@
 """Registered event types available to task configuration clients."""
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from app.project_config.models import ProjectManifest
 
 
 class EventDefinition(BaseModel):
@@ -77,9 +82,41 @@ _EVENT_DEFINITIONS = {
 }
 
 
-def get_event_definitions() -> list[EventDefinition]:
-    return list(_EVENT_DEFINITIONS.values())
+def _event_belongs_to_project(event_type: str, project: str) -> bool:
+    """按事件命名空间归属过滤：事件类型以项目事件前缀开头即归属该项目。
+
+    事件类型约定 ``<项目事件前缀>.<事件名>``；前缀取 manifest.project 及其去掉部署
+    后缀的首段（jiangsu-ops -> jiangsu，兼容分支自持目录中已有的 jiangsu.* 命名）。
+    事件目录中的项目专属事件（如 xuchang.*）不再向其他项目部署暴露。
+    """
+    if not project:
+        return True
+    prefixes = [f"{project}."]
+    head = project.split("-")[0]
+    if head and head != project:
+        prefixes.append(f"{head}.")
+    return event_type.startswith(tuple(prefixes))
 
 
-def get_event_definition(event_type: str) -> EventDefinition | None:
-    return _EVENT_DEFINITIONS.get(event_type)
+def get_event_definitions(manifest: "ProjectManifest | None" = None) -> list[EventDefinition]:
+    """返回事件目录；传入 manifest 时按部署项目过滤命名空间。"""
+    if manifest is None:
+        return list(_EVENT_DEFINITIONS.values())
+    return [
+        definition
+        for definition in _EVENT_DEFINITIONS.values()
+        if _event_belongs_to_project(definition.event_type, manifest.project)
+    ]
+
+
+def get_event_definition(
+    event_type: str, manifest: "ProjectManifest | None" = None
+) -> EventDefinition | None:
+    definition = _EVENT_DEFINITIONS.get(event_type)
+    if definition is None:
+        return None
+    if manifest is not None and not _event_belongs_to_project(
+        event_type, manifest.project
+    ):
+        return None
+    return definition
