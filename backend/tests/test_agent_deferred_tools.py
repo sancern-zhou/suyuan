@@ -36,6 +36,19 @@ def _schema_size(schema):
     return len(json.dumps(schema, ensure_ascii=False))
 
 
+# 探测用大 schema 工具：不同部署会按项目下线部分工具（如广东下线
+# run_agent_workflow），用例不硬编码单一名称，取白名单里第一个存在的。
+PROBE_TOOL_CANDIDATES = ("run_agent_workflow", "call_sub_agent", "execute_python")
+
+
+def _probe_tool_name(mode: str = "query") -> str:
+    mode_names = set(get_tools_by_mode(mode).keys())
+    for name in PROBE_TOOL_CANDIDATES:
+        if name in mode_names:
+            return name
+    raise AssertionError(f"query 模式白名单缺少探测工具候选：{sorted(mode_names)}")
+
+
 # ========================================
 # 1. 存根构造与豁免
 # ========================================
@@ -127,7 +140,7 @@ def test_resolver_shared_table_and_never_stub(monkeypatch):
     assert not (deferred & DEFERRED_NEVER_STUB_TOOL_NAMES)
     assert "ask_user_question" not in deferred
     # 大 schema 工具保留在候选集
-    assert "run_agent_workflow" in deferred
+    assert _probe_tool_name("query") in deferred
 
 
 def test_resolver_kill_switch(monkeypatch):
@@ -173,23 +186,25 @@ def query_mode_deferred(monkeypatch):
 
 
 async def test_tool_search_returns_full_schema(query_mode_deferred):
+    probe = _probe_tool_name("query")
     tool = ToolSearchTool(mode="query")
-    result = await tool.execute(query="run_agent_workflow")
+    result = await tool.execute(query=probe)
     assert result["success"] is True
     assert result["count"] >= 1
     entry = result["data"]["tools"][0]
-    assert entry["name"] == "run_agent_workflow"
+    assert entry["name"] == probe
     # 返回的是完整契约：parameters 非空（存根处被替换的主体）
     assert entry["schema"]["parameters"].get("properties")
 
 
 async def test_tool_search_no_hit_returns_catalog(query_mode_deferred):
+    probe = _probe_tool_name("query")
     tool = ToolSearchTool(mode="query")
     result = await tool.execute(query="完全不存在的功能词zzz")
     assert result["success"] is True
     assert result["count"] == 0
     assert result["data"]["tools"] == []
-    assert "run_agent_workflow" in result["data"]["deferred_catalog"]
+    assert probe in result["data"]["deferred_catalog"]
 
 
 async def test_tool_search_unavailable_without_optin():
@@ -559,28 +574,29 @@ async def test_coordinator_injects_schema_when_stub_call_fails():
         knowledge_base_ids=None,
         schema_injector=None,
     )
+    probe = _probe_tool_name("query")
     state = RunState(session_id="s-fallback", user_query="q", mode="query")
-    state.deferred_tool_names = frozenset({"run_agent_workflow"})
+    state.deferred_tool_names = frozenset({probe})
 
     observation = {"success": False, "error": "参数错误: 缺少必填参数"}
-    coordinator._inject_deferred_schema_if_failed("run_agent_workflow", observation, state)
+    coordinator._inject_deferred_schema_if_failed(probe, observation, state)
 
     assert "schema_injection" in observation
-    assert "run_agent_workflow" in observation["schema_injection"]
+    assert probe in observation["schema_injection"]
     assert observation["schema_injection_notice"]
 
     # 成功结果 / 非 deferred 工具 / 已升级工具不注入
     ok_observation = {"success": True}
-    coordinator._inject_deferred_schema_if_failed("run_agent_workflow", ok_observation, state)
+    coordinator._inject_deferred_schema_if_failed(probe, ok_observation, state)
     assert "schema_injection" not in ok_observation
 
     other = {"success": False}
     coordinator._inject_deferred_schema_if_failed("read_file", other, state)
     assert "schema_injection" not in other
 
-    state.discovered_tools = {"run_agent_workflow"}
+    state.discovered_tools = {probe}
     discovered_observation = {"success": False}
-    coordinator._inject_deferred_schema_if_failed("run_agent_workflow", discovered_observation, state)
+    coordinator._inject_deferred_schema_if_failed(probe, discovered_observation, state)
     assert "schema_injection" not in discovered_observation
 
 
