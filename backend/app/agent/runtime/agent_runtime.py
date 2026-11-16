@@ -1037,12 +1037,21 @@ class AgentRuntime:
                 filtered_tool_count=len(tool_schemas),
             )
         if state.deferred_tool_names:
-            from app.agent.tool_adapter import apply_deferred_tool_stubs
+            from app.agent.tool_adapter import (
+                apply_deferred_tool_stubs,
+                collect_called_deferred_tools,
+            )
 
+            # 发现状态 = 会话历史派生（调用即升级跨轮次持久，ZCode 派生思想）
+            # ∪ 本运行内增量（本轮刚调用、尚未写回历史的工具）。
+            discovered_names = (
+                collect_called_deferred_tools(conversation_history, state.deferred_tool_names)
+                | state.discovered_tools
+            )
             tool_schemas, stub_count, stub_saved_chars = apply_deferred_tool_stubs(
                 tool_schemas,
                 deferred_names=state.deferred_tool_names,
-                discovered_names=state.discovered_tools,
+                discovered_names=discovered_names,
             )
             if stub_count:
                 logger.info(
