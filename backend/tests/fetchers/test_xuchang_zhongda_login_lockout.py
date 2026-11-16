@@ -213,6 +213,32 @@ def test_switch_to_vision_after_captcha_failure():
     assert result is fake
     assert fake.login_calls == 2
     assert vision_calls == [1]  # 第一次 OCR 答错后，第二次尝试走视觉链
+    assert session._prefer_vision is False  # 登录成功后恢复 OCR 优先
+
+
+def test_vision_preference_persists_across_login_calls():
+    redis = StubRedis()
+    session = make_session(redis)
+    # 第一次 login()：撞上锁定（答案大概率也错）
+    fake = FakeSession([{"isSucceed": False, "msg": "连续登录失败3次，请10分钟后再登录！"}])
+    ocr = SimpleNamespace(classification=lambda data: "ab12")
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(zhongda_mod.requests, "Session", lambda: fake)
+    monkey.setattr(session, "_get_ocr", lambda: ocr)
+    monkey.setattr(session, "_read_captcha_with_vision", lambda data: "cd34")
+    with pytest.raises(RuntimeError, match="登录失败"):
+        session.login()
+    assert session._prefer_vision is True
+
+    # 第二次 login()（锁定解除后的下一轮）：直接走视觉链，不再用 OCR 试错
+    redis.store["suyuan:fetcher:zhongda_login_locked_until"] = str(time.time() - 10)
+    fake2 = FakeSession([{"isSucceed": True}])
+    monkey.setattr(zhongda_mod.requests, "Session", lambda: fake2)
+    result = session.login()
+    monkey.undo()
+
+    assert result is fake2
+    assert fake2.login_calls == 1
 
 
 def test_unsolvable_captcha_not_submitted():

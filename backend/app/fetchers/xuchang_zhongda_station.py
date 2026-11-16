@@ -121,9 +121,10 @@ _LOCKOUT_PATTERN = re.compile(r"连续登录失败|10分钟")
 _CAPTCHA_SHAPE = re.compile(r"[0-9A-Za-z]{4}")
 LOCKOUT_SECONDS = 630  # 10.5 分钟，留少量余量
 # 连续锁定退避：第 n 次锁定在 LOCKOUT_SECONDS 基础上每次加 2 分钟，
-# 封顶 +20 分钟。防止"锁解除→OCR 又错→再锁"每小时循环锤击。
+# 封顶 +50 分钟。防止"锁解除→OCR 又错→再锁"循环锤击；若平台实际锁定
+# 长于宣传的 10 分钟，尝试间隔会逐步拉长，登录成功后计数清零自动恢复。
 _LOCK_BACKOFF_STEP_SECONDS = 120
-_LOCK_BACKOFF_MAX_STEPS = 10
+_LOCK_BACKOFF_MAX_STEPS = 25
 _LOCK_COUNT_TTL_SECONDS = 7200  # 连续锁定计数 2 小时无锁定即归零
 
 # 跨进程（web x3 + worker）共享的登录锁定/互斥水位：worker 单例只覆盖
@@ -191,6 +192,8 @@ class ZhongdaSession:
         self._locked_until = 0.0
         self._redis_client = redis_client
         self._attempt_token: str | None = None
+        # OCR 答错后置位：后续 login() 调用直接走视觉候选链（跨调用记忆）
+        self._prefer_vision = False
 
     def _get_ocr(self):
         if self._ocr is None:
@@ -370,7 +373,7 @@ class ZhongdaSession:
             raise RuntimeError("其他进程正在登录中大平台，本次跳过，等下一轮")
         attempts_made = 0
         last_err = None
-        use_vision = False
+        use_vision = self._prefer_vision
         try:
             for attempt in range(1, self.retries + 1):
                 attempts_made = attempt
@@ -406,13 +409,17 @@ class ZhongdaSession:
                             username=self.username,
                         )
                         self._session = session
+                        self._prefer_vision = False
                         self._clear_shared_lock()
                         return session
                     msg = str(result.get("msg") or "")
                     last_err = f"登录失败 msg={msg} code={code}"
-                    if "验证码" in msg:
-                        # OCR 答错：后续尝试改走视觉候选链，避免继续消耗平台失败计数
+                    if "验证码" in msg or _LOCKOUT_PATTERN.search(msg):
+                        # OCR 答错（含撞上锁定：窗口内已有失败计数，本次答案
+                        # 大概率也错）：置位视觉偏好并持久化到实例，让下一次
+                        # login()（可能是锁定解除后的第一轮）直接走视觉候选链。
                         use_vision = True
+                        self._prefer_vision = True
                     if _LOCKOUT_PATTERN.search(msg):
                         # 平台已锁定：停止重试，登记共享水位并带退避，避免锤击延长锁定。
                         until = self._set_shared_lock()
