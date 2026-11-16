@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from app.api import jiangsu_smart_event_routes as routes
 from app.fetchers.jiangsu_data_audit_review_event import JiangsuDataAuditReviewEventFetcher
 from app.fetchers.jiangsu_fault_work_order_review_event import JiangsuFaultWorkOrderReviewEventFetcher
-from app.fetchers.jiangsu_fault_work_order_review_rerun import JiangsuFaultWorkOrderReviewRerunFetcher
 from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
 from app.tools.jiangsu.demo_freeze import (
     demo_freeze_active,
@@ -58,7 +57,6 @@ def test_freeze_window_covers_full_local_day(monkeypatch):
 ASYNC_GUARD_CASES = [
     JiangsuStationFaultEventFetcher(),
     JiangsuFaultWorkOrderReviewEventFetcher(),
-    JiangsuFaultWorkOrderReviewRerunFetcher(),
 ]
 
 

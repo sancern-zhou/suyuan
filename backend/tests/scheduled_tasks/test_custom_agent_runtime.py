@@ -182,7 +182,7 @@ async def test_ppt_runtime_stops_immediately_when_token_plan_is_exhausted():
         yield
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, runtime_metadata=None, max_iterations=80, is_interruption=False)
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(
@@ -226,7 +226,7 @@ async def test_ppt_runtime_breaks_after_two_deterministic_model_failures():
         yield
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, runtime_metadata=None, max_iterations=80, is_interruption=False)
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(
@@ -262,7 +262,7 @@ async def test_custom_iteration_limit_emits_fatal_failure_not_continue_prompt():
             yield None
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=1, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, runtime_metadata=None, max_iterations=1, is_interruption=False)
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(start=lambda state: {"type": "start"})
@@ -298,7 +298,7 @@ async def test_custom_runtime_breaks_after_two_deterministic_model_failures():
         yield
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=120, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, runtime_metadata=None, max_iterations=120, is_interruption=False)
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(
