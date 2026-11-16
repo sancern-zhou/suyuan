@@ -175,6 +175,7 @@ backend:
     - xuchang_station_catalog
     - xuchang_cube_metrics
     - query_xuchang_traffic_status
+    - execute_crawler_sql_query
   agent_mode_tools:
     query:
       - run_agent_workflow
@@ -504,6 +505,19 @@ backend:
         【预报数据源优先级】未来逐3小时气象预报优先 XuchangNmcHourlyWeatherForecast（NMC 官方，7天）；中国天气网日预报与之同源归并。
         【气象边界】许昌气象实况与历史网格用 get_weather_data（本工具无许昌气象表，dat_weather_hour 无许昌数据）；边界层高度/短波辐射缺口直接 get_weather_forecast；许昌城区 1-15 日日预报只查 XuchangWeatherComDailyForecast（city_code='101180401'，已含温度/天气/风向风力，勿再叠加其他源）。
         【字段陷阱】PM2.5 列名=PM2_5（非 PM25）；日值列带 _24h 后缀（臭氧为 O3_8h_24h）；中大表城市字段=area、站点=station_code、时间=time_point，须过滤 data_table_type='Act' AND parameter_type='gp'；无效值站点表 -99 / 城市表 -999，统计前必须排除；质量标记列（*_mark）非空表示带标记值，慎用于统计；dat_zhongda_city_hour 查 2026 年数据必须加 data_type_plan='155th'（用错规划期返回空）；city_168/province_statistics 同名双标准表注意新旧。
+    # 共享工具 execute_postgres_sql_query 的许昌扩展：路况/告警结果表白名单追加
+    # 与许昌路由口径注记（2026-11-17 自共享层描述迁入）。
+    execute_postgres_sql_query:
+      allowed_tables_extra:
+      - traffic_snapshot
+      - traffic_section
+      - v_station_traffic_hourly
+      - xuchang_station_alert_episodes
+      schema_notes: |-
+        【许昌路况时序】traffic_snapshot 路况快照（6 分钟时隙，slot_at 为 UTC；evaluation_status 0未知~4严重拥堵）；traffic_section 以 snapshot_id 关联；v_station_traffic_hourly 按 station_code+小时聚合，可与空气质量小时数据 join；缺失时隙=未采集不可回补，实时路况用 query_xuchang_traffic_status。
+        【站点快速告警结论】查站点快速抬升告警结论必须加 task_id = 'task_xuchang_station_deviation_alert'（conclusion 结论 / broadcast_message 通报正文；findings、image_paths 为 JSON 列）；xuchang_station_alert_episodes 一行一个告警过程，event_ids 可关联 scheduled_task_results.event_id 取历次结论。
+        【站点编码】observed_weather_data 的许昌站编码 ZzMTA。
+        【示例】SELECT completed_at, station_name, conclusion, broadcast_message FROM scheduled_task_results WHERE task_id = 'task_xuchang_station_deviation_alert' ORDER BY completed_at DESC LIMIT 20。
     query_xcai_city_history:
       blocked_city_names: [许昌, 许昌市]
       blocked_guidance: >-
