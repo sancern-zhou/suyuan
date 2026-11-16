@@ -718,12 +718,17 @@ backend:
       - execute_python
   # deferred tools opt-in（共享层 eac48eb1 机制）：值 = 模式 always_on 工具（全 schema 常驻），
   # 其余模式白名单工具以薄存根常驻（描述/路由在，参数契约经运行时注入的 tool_search
-  # 按需取回，调用即升级回全 schema；≤600 字符小工具自动豁免存根）。
-  # 选型依据 2026-11-16 生产调用审计（session_messages，53 会话/近 30 天 31 会话）与
-  # schema 体积量化：存根化 13 个零/低频且参数重的工具，净省常驻 schema 24%
-  # （50,478 → 38,362 字符，含 tool_search 自身 447 字符）。
+  # 按需取回，调用即升级回全 schema；≤600 字符小工具自动豁免存根，
+  # 交付/交互类工具由 DEFERRED_NEVER_STUB 永不存根）。
+  # 选型依据 2026-11-16 生产调用审计（session_messages，全时段会话数/近 30 天会话数）
+  # 与 schema 体积量化，标准同 jiangsu_query：高频主力与模式核心保持全 schema，
+  # 零/低频且参数契约重的工具存根化。
+  # 数据域子模式（jiangsu_ops_data_*/regular/risk/evidence）主力工具（mart_sql/
+  # query_metrics/execute_python/business_chart/fetch_*）按提示词即核心路由目标，
+  # 存根面薄收益 <8%，本轮不启用；assistant/knowledge 会话量极小（5/1），暂不启用。
   agent_mode_deferred_tools:
     jiangsu_query:
+      # 全量 50,814 → 38,251（-24.7%）；选型与量化见 28d7b329。
       # 高频主力（近 30 天 ≥19/31 会话使用）：存根只省参数契约，反付每会话检索往返。
       - execute_jiangsu_mart_sql
       - execute_python
@@ -738,6 +743,104 @@ backend:
       - write_file
       - publish_session_file
       - get_current_weather
+    ops:
+      # 全量 57,414 → 约 36,243（-36.9%，模拟值）。主力=read_file(207 会话)/python(135)/
+      # submit_task_review(186)/station_data(70)/mart_sql(50)；存根=call_sub_agent
+      # (6237 字符仅 17 会话用)/business_chart 与 report_package(0 调用)/
+      # fault_work_orders(23)/workspace(2)/review_evidence(40)/alarm_records(7)/
+      # query_metrics(14)/ops_audit_fetch_dataset(11)。
+      - execute_jiangsu_mart_sql
+      - execute_python
+      - read_file
+      - submit_task_review
+      - read_session_resource
+      - view_skill
+      - list_skills
+      - publish_report
+      - jiangsu_fetch_fault_work_order_detail
+      - jiangsu_fetch_qc_task_status
+      - write_file
+      - publish_session_file
+    station_fault_diagnosis:
+      # 全量 41,962 → 约 30,854（-26.5%，模拟值）。主力=read_file(121)/station_data(122)/
+      # python(72)/mart_sql(102)/knowledge_graph_query(97)/edit_file(47)；
+      # 存根=query_metrics(5 会话)/fault_work_orders(25)/workspace(3)/report_package(31)/
+      # prepare_fault_work_order(6)/alarm_records(13)/qc_task_history(33)/
+      # auto_inspection(25)/qc_monitoring_curve 与 document_reader 与 qa_workflow(0)。
+      # submit_task_review 为共享层自动追加、不在白名单，天然全 schema 无须声明。
+      - execute_jiangsu_mart_sql
+      - execute_python
+      - read_file
+      - jiangsu_fetch_station_data
+      - edit_file
+      - knowledge_graph_query
+      - jiangsu_fetch_station_directory
+      - jiangsu_fetch_fault_work_order_detail
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_run_logs
+      - jiangsu_fetch_station_alarm_logs
+      - write_file
+    smart_inspection:
+      # 全量 35,482 → 约 27,987（-21.1%，模拟值）。主力=mart_sql(14 会话)/
+      # auto_inspection(17)/network_inspection_workflow(15)/network_summary(13)/
+      # station_alarm_logs(16)/python(5)；存根=query_metrics(10)/report_package(1)/
+      # env_history(6)/alarm_records(0)/qc_monitoring_curve(1)/qc_task_history(5)。
+      - execute_jiangsu_mart_sql
+      - execute_python
+      - read_file
+      - jiangsu_fetch_auto_inspection
+      - jiangsu_network_inspection_workflow
+      - jiangsu_fetch_network_inspection_summary
+      - jiangsu_fetch_station_alarm_logs
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_run_logs
+      - jiangsu_fetch_station_directory
+      - write_file
+    operations_analysis:
+      # 全量 21,044 → 约 14,563（-30.8%，模拟值）。编排模式：run_agent_workflow 为 DAG
+      # 主入口保持全 schema（goal 化契约精度优先）；存根=call_sub_agent(6237 字符仅
+      # 4 会话用)/report_package/edit_file/list_session_resources。
+      - run_agent_workflow
+      - execute_python
+      - read_file
+      - list_skills
+      - view_skill
+      - publish_report
+      - read_session_resource
+      - write_file
+      - publish_session_file
+    device_control:
+      # 全量 14,131 → 约 10,985（-22.3%，模拟值）。主力=qc_task_history(8/8 会话)/
+      # operations_graph(7)/python(6)；存根=report_package(2 会话)/qc_monitoring_curve(1)/
+      # prepare_device_control(0 调用)/edit_file 与 knowledge_graph_query(≤1)。
+      - jiangsu_fetch_qc_task_history
+      - execute_python
+      - jiangsu_query_operations_graph
+      - read_file
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_run_logs
+      - jiangsu_fetch_station_directory
+      - jiangsu_get_device_control_state
+      - jiangsu_execute_device_control
+      - write_file
+    smart_event_external:
+      # Worker 进程的智能事件外部处置（672 会话/近 30 天 580，历史 token 大户）。
+      # 仅存根全时段 0 调用的两个工具（report_package/prepare_fault_work_order），
+      # 零检索往返风险；主力 submit_task_review(604 会话)/read_file(609)/python(433)/
+      # workspace(287) 全 schema。全量 15,611 → 约 13,170（-15.6%，模拟值），
+      # 按事件轮数放大的绝对节省最大。
+      - submit_task_review
+      - execute_python
+      - jiangsu_smart_event_workspace
+      - read_file
+    smart_event_instrument:
+      # Worker 进程的仪器事件研判（9 会话）。主力=workspace(8/9)/fault_work_orders(5)；
+      # 存根=python/read_file/prepare_fault_work_order/report_package(均 0 调用)/
+      # review_evidence(1)。全量 20,783 → 约 14,273（-31.3%，模拟值）。
+      - submit_task_review
+      - jiangsu_smart_event_workspace
+      - jiangsu_fetch_fault_work_orders
+      - jiangsu_fetch_fault_work_order_detail
   mode_prompt_files:
     jiangsu_ops_data_workorder: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_workorder.md
     jiangsu_ops_data_alarm: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_alarm.md
