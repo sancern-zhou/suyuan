@@ -26,6 +26,8 @@ frontend:
   agent_scene_overrides:
     monitoring:
       # assistant 是 Web/App 共用助手主模式；office 仅作为办公子 Agent。
+      # 平台页助手卡片由共享层按 assistant_floating 统一隐藏（入口=浮球/浮窗与
+      # App ?assistant=1 深链），mode_ids 保留 assistant 仅作声明完整性。
       mode_ids: [assistant, query, knowledge, expert, report]
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
