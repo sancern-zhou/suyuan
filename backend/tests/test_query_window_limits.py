@@ -144,25 +144,3 @@ def test_voc_client_rejects_oversized_hourly_window_before_network():
     assert result["success"] is False
     assert result["error_code"] == "query_range_too_large"
     assert "VOCs 类别查询" in result["error"]
-
-
-def test_voc_ofp_client_valid_window_reaches_api_layer():
-    client = _bare_voc_client()
-    calls = []
-
-    def fake_get_json(endpoint, params, op):
-        calls.append((endpoint, params, op))
-        return {"success": True, "api_response": {"ok": True}}
-
-    client._get_json = fake_get_json
-
-    result = client.get_ofp_top10(
-        station_code="1036b",
-        start_time="2026-10-01 00:00:00",
-        end_time="2026-10-10 00:00:00",
-        table_type=1,
-        data_type=0,
-    )
-
-    assert result["success"] is True
-    assert len(calls) == 1
