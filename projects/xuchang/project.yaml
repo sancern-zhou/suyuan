@@ -331,6 +331,15 @@ backend:
       - {city: 周口市, province: 河南省, lat: 33.63, lon: 114.70}
       - {city: 驻马店市, province: 河南省, lat: 32.93, lon: 113.92}
       - {city: 济源市, province: 河南省, lat: 35.08, lon: 112.58}
+  # 共享工具 query_xcai_city_history 的项目级屏蔽规则：许昌本市数据不走城市发布历史
+  # 通道（官方口径以中大平台为准），命中即拒绝并给改道指引。
+  tool_options:
+    query_xcai_city_history:
+      blocked_city_names: [许昌, 许昌市]
+      blocked_guidance: >-
+        许昌市数据不在城市发布历史（XcAiDb）通道开放范围：许昌官方口径以中大平台为准。
+        请改用 query_airdata_platform（城市日 v_c_d_sb_145/v_c_d_sb_155；月度及以上统计用
+        airdata_calc_report_summary）或 execute_crawler_sql_query（CityHour/CityDay 长历史）查询许昌。
 knowledge:
   collections:
   - xuchang
