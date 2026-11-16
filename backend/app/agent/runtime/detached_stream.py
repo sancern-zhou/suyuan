@@ -7,6 +7,9 @@
 - 写入与读取都容错：Redis 不可用时发布方静默降级（run 不受影响），
   读取方通过 ``stream_lost`` 事件让前端回退到会话恢复接口。
 - stream 键与 "活跃 run" 映射均带 TTL，孤儿状态自动过期，无需人工清理。
+- run 终态后淘汰 token 级瞬态事件（streaming_text/thinking_content）：
+  最终答案全文随 complete 事件携带、thinking 原文已随 thinking_blocks 持久化，
+  chunk 可由持久层重建（对标 ZCode 瞬态事件留存策略）；超限单帧不镜像。
 """
 
 from __future__ import annotations
@@ -20,6 +23,11 @@ logger = structlog.get_logger()
 
 #: 终止类事件：订阅者收到即结束，活跃映射随之清除
 TERMINAL_EVENT_TYPES = frozenset({"complete", "incomplete", "fatal_error", "interrupted"})
+#: 瞬态事件：token 级流式 chunk，可由持久层重建（终态事件含完整答案、
+#: thinking 原文随 thinking_blocks 入库），run 终态后从镜像中淘汰
+TRANSIENT_EVENT_TYPES = frozenset({"streaming_text", "thinking_content"})
+#: 瘦身扫描批大小（XRANGE 单批条数）
+_SLIM_BATCH_SIZE = 1000
 #: 传输层合成事件：表示镜像通道结束（区别于业务终止事件）
 STREAM_CLOSED_EVENT_TYPE = "stream_closed"
 STREAM_LOST_EVENT_TYPE = "stream_lost"
@@ -60,6 +68,7 @@ class RunEventStream:
         owner_prefix: str = "suyuan:run:owner:",
         ttl_seconds: int = 7200,
         max_entries: int = 20000,
+        max_frame_bytes: int = 131072,
         read_block_ms: int = 15000,
     ) -> None:
         self._redis = redis
@@ -68,6 +77,7 @@ class RunEventStream:
         self._owner_prefix = owner_prefix
         self._ttl_seconds = ttl_seconds
         self._max_entries = max_entries
+        self._max_frame_bytes = max_frame_bytes
         self._read_block_ms = read_block_ms
 
     @classmethod
@@ -105,17 +115,28 @@ class RunEventStream:
             logger.warning("run_stream_open_failed", error_type=type(exc).__name__)
 
     async def publish(self, stream_id: str, sse_chunk: str) -> None:
-        """镜像一帧业务事件；终止事件同时清除活跃映射。失败不影响 run 本身。"""
+        """镜像一帧业务事件；终止事件同时清除活跃映射并瘦身瞬态条目。失败不影响 run 本身。"""
         payload = parse_sse_payload(sse_chunk)
         if payload is None:
             return
-        key = self._stream_key(stream_id)
+        body = sse_chunk[len(_SSE_DATA_PREFIX):].strip()
         event_type = payload_event_type(payload) or "unknown"
         terminal = event_type in TERMINAL_EVENT_TYPES
+        # 超限单帧不镜像：DB 历史是权威（会话历史加载拿全量），防止单帧
+        # 大结果挤占 maxlen 预算（对齐 ZCode model_request 元数据瘦身教训）
+        if len(body.encode("utf-8")) > self._max_frame_bytes:
+            logger.warning(
+                "run_stream_frame_too_large_skipped",
+                event_type=event_type,
+                size_bytes=len(body.encode("utf-8")),
+                limit_bytes=self._max_frame_bytes,
+            )
+            return
+        key = self._stream_key(stream_id)
         try:
             await self._redis.xadd(
                 key,
-                {"type": event_type, "payload": sse_chunk[len(_SSE_DATA_PREFIX):].strip()},
+                {"type": event_type, "payload": body},
                 id="*",
                 maxlen=self._max_entries,
                 approximate=True,
@@ -123,6 +144,7 @@ class RunEventStream:
             await self._redis.expire(key, self._ttl_seconds)
             if terminal:
                 await self._clear_active_for_stream(stream_id)
+                await self._slim_transient_entries(stream_id)
         except Exception as exc:
             logger.warning("run_stream_publish_failed", error_type=type(exc).__name__)
 
@@ -142,6 +164,7 @@ class RunEventStream:
             await self._redis.expire(self._stream_key(stream_id), self._ttl_seconds)
         except Exception as exc:
             logger.warning("run_stream_close_failed", error_type=type(exc).__name__)
+        await self._slim_transient_entries(stream_id)
         await self._clear_active_for_stream(stream_id)
         try:
             await self._redis.delete(f"{self._owner_prefix}{stream_id}")
@@ -163,6 +186,35 @@ class RunEventStream:
                     await self._redis.delete(session_key)
         except Exception as exc:
             logger.warning("run_stream_active_clear_failed", error_type=type(exc).__name__)
+
+    async def _slim_transient_entries(self, stream_id: str) -> None:
+        """淘汰镜像中的瞬态条目（streaming_text/thinking_content）。
+
+        终态事件携带完整最终答案、thinking 原文已随 thinking_blocks 持久化，
+        token 级 chunk 可由持久层重建；XDEL 后 entry id 仍单调，游标语义不变。
+        终态发布与 close 双触发、幂等；Redis 不可用时静默降级。
+        """
+        key = self._stream_key(stream_id)
+        try:
+            cursor = "-"
+            while True:
+                result = await self._redis.xrange(key, min=cursor, max="+", count=_SLIM_BATCH_SIZE)
+                if not result:
+                    break
+                stale_ids = [
+                    entry_id
+                    for entry_id, fields in result
+                    if isinstance(fields, dict) and fields.get("type") in TRANSIENT_EVENT_TYPES
+                ]
+                if stale_ids:
+                    await self._redis.xdel(key, *stale_ids)
+                if len(result) < _SLIM_BATCH_SIZE:
+                    break
+                # 含头游标推进：下一批从本批最后一条重新扫起（已删条目不会再出现，
+                # 结构条目重复校验无害），兼容不支持排他区间的旧版 Redis
+                cursor = result[-1][0]
+        except Exception as exc:
+            logger.warning("run_stream_slim_failed", error_type=type(exc).__name__)
 
     # ---------- 订阅侧（SSE 订阅/重连接口调用） ----------
 

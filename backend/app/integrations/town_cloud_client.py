@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -121,6 +122,9 @@ class TownCloudClient:
         self.login_retries = login_retries or settings.town_cloud_login_retries
         self._token: str | None = None
         self._token_expires_at: float = 0.0
+        # 登录 single-flight：登录含验证码视觉识别链，代价高；
+        # 并发首次调用只允许一个线程走完整登录流程（双检锁）
+        self._login_lock = threading.Lock()
 
     # ---- 验证码识别 --------------------------------------------------------
     def _query_vision_model(
@@ -249,7 +253,12 @@ class TownCloudClient:
             self._token is None
             or time.time() >= self._token_expires_at - TOKEN_REFRESH_MARGIN_SECONDS
         ):
-            self.login()
+            with self._login_lock:
+                if (
+                    self._token is None
+                    or time.time() >= self._token_expires_at - TOKEN_REFRESH_MARGIN_SECONDS
+                ):
+                    self.login()
         return self._token  # type: ignore[return-value]
 
     # ---- 数据查询 ----------------------------------------------------------

@@ -42,6 +42,27 @@ class FakeRedis:
         # 与 redis.asyncio 一致：返回 [key, entries] 列表
         return [[key, entries] for key, entries in result]
 
+    async def xrange(self, key, min="-", max="+", count=None):
+        entries = self.streams.get(key, [])
+        exclusive = min.startswith("(")
+        lower = min[1:] if exclusive else min
+        picked = []
+        for eid, fields in entries:
+            if lower not in ("", "-"):
+                if exclusive:
+                    if _entry_key(eid) <= _entry_key(lower):
+                        continue
+                elif _entry_key(eid) < _entry_key(lower):
+                    continue
+            picked.append((eid, dict(fields)))
+        return picked[:count] if count else picked
+
+    async def xdel(self, key, *entry_ids):
+        entries = self.streams.get(key, [])
+        remove = set(entry_ids)
+        self.streams[key] = [(eid, f) for eid, f in entries if eid not in remove]
+        return len(remove)
+
     async def expire(self, key, ttl):
         return True
 
@@ -68,6 +89,10 @@ class FakeRedis:
 
 def _entry_gt(a: str, b: str) -> bool:
     return tuple(int(p) for p in a.split("-")) > tuple(int(p) for p in b.split("-"))
+
+
+def _entry_key(entry_id: str):
+    return tuple(int(p) for p in entry_id.split("-"))
 
 
 def _sse(event_type: str, data: dict | None = None) -> str:
@@ -181,3 +206,69 @@ async def test_owner_mismatch_detectable(stream):
     assert await stream.owner_of("abc") == "sess-1"
     assert await stream.is_active("sess-1", "abc")
     assert not await stream.is_active("sess-2", "abc")
+
+
+# ---------- 终态瘦身与超限帧守门 ----------
+
+
+def _stream_types(fake, stream_id):
+    entries = fake.streams.get(f"suyuan:run:events:{stream_id}", [])
+    return [fields.get("type") for _, fields in entries]
+
+
+@pytest.mark.asyncio
+async def test_publish_skips_oversized_frame():
+    fake = FakeRedis()
+    stream = RunEventStream(fake, read_block_ms=0, max_frame_bytes=64)
+    await stream.open("sess-1", "abc")
+    await stream.publish("abc", _sse("tool_result", {"blob": "x" * 500}))
+    await stream.publish("abc", _sse("thought", {"n": 1}))
+
+    types = _stream_types(fake, "abc")
+    assert "tool_result" not in types
+    assert STREAM_OPEN_EVENT_TYPE in types and "thought" in types
+
+
+@pytest.mark.asyncio
+async def test_terminal_publish_slims_transient_entries(stream):
+    fake = stream._redis
+    await stream.open("sess-1", "abc")
+    await stream.publish("abc", _sse("streaming_text", {"chunk": "a"}))
+    await stream.publish("abc", _sse("thinking_content", {"content": "b"}))
+    await stream.publish("abc", _sse("thought", {"n": 1}))
+    await stream.publish("abc", _sse("tool_result", {"n": 2}))
+    await stream.publish("abc", _sse("complete", {"answer": "done"}))
+
+    types = _stream_types(fake, "abc")
+    assert "streaming_text" not in types
+    assert "thinking_content" not in types
+    assert types == [STREAM_OPEN_EVENT_TYPE, "thought", "tool_result", "complete"]
+
+    # 淘汰后重放仍以终态事件收尾，结构事件完整
+    frames = _event_frames([
+        frame async for frame in stream.follow("abc", session_id="sess-1")
+    ])
+    replay_types = [parse_sse_payload(frame)["type"] for frame in frames]
+    assert replay_types == [STREAM_OPEN_EVENT_TYPE, "thought", "tool_result", "complete"]
+
+
+@pytest.mark.asyncio
+async def test_close_slims_transient_entries_idempotent(stream):
+    fake = stream._redis
+    await stream.open("sess-1", "abc")
+    await stream.publish("abc", _sse("streaming_text", {"chunk": "a"}))
+    await stream.publish("abc", _sse("tool_use", {"n": 1}))
+    await stream.close("abc")
+    await stream.close("abc")  # 幂等：重复 close 不报错、不重复删
+
+    types = _stream_types(fake, "abc")
+    assert "streaming_text" not in types
+    assert "tool_use" in types
+    assert types[-1] == STREAM_CLOSED_EVENT_TYPE
+
+
+@pytest.mark.asyncio
+async def test_slim_on_redis_failure_silent():
+    fake = FakeRedis(fail_xadd=True)
+    stream = RunEventStream(fake, read_block_ms=0)
+    await stream.publish("ghost", _sse("complete", {}))  # 瘦身在缺流/失败时静默降级

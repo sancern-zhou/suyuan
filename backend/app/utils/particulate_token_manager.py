@@ -9,6 +9,7 @@
 """
 
 import os
+import threading
 import time
 import yaml
 import structlog
@@ -49,6 +50,9 @@ class ParticulateTokenManager:
         # Token缓存
         self._token: Optional[str] = None
         self._token_expire_time: float = 0  # Token过期时间戳
+        # 刷新 single-flight：asyncio.gather 多段查询经 to_thread 并发进入时，
+        # 只允许一个线程触发 token HTTP 请求（双检锁），其余线程共享结果
+        self._refresh_lock = threading.Lock()
 
         # 配置缓存
         self._cfg: Dict[str, Any] = {}
@@ -140,13 +144,16 @@ class ParticulateTokenManager:
             self._token = override_token
             return self._token
 
-        # 检查Token是否有效
+        # 检查Token是否有效（fast path 无锁读）
         if self._token and time.time() < self._token_expire_time:
             # Token仍然有效
             return self._token
 
-        # Token无效或即将过期，刷新
-        return self._refresh_token()
+        # Token无效或即将过期，刷新（single-flight：并发时只有一个线程真正请求）
+        with self._refresh_lock:
+            if self._token and time.time() < self._token_expire_time:
+                return self._token
+            return self._refresh_token()
 
     def invalidate_token(self):
         """
@@ -155,8 +162,9 @@ class ParticulateTokenManager:
         用于401响应后强制刷新Token
         """
         self.logger.warning("[TokenManager] Token已失效，将强制刷新")
-        self._token = None
-        self._token_expire_time = 0
+        with self._refresh_lock:
+            self._token = None
+            self._token_expire_time = 0
 
     def _refresh_token(self) -> Optional[str]:
         """
