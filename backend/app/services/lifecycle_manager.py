@@ -68,8 +68,10 @@ from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDai
 from app.fetchers.xuchang_weather_situation import (
     XuchangAirQualityForecastFetcher, XuchangWeatherSituationEvidenceFetcher,
 )
-# 【上游缺失 2026-10-30】main(73cfaf06)引用的 app.fetchers.xuchang_town_five_minute
-# 从未入库(origin/main 同样 ModuleNotFoundError)，模块提交前本分支不得引入。
+try:
+    from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+except ImportError:  # xuchang 分支专属模块，main 工作树上不存在（可选导入）
+    XuchangTownFiveMinuteFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -188,9 +190,11 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
-        # xuchang_town_five_minute_fetcher 见文件头缺失说明，模块入库后再注册
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
+    if XuchangTownFiveMinuteFetcher is not None:
+        # 仅 xuchang 分支工作树提供该模块；main 工作树跳过注册。
+        factories["xuchang_town_five_minute_fetcher"] = XuchangTownFiveMinuteFetcher
     from app.services.station_operation_monitor.runtime import config_path
     if config_path().is_file():
         from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher

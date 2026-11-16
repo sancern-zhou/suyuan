@@ -4,7 +4,6 @@ import pytest
 
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.tool_registry import get_tool_order, get_tools_by_mode
-from app.social.agent_bridge import AgentBridge
 from app.tools.workflow.knowledge_qa_workflow import KnowledgeQAWorkflow
 
 
@@ -81,46 +80,3 @@ async def test_enforcement_exam_search_forces_designated_knowledge_base(monkeypa
     assert captured["user_id"] == "user-1"
 
 
-def test_social_bridge_resolves_professional_mode_from_channel_config():
-    bridge = object.__new__(AgentBridge)
-    bridge._channel_map = {
-        "weixin:exam": SimpleNamespace(
-            config=SimpleNamespace(agent_mode="enforcement_exam")
-        ),
-        "weixin:normal": SimpleNamespace(config=SimpleNamespace(agent_mode="assistant")),
-    }
-
-    assert bridge._get_agent_mode("weixin:exam") == "enforcement_exam"
-    assert bridge._get_agent_mode("weixin:normal") == "assistant"
-    assert bridge._get_agent_mode("weixin:missing") == "assistant"
-
-
-@pytest.mark.asyncio
-async def test_social_bridge_uses_exam_runtime_with_social_session_storage():
-    class Agent:
-        def __init__(self):
-            self.kwargs = None
-            self._session_store = {}
-
-        async def analyze(self, **kwargs):
-            self.kwargs = kwargs
-            yield {"type": "complete", "data": {"answer": "题目内容"}}
-
-    bridge = object.__new__(AgentBridge)
-    bridge.agent = Agent()
-    bridge.mode = "assistant"
-
-    answer, reasoning = await bridge._aggregate_agent_events(
-        content="开始刷题",
-        session_id="social-session",
-        chat_id="chat-1",
-        agent_mode="enforcement_exam",
-        agent_user_identifier="platform-user-1",
-        stream_reasoning=False,
-    )
-
-    assert answer == "题目内容"
-    assert reasoning == ""
-    assert bridge.agent.kwargs["manual_mode"] == "enforcement_exam"
-    assert bridge.agent.kwargs["session_storage_mode"] == "channel"
-    assert bridge.agent.kwargs["user_identifier"] == "platform-user-1"

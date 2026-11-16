@@ -779,15 +779,6 @@ const allModules = [
     requiredModule: 'shared-conversations'
   },
   {
-    id: 'social-platform',
-    name: '社交管理',
-    abbr: '社交',
-    desc: '管理QQ、微信等社交机器人',
-    badge: '管理',
-    isAction: true,
-    requiredModule: 'legacy'
-  },
-  {
     id: 'file-manager',
     name: '文件管理',
     abbr: '文件',
@@ -821,8 +812,7 @@ const SETTINGS_MODULE_IDS = Object.freeze([
   'scheduled-tasks',
   'tools-management',
   'file-manager',
-  'fetchers',
-  'social-platform'
+  'fetchers'
 ])
 
 const settingsModules = computed(() => {
@@ -1023,7 +1013,7 @@ const getModuleIcon = (moduleId) => moduleIcons[moduleId] || moduleIcons['tools-
 const handleModuleSelect = (moduleId) => {
   const module = modules.find(m => m.id === moduleId)
 
-  // 所有管理功能：触发事件（包括工具管理、知识库管理、社交账号管理等）
+  // 所有管理功能：触发事件（包括工具管理、知识库管理等）
   emit('action', moduleId)
 }
 

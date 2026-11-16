@@ -101,6 +101,10 @@ class GatewayAuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
+        if method in {"GET", "POST"} and self._valid_wecom_callback(path):
+            await self.app(scope, receive, send)
+            return
+
         headers = Headers(scope=scope)
         if (path == "/api/shared-conversations" or path.startswith("/api/shared-conversations/")) and not headers.get("syscode"):
             # Shared snapshots are consumed by both Web sessions and signed App identities.
@@ -242,6 +246,21 @@ class GatewayAuthenticationMiddleware:
         query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
         supplied = (query.get("access_token") or [""])[0]
         return bool(supplied) and hmac.compare_digest(supplied, configured)
+
+    def _valid_wecom_callback(self, path: str) -> bool:
+        """Exact-match whitelist for the WeCom (企业微信) server callback.
+
+        WeCom's servers cannot carry gateway credentials.  The whitelist only
+        opens when the callback token/AES key are configured; signature
+        verification and AES decryption happen inside the route handler, so a
+        forged request is still rejected there.
+        """
+        token = getattr(self.settings, "wecom_token", "")
+        aes_key = getattr(self.settings, "wecom_aes_key", "")
+        prefix = getattr(self.settings, "wecom_api_prefix", "")
+        if not token or not aes_key or not prefix:
+            return False
+        return path == f"{prefix.rstrip('/')}/callback"
 
     def _verify_preview_ticket(
         self,

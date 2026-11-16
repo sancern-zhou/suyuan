@@ -1,0 +1,93 @@
+# 本地开发部署（Windows 工作站 / Docker Desktop）
+#
+# 与生产（deploy/nginx + 服务器进程）的差别：
+# - web/worker 跑在 Linux 容器里（本机是 Windows，fcntl 等 Linux 语义必需）；
+# - 数据库/Redis 全部本地容器化，无远端依赖；监控栈（定时任务执行记录/
+#   会话错误/fetcher 留痕/Redis 计数）完整可用；
+# - 代码以 bind mount 挂载，A4b/A4c 迭代改完即生效（重启容器加载）；
+# - 知识库/嵌入服务/qdrant 暂不启用（监控路径不依赖，EMBEDDING_SERVICE_URL
+#   不配置时知识检索降级，不影响本部署目标）。
+#
+# 用法：
+#   cd deploy/local
+#   docker compose -p suyuan-dev up -d --build
+#
+# 端口约定（避开本机已有服务）：
+#   web 18000 / worker 内部 18011 / postgres 15432 / redis 16379
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: suyuan_app
+      POSTGRES_USER: suyuan
+      POSTGRES_PASSWORD: suyuan-dev-local
+    ports:
+      - "15432:5432"
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U suyuan -d suyuan_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: ../../backend
+      dockerfile: ../local/Dockerfile.dev
+    image: suyuan-backend:dev
+    working_dir: /srv/suyuan/backend
+    command: >
+      python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --workers 1 --env-file .env.local --no-proxy-headers
+    env_file:
+      - ../../backend/.env.local
+    environment:
+      APP_ROLE: web
+    ports:
+      - "18000:8000"
+    volumes:
+      # 整个仓库根挂载：代码热更新 + projects/ 种子 + frontend/dist 都可见
+      - ../..:/srv/suyuan
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: suyuan-backend:dev
+    working_dir: /srv/suyuan/backend
+    command: python -m app.worker --env-file .env.local
+    env_file:
+      - ../../backend/.env.local
+    environment:
+      APP_ROLE: worker
+      SOCIAL_WORKER_INTERNAL_PORT: "8011"
+    ports:
+      - "127.0.0.1:18011:8011"
+    volumes:
+      - ../..:/srv/suyuan
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  dev_postgres_data:

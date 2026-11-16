@@ -1,13 +1,8 @@
-export const selectableWeixinUsers = (users = []) => users.filter(user =>
-  user.status === 'active' &&
-  Boolean(user.social_user_id) &&
-  String(user.channel || '').startsWith('weixin')
-)
-
+// 对话社交渠道（个人微信/QQ）已退役，广播接收人只剩 App 账号。
 export const selectableSocialUsers = (users = []) => users.filter(user =>
   user.status === 'active' &&
   Boolean(user.social_user_id) &&
-  (String(user.channel || '').startsWith('weixin') || String(user.channel || '').startsWith('app'))
+  String(user.channel || '').startsWith('app')
 )
 
 

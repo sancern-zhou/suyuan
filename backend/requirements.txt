@@ -50,7 +50,8 @@ python-dotenv==1.0.1
 structlog==24.4.0
 
 # Date & Time
-python-dateutil==2.9.0
+# post0 satisfies htmldate>=2.9.0.post0（trafilatura 传递依赖），2.9.0 会 ResolutionImpossible
+python-dateutil==2.9.0.post0
 
 # Runtime dependencies (single source of truth; dev tools live in requirements-dev.txt)
 

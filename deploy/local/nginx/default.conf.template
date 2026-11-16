@@ -1,0 +1,95 @@
+# 本地 nginx 入口：复刻生产形态（SPA + API 前缀重写）
+#
+# 与 deploy/nginx/templates/default.conf.template 的差异：
+# - 增加 /suyuan/ 静态资源前缀重写：VITE_APP_BASE_PATH=/suyuan/ 构建出的
+#   index.html 引用 /suyuan/assets/*，而 dist 目录本身不含 suyuan 子目录；
+#   生产模板靠 location / 的 SPA 兜底，但正则 location（\.js$）会先命中并
+#   返回 404。本地显式 rewrite 剥离前缀后重新匹配。
+# - 使用 bridge 网络 + 端口映射（Windows Docker Desktop 的 host 模式不可靠）。
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 8080 default_server;
+    server_name _;
+
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 100m;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # 本地 mock 鉴权：认证接口由后端自身承担
+    location ^~ /api/auth/ {
+        proxy_pass ${BUSINESS_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /api/suyuan/ws/ {
+        proxy_pass ${BUSINESS_UPSTREAM}/ws/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # /api/suyuan/* → 后端 /api/*
+    location ^~ /api/suyuan/ {
+        proxy_pass ${BUSINESS_UPSTREAM}/api/;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header SysCode $http_syscode;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /api/social/app/ {
+        proxy_pass ${BUSINESS_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_read_timeout 600s;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 静态资源前缀：/suyuan/assets/x.js → /assets/x.js 后重新匹配
+    location ^~ /suyuan/ {
+        rewrite ^/suyuan/(.*)$ /$1 last;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    location ~* \.(?:css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf)$ {
+        try_files $uri =404;
+        expires 1h;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # SPA 路由兜底
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+}

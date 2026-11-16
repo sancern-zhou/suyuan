@@ -139,10 +139,7 @@ def build_assistant_prompt(
         current_channel = get_current_channel()
 
         if current_channel:
-            channel_display_names = {
-                "weixin": "微信",
-            }
-            display_name = channel_display_names.get(current_channel, current_channel)
+            display_name = current_channel
 
             prompt_parts.extend([
                 "## 当前会话",

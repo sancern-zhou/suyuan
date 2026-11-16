@@ -448,27 +448,3 @@ async def test_app_stream_binds_original_request_and_revokes_on_exit(monkeypatch
     assert chunks
     with pytest.raises(PermissionError):
         require_assistant_request("session-a")
-
-
-@pytest.mark.asyncio
-async def test_social_bridge_binds_current_request_and_revokes_after_failure(monkeypatch):
-    from app.social.agent_bridge import AgentBridge
-
-    class Agent:
-        async def analyze(self, **kwargs):
-            assert (
-                require_assistant_request(kwargs["session_id"]).user_message
-                == "Please track my analysis"
-            )
-            raise RuntimeError("injected bridge agent failure")
-            yield  # pragma: no cover
-
-    bridge = object.__new__(AgentBridge)
-    bridge.agent = Agent()
-    bridge.mode = "assistant"
-    answer, _ = await bridge._aggregate_agent_events(
-        content="Please track my analysis", session_id="session-a", chat_id="alice"
-    )
-    assert "injected bridge agent failure" in answer
-    with pytest.raises(PermissionError):
-        require_assistant_request("session-a")

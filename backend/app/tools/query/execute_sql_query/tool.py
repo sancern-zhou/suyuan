@@ -120,6 +120,18 @@ XUCHANG_CRAWLER_TABLE_HINTS = {
 }
 
 
+# describe_table 结果中注入的表级口径注记：写明建表机制推导出的查询硬规则，
+# 让模型一次写对 SQL，不做防御性冗余查询（如对唯一索引表再去重）。
+TABLE_CALIBER_NOTES = {
+    "XuchangNmcHourlyWeatherForecast": (
+        "口径注记：本表 (station_id, forecast_time) 唯一（唯一索引 + MERGE upsert），"
+        "每个预报时刻只保留最新起报的一行，publish_time 即该行当前起报时点——"
+        "查询无需按 publish_time 去重，不要写 MAX(publish_time) 子查询或 JOIN；"
+        "远期时段 publish_time 停留在较早起报属正常（NMC 滚动翻新，近端新、远端旧）。"
+    ),
+}
+
+
 def _build_xuchang_schema_guide() -> str:
     """替换数据源优先级段，写明站点/城市长历史改走 crawler 工具。"""
     guide = AIR_QUALITY_SCHEMA_GUIDE
@@ -481,6 +493,11 @@ class BaseSQLQueryTool(LLMTool):
             table_schema = columns[0].get('TABLE_SCHEMA', 'dbo')
             full_table_name = f"{table_schema}.{table_name}"
 
+            # 表级口径注记（唯一键/写入机制推导的查询硬规则）
+            bare_name = table_name.split(".")[-1]
+            caliber_note = TABLE_CALIBER_NOTES.get(table_name) or TABLE_CALIBER_NOTES.get(bare_name, "")
+            note_section = f"\n{caliber_note}\n" if caliber_note else ""
+
             # 获取1条最新数据样例（尝试通过日期字段排序）
             sample_sql = self._build_sample_sql(full_table_name, columns)
             sample_data = self._execute_query(sample_sql, database)
@@ -522,7 +539,7 @@ class BaseSQLQueryTool(LLMTool):
 {fields_text}
 
 字段总数: {len(columns)}
-{sample_text}提示：使用 {self.tool_name}(sql='SELECT TOP 200 * FROM {full_table_name}', database='{database}') 查看更多数据"""
+{note_section}{sample_text}提示：使用 {self.tool_name}(sql='SELECT TOP 200 * FROM {full_table_name}', database='{database}') 查看更多数据"""
             }
 
             logger.info(

@@ -212,6 +212,11 @@ class BackendManifest(StrictModel):
     # shared list so projects can enable their own tools per mode without
     # re-declaring the shared baseline.
     agent_mode_extra_tools: dict[str, list[str]] = Field(default_factory=dict)
+    # Deferred tools opt-in per mode: key presence enables the tool_search
+    # on-demand schema mechanism for that mode; the value lists tools whose
+    # full schemas stay resident ("always_on").  Project declarations take
+    # precedence over the shared DEFERRED_TOOL_MODES table.
+    agent_mode_deferred_tools: dict[str, list[str]] = Field(default_factory=dict)
     agent_workflow_modes: dict[str, WorkflowModeManifest] = Field(default_factory=dict)
     agent_workflow_parents: dict[str, WorkflowParentManifest] = Field(default_factory=dict)
 
@@ -241,6 +246,7 @@ class BackendManifest(StrictModel):
     _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
     _unique_agent_mode_extra_tools = field_validator("agent_mode_extra_tools")(unique_string_lists)
+    _unique_agent_mode_deferred_tools = field_validator("agent_mode_deferred_tools")(unique_string_lists)
 
     @model_validator(mode="after")
     def validate_weather_history_worker(self):

@@ -1,0 +1,30 @@
+# 本地 nginx 入口（生产形态：SPA + /api/suyuan 前缀重写）
+#
+# 启动：
+#   docker compose -p suyuan-dev-nginx -f deploy/local/nginx/docker-compose.yml up -d
+# 访问：
+#   http://127.0.0.1:15174/login
+#
+# 网络：使用 bridge + 端口映射（Windows Docker Desktop 下 host 模式不可靠），
+# 业务后端通过 host.docker.internal 回到宿主机映射的 18000。
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: suyuan-dev-nginx
+    restart: unless-stopped
+    ports:
+      - "15174:8080"
+    environment:
+      BUSINESS_UPSTREAM: http://host.docker.internal:18000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../../../frontend/dist:/usr/share/nginx/html:ro
+      - ./default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/login >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

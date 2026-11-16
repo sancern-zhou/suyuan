@@ -232,3 +232,97 @@ def test_mixed_seed_sync_handles_agent_and_workflow_tasks(tmp_path):
     actions = {row["task_id"]: row["action"] for row in result}
     assert actions["task_watch"] == "updated_workflow_instruction"
     assert actions["task_report"] == "created"
+
+
+def _monitor_task(prompt="旧监控指令", tool_names=None):
+    return ScheduledTask(
+        task_id="task_runtime_monitor",
+        name="后台运行监控",
+        description="监控",
+        execution_mode="custom",
+        tool_names=tool_names or ["query_runtime_anomalies"],
+        schedule_type="cron",
+        cron="5 * * * *",
+        target_user_ids=["app:android:android_demo"],
+        broadcast_enabled=True,
+        prompt=prompt,
+        timeout_seconds=300,
+        tags=["runtime-monitor", "watchdog"],
+        history_learning={"enabled": False},
+    )
+
+
+def _write_monitor_definition(root, task):
+    path = root / "projects" / "demo" / "scheduled_tasks" / "task_runtime_monitor.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(task.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
+
+
+def test_monitor_seed_propagates_code_owned_fields(tmp_path):
+    """监控任务（runtime-monitor tag）是代码拥有的基础设施：种子变更需同步。"""
+    storage = TaskStorage(tmp_path / "state")
+    existing = _monitor_task()
+    existing.enabled = False  # 运维在界面关掉过
+    existing.total_runs = 9
+    storage.create(existing)
+
+    seed = _monitor_task(
+        prompt="新监控指令",
+        tool_names=["query_runtime_anomalies", "retry_scheduled_task", "trigger_fetcher"],
+    )
+    _write_monitor_definition(tmp_path, seed)
+    result = sync_project_scheduled_tasks(
+        project_id="demo",
+        task_ids=["task_runtime_monitor"],
+        service=_Service(storage),
+        project_root=tmp_path,
+    )
+
+    updated = storage.get("task_runtime_monitor")
+    assert result[0]["action"] == "updated_monitor_definition"
+    # 代码拥有字段随种子更新
+    assert updated.prompt == "新监控指令"
+    assert updated.tool_names == ["query_runtime_anomalies", "retry_scheduled_task", "trigger_fetcher"]
+    # 运行时字段不动：禁用状态、推送目标、统计都保留
+    assert updated.enabled is False
+    assert updated.target_user_ids == ["app:android:android_demo"]
+    assert updated.total_runs == 9
+
+
+def test_monitor_seed_unchanged_when_definition_matches(tmp_path):
+    storage = TaskStorage(tmp_path / "state")
+    storage.create(_monitor_task())
+    _write_monitor_definition(tmp_path, _monitor_task())
+    result = sync_project_scheduled_tasks(
+        project_id="demo",
+        task_ids=["task_runtime_monitor"],
+        service=_Service(storage),
+        project_root=tmp_path,
+    )
+    assert result[0]["action"] == "unchanged"
+
+
+def test_monitor_seed_flips_broadcast_switch_with_channel_migration(tmp_path):
+    """通报通道迁移（直推→助手会话）：broadcast_enabled 随种子关闭，推送目标保留。"""
+    storage = TaskStorage(tmp_path / "state")
+    existing = _monitor_task()  # 旧部署：直推开着
+    existing.broadcast_enabled = True
+    storage.create(existing)
+
+    seed = _monitor_task(tool_names=["query_runtime_anomalies", "submit_monitor_report"])
+    seed.broadcast_enabled = False
+    seed.target_user_ids = []
+    _write_monitor_definition(tmp_path, seed)
+    sync_project_scheduled_tasks(
+        project_id="demo",
+        task_ids=["task_runtime_monitor"],
+        service=_Service(storage),
+        project_root=tmp_path,
+    )
+
+    updated = storage.get("task_runtime_monitor")
+    # 通道开关是代码拥有的：旧直推被种子关闭，避免与新通报通道双重投递
+    assert updated.broadcast_enabled is False
+    assert "submit_monitor_report" in updated.tool_names
+    # 推送目标仍是运行时字段：部署侧的收件人配置保留（通道关闭后为惰性字段）
+    assert updated.target_user_ids == ["app:android:android_demo"]
