@@ -19,7 +19,7 @@ const routes = [
     {
       path: '/bigscreen',
       name: 'bigscreen',
-      component: () => import('@/views/BigScreenView.vue'),
+      component: () => import('@/views/xuchang/BigScreenView.vue'),
       meta: {
         requiredModule: 'xuchang-air-quality',
         title: '数据大屏',
@@ -30,7 +30,7 @@ const routes = [
     {
       path: '/fieldwatch',
       name: 'fieldwatch',
-      component: () => import('@/views/FieldWatchView.vue'),
+      component: () => import('@/views/xuchang/FieldWatchView.vue'),
       meta: {
         requiredModule: 'xuchang-air-quality',
         title: '现场巡查快报',

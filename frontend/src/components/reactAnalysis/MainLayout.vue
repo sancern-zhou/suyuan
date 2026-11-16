@@ -286,7 +286,7 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   : null
 
 const BigScreenView = projectConfig.hasModule('xuchang-air-quality')
-  ? defineAsyncComponent(() => import('@/views/BigScreenView.vue'))
+  ? defineAsyncComponent(() => import('@/views/xuchang/BigScreenView.vue'))
   : null
 
 const auth = useAuthStore()

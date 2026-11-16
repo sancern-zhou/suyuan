@@ -88,9 +88,9 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted } from 'vue'
-import { useBigScreenStore } from '@/stores/bigScreen.js'
-import { initDashboardAccessToken } from '@/api/bigScreen.js'
-import { aqiColor, aqiLevelName, formatDateTime, formatHour, windDirectionLabel } from '@/components/bigscreen/aqiLevels.js'
+import { useBigScreenStore } from '@/stores/xuchang/bigScreen.js'
+import { initDashboardAccessToken } from '@/api/xuchang/bigScreen.js'
+import { aqiColor, aqiLevelName, formatDateTime, formatHour, windDirectionLabel } from '@/components/xuchang/bigscreen/aqiLevels.js'
 
 const store = useBigScreenStore()
 

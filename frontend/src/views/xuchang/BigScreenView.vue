@@ -59,17 +59,17 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import ScreenHeader from '@/components/bigscreen/ScreenHeader.vue'
-import RealtimePanel from '@/components/bigscreen/RealtimePanel.vue'
-import TrendPanel from '@/components/bigscreen/TrendPanel.vue'
-import RankingPanel from '@/components/bigscreen/RankingPanel.vue'
-import TargetProgressPanel from '@/components/bigscreen/TargetProgressPanel.vue'
-import AlertListPanel from '@/components/bigscreen/AlertListPanel.vue'
-import StationMapPanel from '@/components/bigscreen/StationMapPanel.vue'
-import DataQualityBar from '@/components/bigscreen/DataQualityBar.vue'
-import BroadcastTicker from '@/components/bigscreen/BroadcastTicker.vue'
-import { useBigScreenStore } from '@/stores/bigScreen.js'
-import { initDashboardAccessToken } from '@/api/bigScreen.js'
+import ScreenHeader from '@/components/xuchang/bigscreen/ScreenHeader.vue'
+import RealtimePanel from '@/components/xuchang/bigscreen/RealtimePanel.vue'
+import TrendPanel from '@/components/xuchang/bigscreen/TrendPanel.vue'
+import RankingPanel from '@/components/xuchang/bigscreen/RankingPanel.vue'
+import TargetProgressPanel from '@/components/xuchang/bigscreen/TargetProgressPanel.vue'
+import AlertListPanel from '@/components/xuchang/bigscreen/AlertListPanel.vue'
+import StationMapPanel from '@/components/xuchang/bigscreen/StationMapPanel.vue'
+import DataQualityBar from '@/components/xuchang/bigscreen/DataQualityBar.vue'
+import BroadcastTicker from '@/components/xuchang/bigscreen/BroadcastTicker.vue'
+import { useBigScreenStore } from '@/stores/xuchang/bigScreen.js'
+import { initDashboardAccessToken } from '@/api/xuchang/bigScreen.js'
 
 const props = defineProps({
   embedded: { type: Boolean, default: false }
