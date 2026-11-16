@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from app.utils.component_semantics import (
+from app.tools.guangdong.component_query.component_semantics import (
     METAL_ELEMENT_CODES,
     OFP_DETECTION_ITEM_TYPE_GUIDS,
     OFP_FACTOR_UNIT_GUIDS,
@@ -101,7 +101,7 @@ def _client_stub(monkeypatch, response_body, capture):
 
 
 def test_voc_species_client_sends_fixed_detection_item_type(monkeypatch):
-    from app.utils.component_semantics import VOC_SPECIES_DETECTION_ITEM_TYPE_GUID
+    from app.tools.guangdong.component_query.component_semantics import VOC_SPECIES_DETECTION_ITEM_TYPE_GUID
 
     capture: dict = {}
     client = _client_stub(

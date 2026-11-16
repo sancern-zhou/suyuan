@@ -33,7 +33,7 @@ from urllib.parse import urlencode
 
 from app.utils.particulate_token_manager import get_particulate_token_manager
 from app.utils.query_window_limits import check_query_window
-from app.utils.component_semantics import (
+from app.tools.guangdong.component_query.component_semantics import (
     OFP_DETECTION_ITEM_TYPE_GUIDS,
     OFP_FACTOR_UNIT_GUIDS,
     OFP_MIR_VERSION,

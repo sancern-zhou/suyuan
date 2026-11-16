@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Union
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.component_semantics import (
+from app.tools.guangdong.component_query.component_semantics import (
     TRACE_ELEMENTS,
     filter_mark_fields,
     metal_element_catalog_text,
     resolve_element_codes,
 )
-from app.tools.query.component_station_resolver import resolve_component_station
+from app.tools.guangdong.component_query.component_station_resolver import resolve_component_station
 from app.utils.particulate_api_client import get_particulate_api_client
 
 if TYPE_CHECKING:

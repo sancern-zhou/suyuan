@@ -17,7 +17,7 @@ class DummyContext:
 def fake_station_matcher(monkeypatch):
     """站点解析单一入口在 component_station_resolver，统一打桩。"""
     monkeypatch.setattr(
-        "app.tools.query.component_station_resolver.get_particulate_geo_matcher",
+        "app.tools.guangdong.component_query.component_station_resolver.get_particulate_geo_matcher",
         lambda: FakeMatcher(),
     )
 

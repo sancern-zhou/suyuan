@@ -230,42 +230,45 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
 
     # ========================================
     # Super-station Component Query Tools (Phase 2: species/OFP/recovery/trace)
+    # 广东超站组分查询二期，模块本体在 backend/app/tools/guangdong/component_query/，
+    # 仅广东部署注册（工具名不变，project.yaml 白名单按名引用不受迁移影响）。
     # ========================================
 
-    try:
-        from app.tools.query.get_vocs_species.tool import GetVOCsSpeciesTool
-        registry.register(GetVOCsSpeciesTool(), priority=66)
-        logger.info("tool_loaded", tool="get_vocs_species")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_vocs_species", error=str(e))
+    if getattr(context.manifest, "project", "") == "guangdong":
+        try:
+            from app.tools.guangdong.component_query.get_vocs_species.tool import GetVOCsSpeciesTool
+            registry.register(GetVOCsSpeciesTool(), priority=66)
+            logger.info("tool_loaded", tool="get_vocs_species")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_vocs_species", error=str(e))
 
-    try:
-        from app.tools.query.get_vocs_ofp.tool import GetVOCsOFPTool
-        registry.register(GetVOCsOFPTool(), priority=67)
-        logger.info("tool_loaded", tool="get_vocs_ofp")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_vocs_ofp", error=str(e))
+        try:
+            from app.tools.guangdong.component_query.get_vocs_ofp.tool import GetVOCsOFPTool
+            registry.register(GetVOCsOFPTool(), priority=67)
+            logger.info("tool_loaded", tool="get_vocs_ofp")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_vocs_ofp", error=str(e))
 
-    try:
-        from app.tools.query.get_ofp_top10.tool import GetOFPTop10Tool
-        registry.register(GetOFPTop10Tool(), priority=68)
-        logger.info("tool_loaded", tool="get_ofp_top10")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_ofp_top10", error=str(e))
+        try:
+            from app.tools.guangdong.component_query.get_ofp_top10.tool import GetOFPTop10Tool
+            registry.register(GetOFPTop10Tool(), priority=68)
+            logger.info("tool_loaded", tool="get_ofp_top10")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_ofp_top10", error=str(e))
 
-    try:
-        from app.tools.query.get_pm25_recovery.tool import GetPM25RecoveryTool
-        registry.register(GetPM25RecoveryTool(), priority=69)
-        logger.info("tool_loaded", tool="get_pm25_recovery")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_pm25_recovery", error=str(e))
+        try:
+            from app.tools.guangdong.component_query.get_pm25_recovery.tool import GetPM25RecoveryTool
+            registry.register(GetPM25RecoveryTool(), priority=69)
+            logger.info("tool_loaded", tool="get_pm25_recovery")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_pm25_recovery", error=str(e))
 
-    try:
-        from app.tools.query.get_pm25_trace.tool import GetPM25TraceTool
-        registry.register(GetPM25TraceTool(), priority=71)
-        logger.info("tool_loaded", tool="get_pm25_trace")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_pm25_trace", error=str(e))
+        try:
+            from app.tools.guangdong.component_query.get_pm25_trace.tool import GetPM25TraceTool
+            registry.register(GetPM25TraceTool(), priority=71)
+            logger.info("tool_loaded", tool="get_pm25_trace")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_pm25_trace", error=str(e))
 
     try:
         from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool

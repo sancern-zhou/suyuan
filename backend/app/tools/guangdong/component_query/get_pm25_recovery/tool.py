@@ -1,7 +1,8 @@
-"""VOCs 类别 OFP（臭氧生成潜势）时序查询工具（广东超站 GetStationOfpDataAsync）。
+"""PM2.5 组分质量重构查询工具（广东超站 GetComponentPm25RecoveryAnalysis）。
 
-OFP 由平台按固定 MIR 系数版本（mirVerEmun=1）官方计算，返回
-7 大类 + TVOC 的 OFP 时序与浓度百分比；固定参数单一来源 component_semantics。
+平台官方重构口径：九组分（有机物/硫酸盐/硝酸盐/铵盐/元素碳/氯盐/
+地壳元素/微量元素/其他）+ 重构质量浓度与 PM2.5 比值 + 高位线/低位线 +
+K/B/R² 拟合；重构契约单一来源 component_semantics。
 """
 
 from __future__ import annotations
@@ -10,9 +11,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Union
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.component_semantics import OFP_CATEGORY_ORDER
-from app.tools.query.component_station_resolver import resolve_component_station
-from app.utils.vocs_api_client import get_voc_api_client
+from app.tools.guangdong.component_query.component_semantics import (
+    RECONSTRUCTION_COMPONENTS,
+    RECONSTRUCTION_RATIO_BAND,
+    filter_mark_fields,
+)
+from app.tools.guangdong.component_query.component_station_resolver import resolve_component_station
+from app.utils.particulate_api_client import get_particulate_api_client
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -20,21 +25,23 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-class GetVOCsOFPTool(LLMTool):
-    """VOCs 类别 OFP 时序查询工具"""
+class GetPM25RecoveryTool(LLMTool):
+    """PM2.5 组分质量重构查询工具（平台官方口径）"""
 
     def __init__(self) -> None:
         function_schema = {
-            "name": "get_vocs_ofp",
+            "name": "get_pm25_recovery",
             "description": (
-                "查询广东省超级站组分站点的 VOCs 类别臭氧生成潜势（OFP）时序与占比。"
-                "OFP 由平台按官方 MIR 系数（版本1）计算，返回烷烃/烯烃/炔烃/芳香烃/"
-                "OVOCs/卤代烃/有机硫各类别与 TVOC 的 OFP 时序及浓度百分比，"
-                "用于臭氧生成主导类别识别与 VOCs 活性分析。"
+                "查询广东省超级站组分站点的 PM2.5 组分质量重构（平台官方口径）。"
+                "返回九组分（有机物/硫酸盐/硝酸盐/铵盐/元素碳/氯盐/地壳元素/微量元素/其他）"
+                "重构质量时序与平均占比，以及重构质量浓度与 PM2.5 实测的比值、"
+                "高位线 1.20 / 低位线 0.70 控制线和 K/B/R² 线性拟合，"
+                "用于质量闭合检验、二次组分占比与来源类型识别。"
                 "站点名→编码映射内置（组分站点编码以 b 结尾，与常规监测站点是两套体系）；"
                 "每次只查询一个组分站点，多站点在同一轮并行多次调用；"
-                "小时粒度单次查询窗口不超过 24 小时。"
-                "物种级 OFP Top10 与累计贡献用 get_ofp_top10。"
+                "数值口径以小时粒度为主，其他粒度返回占位符时按该口径无数据交付。"
+                "离线自算重构用 calculate_reconstruction（输入查询工具落盘数据）；"
+                "优先使用本工具的官方口径。"
             ),
             "parameters": {
                 "type": "object",
@@ -63,14 +70,13 @@ class GetVOCsOFPTool(LLMTool):
                     "time_granularity": {
                         "type": "integer",
                         "enum": [1, 2, 3, 5],
-                        "description": "统计粒度：1小时（默认），2日，3月，5年；小时窗口不超过24小时",
+                        "description": "统计粒度：1小时（默认，数值口径），2日，3月，5年",
                         "default": 1
                     },
                     "data_type": {
                         "type": "integer",
                         "enum": [0, 1, 4, 5],
-                        "description": "数据审核类型：0原始（默认，终审审核滞后常有空窗），1终审，4初审，5复审",
-                        "default": 0
+                        "description": "数据审核类型：0原始（默认），1终审，4初审，5复审"
                     }
                 },
                 "required": ["start_time", "end_time"],
@@ -78,8 +84,8 @@ class GetVOCsOFPTool(LLMTool):
         }
 
         super().__init__(
-            name="get_vocs_ofp",
-            description="Query category-level VOCs OFP timeseries (platform MIR-based) from Guangdong super station.",
+            name="get_pm25_recovery",
+            description="Query official PM2.5 mass reconstruction (9 components, closure ratio, K/B/R2).",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             requires_context=True,
@@ -98,9 +104,9 @@ class GetVOCsOFPTool(LLMTool):
         data_type: int = 0,
         **_: Any
     ) -> Dict[str, Any]:
-        """执行类别 OFP 时序查询"""
+        """执行 PM2.5 组分重构查询"""
 
-        station, code, error = resolve_component_station(locations=locations, station=station, code=code, require_domain="vocs")
+        station, code, error = resolve_component_station(locations=locations, station=station, code=code)
         if error:
             return error
 
@@ -110,7 +116,7 @@ class GetVOCsOFPTool(LLMTool):
         table_type_value = int(granularity_raw)
 
         logger.info(
-            "voc_ofp_tool_query_start",
+            "pm25_recovery_tool_query_start",
             station=station,
             code=code,
             start_time=start_time,
@@ -119,9 +125,10 @@ class GetVOCsOFPTool(LLMTool):
             data_type=data_type
         )
 
-        client = get_voc_api_client()
-        api_result = client.get_ofp_timeseries(
-            station_code=code,
+        client = get_particulate_api_client()
+        api_result = client.get_pm25_recovery(
+            station=station or "",
+            code=code,
             start_time=start_time,
             end_time=end_time,
             table_type=table_type_value,
@@ -137,36 +144,30 @@ class GetVOCsOFPTool(LLMTool):
             }
 
         try:
-            result = api_result.get("api_response", {}).get("result", [])
-            # 接口返回二元数组：[0] 各类别 OFP 时序，[1] 各类别浓度百分比
-            if not isinstance(result, list) or len(result) < 2:
-                return {
-                    "success": False,
-                    "error": "OFP 时序接口返回结构异常（预期二元数组）",
-                    "station": station,
-                    "code": code,
-                    "api_structure": type(result).__name__,
-                }
-
-            timeseries, share = result[0], result[1]
-            records = self._standardize_ofp_records(timeseries, share)
+            result = api_result.get("api_response", {}).get("result", {})
+            records = result.get("resultData", [])
+            avg_data = result.get("resultAvg", [])
+            avg_prop = result.get("resultAvgProp", [])
+            prop_data = result.get("resultDataProp", [])
 
             if not records:
                 return {
                     "success": False,
-                    "error": "No OFP records found",
+                    "error": "No PM2.5 recovery records found",
                     "station": station,
                     "code": code
                 }
+
+            records = filter_mark_fields(records)
 
             file_path = None
             sample_data = records
             try:
                 file_path = context.save_data(
                     data=records,
-                    schema="vocs_ofp_unified",
+                    schema="particulate_unified",
                     metadata={
-                        "component_type": "vocs_ofp_category",
+                        "component_type": "pm25_recovery",
                         "station": station,
                         "station_name": station,
                         "code": code,
@@ -175,29 +176,29 @@ class GetVOCsOFPTool(LLMTool):
                         "record_count": len(records),
                         "table_type": table_type_value,
                         "data_type": data_type,
-                        "mir_version": 1,
                     }
                 )
                 if len(records) > 24:
                     sample_data = records[:12] + records[-12:]
                 logger.info(
-                    "voc_ofp_data_externalized",
+                    "pm25_recovery_data_externalized",
                     total_count=len(records),
                     file_path=file_path
                 )
             except Exception as save_error:
-                logger.warning("voc_ofp_save_failed", error=str(save_error))
+                logger.warning("pm25_recovery_save_failed", error=str(save_error))
                 file_path = None
 
             quality_report = self._analyze_quality(records)
 
+            sample_record = records[0] if records else None
             if file_path:
                 summary_msg = (
-                    f"成功获取{len(records)}条VOCs类别OFP时序数据"
+                    f"成功获取{len(records)}条PM2.5组分重构数据"
                     f"（已保存数据引用，返回样本{len(sample_data)}条）"
                 )
             else:
-                summary_msg = f"成功获取{len(records)}条VOCs类别OFP时序数据"
+                summary_msg = f"成功获取{len(records)}条PM2.5组分重构数据"
 
             return {
                 "success": True,
@@ -209,22 +210,25 @@ class GetVOCsOFPTool(LLMTool):
                 "code": code,
                 "table_type": table_type_value,
                 "data_type": data_type,
-                "mir_version": 1,
+                "avg_data": avg_data,
+                "avg_prop": avg_prop,
+                "prop_data": prop_data,
                 "quality_report": quality_report,
                 "summary": summary_msg,
                 "metadata": {
                     "schema_version": "v2.0",
-                    "generator": "get_vocs_ofp",
+                    "generator": "get_pm25_recovery",
                     "station_name": station,
                     "code": code,
                     "total_count": len(records),
                     "externalized": file_path is not None,
-                    "category_order": OFP_CATEGORY_ORDER,
+                    "components": RECONSTRUCTION_COMPONENTS,
+                    "sample_record": sample_record,
                 }
             }
 
         except Exception as e:
-            logger.error("voc_ofp_tool_query_failed", error=str(e))
+            logger.error("pm25_recovery_tool_query_failed", error=str(e))
             return {
                 "success": False,
                 "error": str(e),
@@ -232,57 +236,40 @@ class GetVOCsOFPTool(LLMTool):
                 "code": code
             }
 
-    def _standardize_ofp_records(self, timeseries: Dict, share: Dict) -> List[Dict[str, Any]]:
-        """把接口的平行数组（TimePoint 列 + 类别值列）组装为逐时记录。"""
-        time_points = timeseries.get("TimePoint", [])
-        records: List[Dict[str, Any]] = []
-        for idx, time_point in enumerate(time_points):
-            ofp_values: Dict[str, Any] = {}
-            share_values: Dict[str, Any] = {}
-            for category, series in timeseries.items():
-                if category == "TimePoint" or not isinstance(series, list):
-                    continue
-                ofp_values[category] = self._safe_float(
-                    series[idx] if idx < len(series) else None
-                )
-            for category, series in (share or {}).items():
-                if not isinstance(series, list):
-                    continue
-                share_values[category] = self._safe_float(
-                    series[idx] if idx < len(series) else None
-                )
-            records.append({
-                "timestamp": time_point,
-                "ofp": ofp_values,
-                "concentration_share_percent": share_values,
-            })
-        return records
-
     def _analyze_quality(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """OFP 完整性：各类别有效率。"""
+        """重构质量：九组分有效率 + 质量闭合比值落在控制线内的比例。"""
         if not records:
             return {}
-        categories = list(records[0].get("ofp", {}).keys())
-        report: Dict[str, Any] = {"total_records": len(records), "categories": categories}
-        for category in categories:
+
+        report: Dict[str, Any] = {"total_records": len(records)}
+
+        for component in RECONSTRUCTION_COMPONENTS:
             valid = sum(
-                1 for r in records if r.get("ofp", {}).get(category) is not None
+                1 for r in records
+                if r.get(component) is not None and r.get(component) != "—"
             )
-            report[category] = {
+            report[component] = {
                 "valid_count": valid,
                 "total": len(records),
                 "completeness": round(valid / len(records), 3),
             }
+
+        in_band = 0
+        ratio_total = 0
+        for record in records:
+            ratio = record.get("重构后的质量浓度比值")
+            if isinstance(ratio, (int, float)):
+                ratio_total += 1
+                if RECONSTRUCTION_RATIO_BAND["low"] <= ratio <= RECONSTRUCTION_RATIO_BAND["high"]:
+                    in_band += 1
+        if ratio_total:
+            report["closure_ratio_in_band"] = {
+                "count": in_band,
+                "total": ratio_total,
+                "band": RECONSTRUCTION_RATIO_BAND,
+            }
         return report
 
-    def _safe_float(self, value: Any) -> Any:
-        if value is None or value == "" or value == "—":
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return value
 
-
-def __init__() -> GetVOCsOFPTool:
-    return GetVOCsOFPTool()
+def __init__() -> GetPM25RecoveryTool:
+    return GetPM25RecoveryTool()

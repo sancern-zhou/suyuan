@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Union
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.query.component_station_resolver import resolve_component_station
+from app.tools.guangdong.component_query.component_station_resolver import resolve_component_station
 from app.utils.vocs_api_client import get_voc_api_client
 
 if TYPE_CHECKING:

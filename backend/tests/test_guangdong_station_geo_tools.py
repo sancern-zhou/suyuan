@@ -26,7 +26,7 @@ from app.tools.guangdong.monitoring_station_catalog.provider import (
 
 
 def _geo_mappings() -> dict:
-    path = Path(__file__).resolve().parents[1] / "app" / "config" / "geo_mappings.json"
+    path = Path(__file__).resolve().parents[1] / "config" / "geo_mappings.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -188,7 +188,7 @@ def test_guangdong_whitelists_use_system_matched_geo_tools():
 
 @pytest.mark.asyncio
 async def test_component_resolver_blocks_uncapable_stations_for_vocs():
-    from app.tools.query.component_station_resolver import resolve_component_station
+    from app.tools.guangdong.component_query.component_station_resolver import resolve_component_station
 
     # 深圳莲花山有 VOCs：正常放行并解析编码
     station, code, error = resolve_component_station(
