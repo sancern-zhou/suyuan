@@ -289,12 +289,15 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="get_observed_meteorology", error=str(e))
 
-    try:
-        from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
-        registry.register(GetJiningRegularStationsTool(), priority=31)
-        logger.info("tool_loaded", tool="get_jining_regular_stations")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
+    # 济宁国控站清单属数据工作专用工具，不属于任何部署项目的业务链路，
+    # 按项目声明启用（modules 声明 jining-air-quality 且 backend.tools 列出工具名）。
+    if is_project_tool_enabled(context, "jining-air-quality", "get_jining_regular_stations"):
+        try:
+            from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
+            registry.register(GetJiningRegularStationsTool(), priority=31)
+            logger.info("tool_loaded", tool="get_jining_regular_stations")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
 
     if is_project_tool_enabled(context, "legacy", "analyze_city_pollutant_rankings"):
         try:

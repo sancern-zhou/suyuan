@@ -977,11 +977,6 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
         if project_id == "xuchang":
             allowed_tables = [
                 table for table in allowed_tables
-                if table.lower() not in {"openmeteോairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
-            ]
-        if project_id == "xuchang":
-            allowed_tables = [
-                table for table in allowed_tables
                 if table.lower() not in {"openmeteoairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
             ]
         schema_guide = _build_xuchang_schema_guide() if is_xuchang else AIR_QUALITY_SCHEMA_GUIDE
