@@ -604,3 +604,27 @@ def test_run_state_defaults_keep_mechanism_off():
     state = RunState(session_id="s", user_query="q", mode="expert")
     assert state.deferred_tool_names == frozenset()
     assert state.discovered_tools == set()
+
+
+def test_with_run_identity_returns_enriched_event():
+    """``_with_run_identity`` 必须回传事件本身。
+
+    回归 eac48eb1 的错位：``_setup_deferred_tools`` 被插进
+    ``_with_run_identity`` 的 ``return event`` 之前，导致该函数返回 None，
+    上游 ``yield`` 出 None 后 ``loop.py`` 的 ``event["mode"] = ...``
+    立刻抛 ``TypeError: 'NoneType' object does not support item assignment``，
+    所有 Agent 循环执行（含定时任务与对话）在启动阶段全量崩溃。
+    """
+    from app.agent.runtime.agent_runtime import AgentRuntime
+
+    state = RunState(session_id="sess-1", user_query="q", mode="expert")
+    state.run_id = "run-1"
+    event = {"type": "start"}
+
+    enriched = AgentRuntime._with_run_identity(None, state, event)
+
+    assert enriched is event
+    assert enriched["session_id"] == "sess-1"
+    assert enriched["run_id"] == "run-1"
+    assert enriched["data"]["session_id"] == "sess-1"
+    assert enriched["data"]["run_id"] == "run-1"
