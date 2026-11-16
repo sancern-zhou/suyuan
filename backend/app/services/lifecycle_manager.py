@@ -217,6 +217,22 @@ def _configured_fetchers(project_context):
         selected = [name for name in selected if name != "xuchang_transport_analysis_fetcher"]
         logger.info("xuchang_transport_analysis_fetcher_disabled_by_env")
 
+    # 中大平台三 fetcher 运行开关（默认开启保持既有行为）。2026-11-16 平台侧
+    # 账号被长锁（密码更新前 36h+ 失败登录触发，远超宣传的 10 分钟），部署侧
+    # 在 .env 设 XUCHANG_ZHONGDA_FETCH_ENABLED=false 停止自动重试，避免继续
+    # 刷平台登录计数延长锁定；平台方确认解锁后再改回 true 并重启 worker。
+    if os.getenv("XUCHANG_ZHONGDA_FETCH_ENABLED", "true").lower() != "true":
+        zhongda_names = {
+            "xuchang_zhongda_station_minute_fetcher",
+            "xuchang_zhongda_station_hour_fetcher",
+            "xuchang_zhongda_city_hour_fetcher",
+        }
+        selected = [name for name in selected if name not in zhongda_names]
+        logger.info(
+            "xuchang_zhongda_fetchers_disabled_by_env",
+            disabled=sorted(zhongda_names),
+        )
+
     unknown = [name for name in selected if name not in factories]
     if unknown:
         raise ValueError("unknown project fetchers: " + ", ".join(unknown))
