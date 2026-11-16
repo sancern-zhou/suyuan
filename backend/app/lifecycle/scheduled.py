@@ -85,7 +85,7 @@ async def start_scheduled_task_service() -> None:
             register_event_result_handler(persist_scheduled_task_result)
 
         service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
-        from app.scheduled_tasks.default_tasks import ensure_project_default_tasks
+        from app.scheduled_tasks.jiangsu_default_tasks import ensure_project_default_tasks
         from app.scheduled_tasks.project_tasks import sync_project_scheduled_tasks
         from app.utils.path_config import PROJECT_ROOT
 

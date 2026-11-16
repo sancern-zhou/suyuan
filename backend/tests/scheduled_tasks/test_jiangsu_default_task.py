@@ -1,4 +1,4 @@
-from app.scheduled_tasks.default_tasks import (
+from app.scheduled_tasks.jiangsu_default_tasks import (
     build_jiangsu_data_audit_review_task,
     build_jiangsu_fault_work_order_review_task,
     build_jiangsu_smart_event_task,

@@ -4,7 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
-from app.scheduled_tasks.default_tasks import build_jiangsu_smart_event_task
+from app.scheduled_tasks.jiangsu_default_tasks import build_jiangsu_smart_event_task
 from app.scheduled_tasks.models import ExecutionStatus, StepExecution, TaskEvent, TaskExecution
 from app.scheduled_tasks.service import EventDispatchResult
 from app.services.jiangsu_smart_event import (
@@ -1971,7 +1971,7 @@ def test_same_day_merge_ignores_minute_threshold_and_keeps_next_day_separate(tmp
 @pytest.mark.asyncio
 async def test_validated_review_backfills_analysis_tags_and_uncertain_continuity(tmp_path):
     from app.services.task_review import submit_review, list_reviews
-    from app.scheduled_tasks.default_tasks import build_jiangsu_smart_event_task
+    from app.scheduled_tasks.jiangsu_default_tasks import build_jiangsu_smart_event_task
     service = JiangsuSmartEventService(SameDayAlarmsTool(), data_root=tmp_path)
     await service.sync_alarm_events(start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False)
     task = build_jiangsu_smart_event_task()
