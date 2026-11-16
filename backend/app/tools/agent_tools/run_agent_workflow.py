@@ -243,8 +243,41 @@ def format_upstream_handles(dependency_results: Mapping[str, Any]) -> str:
     )
 
 
+# 上游 findings 传递预算：数据域节点（工单/巡检/告警等）算出的数值必须能到达
+# 下游核验节点，否则核验节点只看到一句 summary 概述，无从引用具体数字。
+_UPSTREAM_FINDINGS_CHARS = 6000
+
+
+def _envelope_findings(node_result: Any, envelope: Mapping[str, Any]) -> list:
+    """取上游节点的 findings（含数值的结论条目）。
+
+    信封直接把 findings 放在顶层，或放在 data.structured_result 下
+    （submit_result 提交后由运行时归位）。两种形状都要认，否则下游节点
+    只拿到 summary 一句概述，看不到上游算出的具体数值。
+    """
+    direct = envelope.get("findings")
+    if isinstance(direct, (list, tuple)):
+        return list(direct)
+    if isinstance(direct, Mapping):
+        return [direct]
+    data = node_result.get("data") if isinstance(node_result, Mapping) else None
+    structured = data.get("structured_result") if isinstance(data, Mapping) else None
+    nested = structured.get("findings") if isinstance(structured, Mapping) else None
+    if isinstance(nested, (list, tuple)):
+        return list(nested)
+    if isinstance(nested, Mapping):
+        return [nested]
+    return []
+
+
 def format_upstream_summaries(dependency_results: Mapping[str, Any]) -> str:
-    """Pass conclusions and evidence references, never raw child tool traces."""
+    """Pass conclusions, findings values and evidence references — never raw child tool traces.
+
+    下游节点（尤其风险核验类）必须能引用上游算出的数值，否则只能看到一句
+    summary 概述。历史上 findings 在这里被整段丢弃，导致核验节点以"资源目录
+    只有清单、没有指标数值"为由交出 verified_facts=0 的空结论——子 Agent 明明
+    算出了数，交付时却找不到可引用的证据。
+    """
     summaries = []
     for task_id, result in (dependency_results or {}).items():
         envelope = _result_envelope(result)
@@ -254,6 +287,7 @@ def format_upstream_summaries(dependency_results: Mapping[str, Any]) -> str:
             "source_task_id": str(task_id),
             "status": envelope.get("status"),
             "summary": str(envelope.get("summary") or "")[:2000],
+            "findings": _cap_findings_for_upstream(_envelope_findings(result, envelope)),
             "evidence": [
                 {key: item.get(key) for key in ("ref_id", "kind", "label", "source_task_id")
                  if item.get(key) is not None}
@@ -272,10 +306,37 @@ def format_upstream_summaries(dependency_results: Mapping[str, Any]) -> str:
     return (
         "## 上游节点结论摘要\n"
         "上游资源和文件已通过工作流资源目录导入当前会话，可直接读取；"
-        "以下仅是上游结论和证据索引。不要根据摘要重新查询同一数据源：\n"
+        "以下包含上游结论、已算出的关键数值（findings）与证据索引。"
+        "findings 已给出的数值可直接引用，不要根据摘要重新查询同一数据源；"
+        "findings 未覆盖的维度才算数据缺口：\n"
         + json.dumps(summaries, ensure_ascii=False, default=str)
         + "\n"
     )
+
+
+def _cap_findings_for_upstream(findings: list, limit: int = _UPSTREAM_FINDINGS_CHARS) -> list:
+    """按字节预算裁剪上游 findings，超出时保留前序条目并显式注明截断。"""
+    if not findings:
+        return []
+    kept: list = []
+    used = 0
+    for item in findings:
+        rendered = (
+            json.dumps(item, ensure_ascii=False, default=str)
+            if not isinstance(item, str)
+            else item
+        )
+        if kept and used + len(rendered) > limit:
+            kept.append({
+                "note": (
+                    f"上游 findings 超出传递预算（已保留 {len(kept)}/{len(findings)} 条），"
+                    "剩余条目请按上游产物文件核对"
+                )
+            })
+            break
+        kept.append(item)
+        used += len(rendered) + 1
+    return kept
 
 
 # 父 Agent 紧凑视图预算：findings（数值结论）必须进上下文，其余全文走落盘文件。

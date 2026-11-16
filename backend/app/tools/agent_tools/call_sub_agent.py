@@ -61,6 +61,10 @@ from app.utils.path_config import (
 
 logger = structlog.get_logger()
 
+# 修复轮证据里 execute_python stdout 的保留长度。子 Agent 的计算结论在 stdout，
+# 只回 summary（"执行成功"）等于没给证据，核验类节点会因此交出 verified_facts=0。
+_REPAIR_STDOUT_CHARS = 800
+
 # 获取全局session管理器
 session_manager = get_session_manager()
 
@@ -1246,7 +1250,9 @@ class CallSubAgentTool(LLMTool):
                         repair_prompt = (
                             "任务已执行完毕，但你尚未调用 `submit_result` 提交结构化结果。"
                             "请基于已完成的证据和分析，立即调用 `submit_result` 提交结果信封，"
-                            "字段结构见工具定义，不要重新执行分析。\n"
+                            "字段结构见工具定义。"
+                            "如本轮上下文已不包含先前算出的数值，可直接读取自己已落地的产物文件"
+                            "（见下方清单）补齐引用，不要对业务数据源重新发起查询。\n"
                             f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
                         )
                     if repair_evidence:
@@ -1980,6 +1986,14 @@ class CallSubAgentTool(LLMTool):
                     piece += f"，产物 {file_path}"
                 if summary:
                     piece += f"；摘要：{summary}"
+                # execute_python 的数值结论在 stdout 里，summary 只有"执行成功"一句。
+                # 不带回 stdout 尾部，修复轮看到的证据就是一堆空壳调用记录，
+                # 模型只能报"无可引用数值"——历史事故的直接来源。
+                if tool == "execute_python":
+                    stdout = str(result.get("stdout") or "").strip()
+                    if stdout:
+                        tail = stdout[-_REPAIR_STDOUT_CHARS:]
+                        piece += f"\n  stdout 尾部：{tail}"
                 lines.append(piece)
             if len(lines) >= max_items:
                 break
