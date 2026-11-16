@@ -5,14 +5,14 @@ import json
 import pytest
 
 from app.agent.context.data_shape import build_data_shape
-from app.tools.query.execute_crawler_sql_query import table_contracts
-from app.tools.query.execute_crawler_sql_query.table_contracts import table_column_types
-from app.tools.query.execute_crawler_sql_query.table_contracts import (
+from app.utils import table_contracts
+from app.utils.table_contracts import table_column_types
+from app.utils.table_contracts import (
     load_table_contracts,
     render_table_contracts,
     reset_cache,
 )
-from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+from app.tools.xuchang.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
 
 
 @pytest.fixture(autouse=True)
@@ -166,7 +166,7 @@ def test_deployment_contract_matches_crawler_whitelist():
     其他部署查询得到"未找到白名单表"明确提示），因此方向为
     contracts ⊆ whitelist；契约文件按部署生成，天然只含本库真实存在的表。
     """
-    from app.tools.query.execute_crawler_sql_query.tool import CRAWLER_SQL_TABLES
+    from app.tools.xuchang.execute_crawler_sql_query.tool import CRAWLER_SQL_TABLES
 
     contracts = load_table_contracts(refresh=True)
     if contracts is None:

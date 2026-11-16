@@ -121,6 +121,20 @@ class WorkflowParentManifest(StrictModel):
     _valid_child_modes = field_validator("child_modes")(unique)
 
 
+class FixedQueryWorkflowToolsDeclaration(StrictModel):
+    """固定问数工作流的项目声明（backend.fixed_query_workflow_tools）。
+
+    id 已存在于共享目录：tools 并集合并进该工作流（title/scope_line 忽略）。
+    id 未注册：按 tools+title 注册新的问数工作流（scope_line/contract_tables
+    可选，注入 acquire 阶段描述与表契约块）。项目专属工具元组只允许出现在
+    projects/<id>/project.yaml，共享层不写死任何项目的工具路由。
+    """
+    tools: list[str] = Field(default_factory=list)
+    title: str | None = None
+    scope_line: str | None = None
+    contract_tables: list[str] = Field(default_factory=list)
+
+
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
     disabled_tools: list[str] = Field(default_factory=list)
@@ -159,6 +173,14 @@ class BackendManifest(StrictModel):
     # instead of hardcoding project names; absent config keeps the shared
     # default behavior.
     tool_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # 固定问数工作流的项目声明：id 已注册时 tools 并集合并，未注册时按声明
+    # 注册新工作流。项目专属工具元组只允许出现在 projects/<id>/project.yaml。
+    fixed_query_workflow_tools: dict[str, FixedQueryWorkflowToolsDeclaration] = Field(
+        default_factory=dict
+    )
+    # target_mode 子代理契约的项目声明：已有契约按字段覆盖，新 mode id 直接
+    # 注册（如广东组分问数/组分专家）。共享契约不写死任何项目子模式。
+    target_mode_contracts: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     _valid_workflow_modes = field_validator("agent_workflow_modes")(valid_identifier_map)
     _valid_workflow_parents = field_validator("agent_workflow_parents")(valid_identifier_map)

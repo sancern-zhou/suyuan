@@ -30,23 +30,17 @@ _MONITORING_QUERY_TOOLS = (
     "query_airdata_platform",
     "xuchang_station_catalog",
     "airdata_calc_report_summary",
-    # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
-    "get_5min_data",
-    "xuchang_cube_metrics",
 )
 
 # 站点层级问数：国控站走采集库 SQL；乡镇站/中台口径走"目录解析编码 → 中台查询"
 # （编码不可猜，该串行为必要轮次）。目录工具与中台工具必须成对配置。
-# 5 分钟粒度走 get_5min_data（中大分钟数据，含站点浓度与气象）。
 _MONITORING_STATION_QUERY_TOOLS = (
     "execute_crawler_sql_query",
     "xuchang_station_catalog",
     "query_airdata_platform",
-    "get_5min_data",
 )
 
-# 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口；
-# cube 语义层提供官方月报/年度目标/168 城排名等统计口径。
+# 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口。
 _MONITORING_CITY_QUERY_TOOLS = (
     "query_xcai_city_history",
     "execute_sql_query",
@@ -54,8 +48,6 @@ _MONITORING_CITY_QUERY_TOOLS = (
     "execute_postgres_sql_query",
     "query_airdata_platform",
     "airdata_calc_report_summary",
-    # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
-    "xuchang_cube_metrics",
 )
 
 _FORECAST_QUERY_TOOLS = (
@@ -66,6 +58,7 @@ _FORECAST_QUERY_TOOLS = (
     "xuchang_station_catalog",
     "execute_postgres_sql_query",
 )
+
 
 _NORMALIZE_TOOLS = (
     "execute_python",
@@ -86,15 +79,15 @@ _NORMALIZE_ADVANCE_TOOLS = (
 def _table_contract_block(table_names: Sequence[str]) -> str:
     """按表清单渲染采集库契约文本，注入 acquire 阶段说明（避免模型猜字段）。"""
     try:
-        from app.tools.query.execute_crawler_sql_query.table_contracts import (
-            render_table_contracts,
-        )
+        from app.utils.table_contracts import render_table_contracts
 
         block = render_table_contracts(table_names=list(table_names))
     except Exception as exc:  # noqa: BLE001 — 契约缺失时退化为工具描述内嵌契约
         logger.warning("mode_workflow_contract_block_unavailable", error=str(exc))
         return ""
     return block
+
+
 
 
 def _query_definition(
@@ -162,45 +155,106 @@ def _query_definition(
     )
 
 
-for _definition in (
-    _query_definition(
-        "query_monitoring",
-        _MONITORING_QUERY_TOOLS,
-        "空气质量监测固定问数流程",
-        scope_line="本节点同时覆盖站点与城市层级；层级明确时应优先拆分为 query_monitoring_station / query_monitoring_city。",
-        context_block=_table_contract_block(_STATION_CONTRACT_TABLES + _CITY_CONTRACT_TABLES),
-    ),
-    _query_definition(
-        "query_monitoring_station",
-        _MONITORING_STATION_QUERY_TOOLS,
-        "国控站点层级空气质量监测固定问数流程",
-        scope_line=(
+
+
+# 各固定问数工作流的构建规格（工具集可被项目声明合并/扩展）。
+_QUERY_WORKFLOW_SPECS: dict[str, dict[str, Any]] = {
+    "query_monitoring": {
+        "tools": _MONITORING_QUERY_TOOLS,
+        "title": "空气质量监测固定问数流程",
+        "scope_line": "本节点同时覆盖站点与城市层级；层级明确时应优先拆分为 query_monitoring_station / query_monitoring_city。",
+        "contract_tables": _STATION_CONTRACT_TABLES + _CITY_CONTRACT_TABLES,
+    },
+    "query_monitoring_station": {
+        "tools": _MONITORING_STATION_QUERY_TOOLS,
+        "title": "国控站点层级空气质量监测固定问数流程",
+        "scope_line": (
             "聚焦站点层级取数：国控站小时/日历史用采集库 SQL 直接查询"
             "（StationHour/StationDay，按名称或区域 LIKE 过滤，无需解析目录）；"
-            "5 分钟粒度数据（国控站分钟浓度与气象）用 get_5min_data 查询；"
             "乡镇站与中台口径数据先用 xuchang_station_catalog 解析编码"
             "（支持按名称模糊、按区县展开下辖站点），再调 query_airdata_platform 查询。"
         ),
-        context_block=_table_contract_block(_STATION_CONTRACT_TABLES),
-    ),
-    _query_definition(
-        "query_monitoring_city",
-        _MONITORING_CITY_QUERY_TOOLS,
-        "城市层级空气质量监测固定问数流程",
-        scope_line=(
+        "contract_tables": _STATION_CONTRACT_TABLES,
+    },
+    "query_monitoring_city": {
+        "tools": _MONITORING_CITY_QUERY_TOOLS,
+        "title": "城市层级空气质量监测固定问数流程",
+        "scope_line": (
             "聚焦城市层级取数：城市小时/日/年均值、城市发布历史与全国对比，"
             "主要使用 CityHour/CityDay/CityYearPm25Avg 表，扣沙天用 CitySandDay 清单过滤；"
             "城市发布历史（CityAQIPublishHistory）用 query_xcai_city_history。"
         ),
-        context_block=_table_contract_block(_CITY_CONTRACT_TABLES),
-    ),
-    _query_definition(
-        "query_forecast",
-        _FORECAST_QUERY_TOOLS,
-        "气象实况、气象预报与空气质量预报固定问数流程",
-    ),
-):
-    workflow_catalog.register(_definition)
+        "contract_tables": _CITY_CONTRACT_TABLES,
+    },
+    "query_forecast": {
+        "tools": _FORECAST_QUERY_TOOLS,
+        "title": "气象实况、气象预报与空气质量预报固定问数流程",
+        "scope_line": "",
+        "contract_tables": (),
+    },
+}
+
+_QUERY_TOOL_SETS: dict[str, tuple[str, ...]] = {
+    workflow_id: spec["tools"] for workflow_id, spec in _QUERY_WORKFLOW_SPECS.items()
+}
+
+
+def _load_declared_fixed_query_workflows() -> dict[str, Any]:
+    """读取部署项目声明的固定问数工作流（backend.fixed_query_workflow_tools）。
+
+    id 已注册：tools 并集合并进该工作流；id 未注册且声明 title：注册新的问数
+    工作流。项目专属工具元组只允许出现在 projects/<id>/project.yaml，共享层
+    不写死任何项目的工具路由。
+    """
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        return dict(
+            load_project_context(settings.project_id).manifest.backend.fixed_query_workflow_tools or {}
+        )
+    except Exception as exc:
+        logger.warning("fixed_query_workflow_declaration_unavailable", error=str(exc))
+        return {}
+
+
+def _apply_declared_fixed_query_workflows(declared: Mapping[str, Any]) -> None:
+    """把声明合并进构建规格并（重）注册全部固定问数工作流（幂等）。
+
+    已注册 id：tools 并集；未注册 id 且声明 title：按声明注册新工作流。
+    catalog.register 为覆盖语义，重复应用安全。
+    """
+    for workflow_id, declaration in declared.items():
+        spec = _QUERY_WORKFLOW_SPECS.setdefault(
+            workflow_id,
+            {"tools": (), "title": declaration.title, "scope_line": "", "contract_tables": ()},
+        )
+        spec["tools"] = tuple(dict.fromkeys([*spec["tools"], *declaration.tools]))
+        if declaration.title:
+            spec["title"] = declaration.title
+        if declaration.scope_line:
+            spec["scope_line"] = declaration.scope_line
+        if declaration.contract_tables:
+            spec["contract_tables"] = tuple(declaration.contract_tables)
+        _QUERY_TOOL_SETS[workflow_id] = spec["tools"]
+    for workflow_id, spec in _QUERY_WORKFLOW_SPECS.items():
+        context_block = (
+            _table_contract_block(tuple(spec["contract_tables"]))
+            if spec.get("contract_tables")
+            else ""
+        )
+        workflow_catalog.register(
+            _query_definition(
+                workflow_id,
+                _QUERY_TOOL_SETS[workflow_id],
+                spec["title"],
+                scope_line=spec.get("scope_line", ""),
+                context_block=context_block,
+            )
+        )
+
+
+_apply_declared_fixed_query_workflows(_load_declared_fixed_query_workflows())
 
 
 def get_mode_workflow(mode: str) -> FixedWorkflowDefinition | None:

@@ -178,6 +178,15 @@ backend:
     - execute_crawler_sql_query
   # 共享 prompt builder 的项目补充口径片段（query_monitoring_* 报告 DAG 子模式）：
   # 许昌中台路由与本市口径只在项目片段里维护，共享层保持中性。
+  # 固定问数工作流的项目声明：中大 5 分钟数据与 cube 语义层按部署注入
+  # 共享问数工作流（共享层不写死任何项目的工具路由）。
+  fixed_query_workflow_tools:
+    query_monitoring:
+      tools: [get_5min_data, xuchang_cube_metrics]
+    query_monitoring_station:
+      tools: [get_5min_data]
+    query_monitoring_city:
+      tools: [xuchang_cube_metrics]
   prompt_fragment_files:
     query_monitoring_station: projects/xuchang/prompts/fragments/query_monitoring_station.md
     query_monitoring_city: projects/xuchang/prompts/fragments/query_monitoring_city.md
