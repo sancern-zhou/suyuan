@@ -819,3 +819,4 @@ scheduled_tasks:
 - gd_routine_work_order_audit
 - gd_sup_station_work_order_audit
 - gd_ops_audit_monthly_retrospective
+- gd_sup_station_ops_audit_monthly_retrospective

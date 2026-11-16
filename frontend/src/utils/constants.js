@@ -9,7 +9,6 @@ export const PANEL_TYPES = {
   FETCHERS: 'fetchers',
   SCHEDULED_TASKS: 'scheduled-tasks',
   SESSION_HISTORY: 'session-history',
-  SOCIAL_PLATFORM: 'social-platform',
   TOOLS_MANAGEMENT: 'tools-management'
 }
 

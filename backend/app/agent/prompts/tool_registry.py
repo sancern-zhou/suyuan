@@ -9,7 +9,8 @@
 - 此文件仅定义各模式可用工具；列表顺序即展示/提示顺序
 """
 
-from typing import Dict, Iterable, List
+from dataclasses import dataclass
+from typing import Dict, FrozenSet, Iterable, List, Optional
 
 # 工具实现可由显式后端工作流继续使用，但不得向任何 Agent 暴露。
 # 组分查询（get_vocs_data 等）与组分分析（calculate_carbon 等）已对
@@ -764,3 +765,81 @@ def get_tool_order(mode: str) -> List[str]:
 def get_tool_order_by_mode(mode: str) -> List[str]:
     """Compatibility alias for callers that name the mode explicitly."""
     return get_tool_order(mode)
+
+
+# ========================================
+# Deferred Tools（tool_search 按需注入 schema）
+# ========================================
+# 参考 ZCode tool_search/deferred_tools 与江西 api_catalog 三件套
+# （project/jiangxi-noise）：工具多的模式 opt-in 后，非核心工具以薄存根
+# （name + description，参数契约不注入）常驻，模型经运行时注入的
+# tool_search 工具按需取回完整 schema，调用后自动升级为全 schema 常驻。
+# 与 describe_table/skill 正交：那两通道解决"单工具内容大"，本机制解决
+# "模式工具数量多"（选型策略见 AGENTS.md「上下文注入选型策略」）。
+
+# 永不存根：交付边界与交互工具必须全 schema 常驻（存根收益小、代价高）。
+DEFERRED_NEVER_STUB_TOOL_NAMES = frozenset({
+    "tool_search",
+    "ask_user_question",
+    "submit_result",
+    "escalate",
+    "report_finding",
+})
+
+# 共享模式 opt-in 表：mode -> always_on 工具名（全 schema 常驻）。
+# 默认空 dict：任何模式未显式 opt-in 时本机制完全不介入（零行为变化）。
+# 项目模式（含项目接管共享模式）经 project.yaml 的
+# backend.agent_mode_deferred_tools 声明，项目声明优先于本表。
+DEFERRED_TOOL_MODES: Dict[str, List[str]] = {}
+
+
+@dataclass(frozen=True)
+class DeferredToolConfig:
+    """一个已 opt-in 模式的 deferred tools 配置。"""
+
+    mode: str
+    always_on: FrozenSet[str]
+
+
+def resolve_deferred_tool_config(mode: str) -> Optional[DeferredToolConfig]:
+    """解析模式的 deferred tools 配置；未 opt-in（或被全局开关关闭）返回 None。
+
+    优先级：settings.agent_deferred_tools_enabled 全局缰绳 > 项目清单声明
+    > 共享 DEFERRED_TOOL_MODES 表。清单加载失败按"未启用"处理——本机制
+    是上下文优化而非安全边界，退化即回到全 schema 常驻的现状行为。
+    """
+    from config.settings import settings
+
+    if not settings.agent_deferred_tools_enabled:
+        return None
+    always_on: Optional[List[str]] = None
+    try:
+        context = _load_project_context()
+    except Exception:
+        context = None
+    if context is not None:
+        declared = context.manifest.backend.agent_mode_deferred_tools.get(mode)
+        if declared is not None:
+            always_on = list(declared)
+    if always_on is None:
+        always_on = DEFERRED_TOOL_MODES.get(mode)
+    if always_on is None:
+        return None
+    return DeferredToolConfig(mode=mode, always_on=frozenset(always_on))
+
+
+def compute_deferred_tool_names(mode: str, config: DeferredToolConfig) -> FrozenSet[str]:
+    """计算模式的存根化候选集：模式有效白名单 - always_on - 永不存根集合。
+
+    白名单与运行时同源（get_tools_by_mode，含项目接管/追加/禁用），
+    保证存根集合与 schema 组装看到的工具集合零漂移。
+    """
+    try:
+        mode_names = set(get_tools_by_mode(mode).keys())
+    except ValueError:
+        return frozenset()
+    return frozenset(
+        name
+        for name in mode_names
+        if name not in config.always_on and name not in DEFERRED_NEVER_STUB_TOOL_NAMES
+    )

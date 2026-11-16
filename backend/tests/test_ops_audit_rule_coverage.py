@@ -263,7 +263,8 @@ def test_nox_weekly_brand_range_rules_use_structured_fields():
                         "GYCHECKVALUE": "630",
                         "FYCHECKVALUE": "50",
                         "ZHLCHECKVALUE": "316",
-                        "FYSHICHECKVALUE": "20",
+                        # XH 贴牌 API：反应室压力 In-Hg-A 口径 <10（2026-11-16 档案校正）
+                        "FYSHICHECKVALUE": "9",
                         "CYYLCHECKVALUE": "90",
                         "NOXYLCHECKVALUE": "1",
                         "NOXJGCHECKVALUE": "1.36",
@@ -439,7 +440,9 @@ def test_pm10_weekly_range_rules_use_structured_fields():
     assert "流量(Main Flow)" in range_issues[0]["message"]
 
 
-def test_pm10_blank_flow_with_remark_goes_to_semantic_review_candidate():
+def test_pm10_blank_flow_placeholder_is_not_audited():
+    """Main Flow 空值/占位不再产出语义复核候选（2026-11-16 业务确认剔除该规则）。"""
+
     order = _base_order("WO-PM10-RANGE-OK")
     audit = audit_dataset(
         _base_dataset(
@@ -469,18 +472,16 @@ def test_pm10_blank_flow_with_remark_goes_to_semantic_review_candidate():
         issue["rule_id"] == "RF_RANGE_OUT_OF_SPEC" and issue["field"] == "rf.RF_W_PMCHECK.MAINFLOWVALUE"
         for issue in issues
     )
-    semantic_issues = [
-        issue
+    assert not any(
+        issue["rule_id"] == "RF_ABNORMAL_VALUE_NO_REMARK"
+        and "MAINFLOWVALUE" in str(issue.get("evidence") or "")
         for issue in audit["records"][0]["scoring_issues"]
-        if issue["rule_id"] == "RF_ABNORMAL_VALUE_NO_REMARK"
-        and issue["field"] == "rf.RF_W_PMCHECK.remark"
-    ]
-    assert len(semantic_issues) == 1
-    assert semantic_issues[0]["assessment"] == "candidate_issue"
-    assert "MAINFLOWVALUE" in semantic_issues[0]["evidence"]
+    )
     candidates = build_semantic_candidates(audit)
-    assert candidates["candidate_count"] == 1
-    assert candidates["candidates"][0]["semantic_focus"] == ["RF_ABNORMAL_VALUE_NO_REMARK"]
+    assert not any(
+        "MAINFLOWVALUE" in str(candidate.get("evidence") or "")
+        for candidate in candidates["candidates"]
+    )
 
 
 def test_range_out_of_spec_with_nonempty_remark_still_needs_semantic_review():

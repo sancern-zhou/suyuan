@@ -426,6 +426,11 @@ class MonitorStore:
             # Report the configured monitoring scope, not the subset that happened
             # to return data this run: a station with no uploads is still in scope.
             counts = {kind: sum(s['type'] == kind for s in roster) for kind in ('国控', '省控')}
+        # Reading order follows the outage timeline: earliest offline start first,
+        # so both the JSON contract and the Word sections (which filter this list
+        # by type) list incidents chronologically instead of by city/code.
+        entries.sort(key=lambda e: (local_time(e['offline_start']), local_time(e['offline_end']),
+                                    e['city'], e['code']))
         return {
             'schema_version': 'station_operation_daily/v2', 'window_start': start.isoformat(),
             'window_end': end.isoformat(), 'generated_at': local_time().isoformat(),
@@ -435,8 +440,8 @@ class MonitorStore:
             'national_sources': national_sources, 'provincial_source': provincial_source,
             'limitations': [
                 f'站点离线指全部参数无数据或为"—"；离线达到{min_missing_hours}小时即列入日报。单因子缺失（未发生整站离线）不计入离线，保留在原始快照中，不单独列入日报。',
-                '离线发生后，只要仍有任一因子缺失或带质控标记（如回补修复标记），即视为未完全恢复并延续计时，直至数据完全恢复；期间的起止时间为已观察时段。',
-                '已完全恢复的事件仅在过去24小时缺失窗口内展示，窗口外不再跟进；未完全恢复的事件持续跟进，不设期数上限；原始证据保留。',
+                '离线发生后，只要仍有任一因子无数据，即视为未完全恢复并延续计时，直至数据完全恢复；质控标记（如H、Re）属有效数值，不阻断恢复判定。期间的起止时间为已观察时段。',
+                '已完全恢复的事件仅在过去24小时缺失窗口内展示，窗口外不再跟进；未完全恢复的事件持续跟进，不设期数上限；平台回补不抹掉事件，缺失时段被整段补回的当期仍会列出并标注数据已回补；原始证据保留。',
                 '小时数据缺失用于运行监控，不能直接证明设备离线或无法回补。',
                 '首次采集前已回补的历史缺口无法还原；离线起止时间为已观察缺失时段。',
             ] + ([] if len(national_sources) > 1 else ['国控目前仅接入省控小时接口，独立发布源未接入。'])

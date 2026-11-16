@@ -23,16 +23,13 @@ class SocialBroadcastService:
     """Fan-out broadcast messages to social users."""
 
     def __init__(self, message_bus=None, session_mapper: Optional[SessionMapper] = None):
-        self.message_bus = message_bus or get_message_bus()
+        # message_bus retained for constructor compatibility; chat channels
+        # (personal WeChat / QQ) are retired and App delivery never used it.
+        self.message_bus = message_bus
         self.session_mapper = session_mapper
 
     async def _get_session_mapper(self) -> Optional[SessionMapper]:
         if self.session_mapper:
-            return self.session_mapper
-
-        bus = self.message_bus or get_message_bus()
-        if bus and getattr(bus, "agent_bridge", None) and getattr(bus.agent_bridge, "session_mapper", None):
-            self.session_mapper = bus.agent_bridge.session_mapper
             return self.session_mapper
 
         self.session_mapper = SessionMapper()
@@ -113,12 +110,6 @@ class SocialBroadcastService:
 
         if not self.message_bus:
             self.message_bus = get_message_bus()
-        if not self.message_bus:
-            return {
-                "status": "failed",
-                "success": False,
-                "summary": "消息总线未初始化，无法广播"
-            }
 
         session_mapper = await self._get_session_mapper()
         if not session_mapper:
@@ -161,27 +152,20 @@ class SocialBroadcastService:
                 continue
 
             try:
-                # App 用户不走消息总线（ChannelManager 没有 app 通道），投递由
-                # 下方的广播 inbox 持久化 + 统一推送完成
+                # 对话社交渠道（个人微信/QQ）已退役：仅支持 App 用户，投递由
+                # 广播 inbox 持久化 + 统一推送完成。
                 if user_info["channel"] != "app":
-                    outbound_msg = OutboundMessage(
-                        channel=user_info["channel"],
-                        chat_id=user_info["sender_id"],
-                        content=message,
-                        media=normalized_media,
-                        reply_to=user_info["sender_id"],
-                        metadata=dict(delivery_metadata or {}),
-                    )
-                    delivery_error = None
-                    delivery_status = "delivered"
-                    try:
-                        await self.message_bus.deliver_outbound(outbound_msg)
-                    except Exception as exc:
-                        delivery_error = str(exc)
-                        delivery_status = "unknown" if isinstance(exc, TimeoutError) else "failed"
-                else:
-                    delivery_error = None
-                    delivery_status = "delivered"
+                    delivery_results.append({
+                        "social_user_id": social_user_id,
+                        "sent": False,
+                        "delivery_status": "failed",
+                        "context_persisted": False,
+                        "error": "chat channel retired",
+                    })
+                    failed_user_ids.append(social_user_id)
+                    continue
+                delivery_error = None
+                delivery_status = "delivered"
 
                 context_persisted = False
                 context_error = None

@@ -341,14 +341,14 @@
             </div>
 
             <div v-if="createForm.broadcast_enabled" class="form-field form-wide">
-              <span>接收人（微信 / App，可多选）</span>
+              <span>接收人（App，可多选）</span>
               <div class="recipient-list">
                 <label v-for="user in socialUsers" :key="user.id" class="recipient-option">
                   <input v-model="createForm.target_user_ids" type="checkbox" :value="user.channel === 'app' ? user.social_user_id : user.id" />
                   <span class="recipient-name">{{ user.name }}</span>
                   <span class="recipient-channel">{{ user.channel }}</span>
                 </label>
-                <div v-if="socialUsers.length === 0" class="recipient-empty">暂无已启用的微信或 App 用户</div>
+                <div v-if="socialUsers.length === 0" class="recipient-empty">暂无已启用的 App 用户</div>
               </div>
             </div>
 
@@ -394,7 +394,7 @@
             <div class="task-preview-title">执行步骤预览</div>
             <div class="task-preview-body">
               <p v-if="createForm.execution_mode === 'workflow'">按调度（或事件）执行已注册的确定性工作流：代码负责取数与待办提交，结论由 LLM 基于可信统计证据生成并沉淀案例。</p>
-              <p v-else-if="createForm.trigger_type === 'event'">事件匹配后只运行一次 Agent，结果由后台广播给所选微信或 App 用户并写入各自会话。</p>
+              <p v-else-if="createForm.trigger_type === 'event'">事件匹配后只运行一次 Agent，结果由后台广播给所选 App 用户并写入各自会话。</p>
               <p v-else>任务将在设定时间运行，并按配置处理广播。</p>
             </div>
           </div>
@@ -618,7 +618,6 @@ const filteredTools = computed(() => {
 })
 
 const channelOptions = [
-  { label: '微信', value: 'weixin' },
   { label: 'App', value: 'app' },
   { label: 'QQ', value: 'qq' },
   { label: '钉钉', value: 'dingtalk' }
@@ -667,7 +666,7 @@ const defaultForm = () => ({
   day_of_week: 4,
   interval_minutes: 30,
   run_at: '',
-  channels: ['weixin'],
+  channels: ['app'],
   tagsText: ''
   ,workspaceEntryEnabled: false
   ,workspaceEntryTitle: ''
@@ -1110,7 +1109,7 @@ const saveTask = async () => {
     return
   }
   if (createForm.value.broadcast_enabled && createForm.value.target_user_ids.length === 0) {
-    formError.value = '请至少选择一名微信或 App 接收人'
+    formError.value = '请至少选择一名 App 接收人'
     return
   }
   if (createForm.value.execution_mode === 'custom' && createForm.value.tool_names.length === 0) {

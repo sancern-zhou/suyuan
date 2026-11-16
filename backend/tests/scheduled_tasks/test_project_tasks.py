@@ -300,3 +300,29 @@ def test_monitor_seed_unchanged_when_definition_matches(tmp_path):
         project_root=tmp_path,
     )
     assert result[0]["action"] == "unchanged"
+
+
+def test_monitor_seed_flips_broadcast_switch_with_channel_migration(tmp_path):
+    """通报通道迁移（直推→助手会话）：broadcast_enabled 随种子关闭，推送目标保留。"""
+    storage = TaskStorage(tmp_path / "state")
+    existing = _monitor_task()  # 旧部署：直推开着
+    existing.broadcast_enabled = True
+    storage.create(existing)
+
+    seed = _monitor_task(tool_names=["query_runtime_anomalies", "submit_monitor_report"])
+    seed.broadcast_enabled = False
+    seed.target_user_ids = []
+    _write_monitor_definition(tmp_path, seed)
+    sync_project_scheduled_tasks(
+        project_id="demo",
+        task_ids=["task_runtime_monitor"],
+        service=_Service(storage),
+        project_root=tmp_path,
+    )
+
+    updated = storage.get("task_runtime_monitor")
+    # 通道开关是代码拥有的：旧直推被种子关闭，避免与新通报通道双重投递
+    assert updated.broadcast_enabled is False
+    assert "submit_monitor_report" in updated.tool_names
+    # 推送目标仍是运行时字段：部署侧的收件人配置保留（通道关闭后为惰性字段）
+    assert updated.target_user_ids == ["app:android:android_demo"]

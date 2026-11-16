@@ -100,7 +100,7 @@ def write_word(data, config, path):
     document.add_paragraph(local_time(data['window_end']).strftime('（%Y年%m月%d日）'))
     document.add_paragraph(config.get('organization', ''))
     document.add_paragraph(f"统计时段：{stamp(data['window_start'])}至{stamp(data['window_end'])}。")
-    document.add_paragraph('通过站点小时数据接口检查、核对，整理连续缺数超过4小时的数据缺失记录，同时跟进前日及更早未结记录。')
+    document.add_paragraph('通过站点小时数据接口检查、核对，整理整站小时数据无数据达到4小时的缺失记录，同时跟进前日及更早未结记录。')
     if not data['report_ready']:
         document.add_paragraph('本次取数不完整，报告为待核实稿；不能据此认定所有站点运行正常。')
     for kind in ('国控', '省控'):
@@ -117,7 +117,7 @@ def write_word(data, config, path):
             document.add_paragraph(f"{prefix}{entry['city']}{entry['name']}站：{stamp(entry['offline_start'])}至{stamp(entry['offline_end'])}，"
                                    f"累计影响数据{entry['affected_hours']}小时（本统计窗口{entry['window_affected_hours']}小时），{restored}，{filled}。")
     document.add_paragraph('编制、校核及期号：待人工确认。')
-    document.add_heading('附件：站点离线记录表（按连续缺数超过4小时判定）', 1)
+    document.add_heading('附件：站点离线记录表（按整站无数据达到4小时判定）', 1)
     headers = ['序号','城市','站点','离线时间','是否已恢复','影响数据时长（小时）','是否影响数据有效性','排查结果','备注']
     for kind in ('国控', '省控'):
         document.add_heading(f'{kind}站点离线记录表', 2)
@@ -286,8 +286,8 @@ def incident_table_values(entry, index):
 def section_summary(kind, entries):
     count = len({(entry['city'], entry['name']) for entry in entries})
     if count:
-        return f'过去24小时内，有{count}个{kind}站点出现过离线超4小时的情况，经核实，情况如下：'
-    return f'过去24小时内，无{kind}站点出现过离线超4小时的情况。'
+        return f'过去24小时内，有{count}个{kind}站点出现过离线达到4小时的情况，经核实，情况如下：'
+    return f'过去24小时内，无{kind}站点出现过离线达到4小时的情况。'
 
 
 def overview_summary(data):
@@ -300,7 +300,7 @@ def overview_summary(data):
               for kind in ('国控', '省控')}
     affected = '和'.join(f'{totals[kind]}个{kind}站点' for kind in ('国控', '省控') if totals[kind])
     if affected:
-        return prefix + f'有{affected}出现过离线超4小时的情况，其余国控和省控站点运行正常。'
+        return prefix + f'有{affected}出现过离线达到4小时的情况，其余国控和省控站点运行正常。'
     return prefix + '国控和省控站点运行正常。'
 
 

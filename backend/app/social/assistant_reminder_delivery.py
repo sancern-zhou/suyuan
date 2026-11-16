@@ -59,33 +59,5 @@ async def deliver_reminder(task, trigger, notification):
         except Exception:
             pass
         return "inbox_saved"
-    from app.social.binding_service import get_social_binding_service
-
-    parts = recipient.rsplit(":", 2)
-    if len(parts) != 3 or not (parts[0] == "weixin" or parts[0].startswith("weixin:")):
-        return "rejected"
-    binding = await get_social_binding_service().active_for_platform_user(task.owner_user_id)
-    if not binding or binding.bot_account != parts[1] or binding.ilink_user_id != parts[2]:
-        return "rejected"
-    from app.social.broadcast_service import SocialBroadcastService
-
-    result = await SocialBroadcastService().broadcast(
-        message=notification.content,
-        media=getattr(notification, "media", []),
-        target_user_ids=[recipient],
-        persist_context=True,
-        delivery_metadata={"_single_attempt": True, "_expected_bot_account": parts[1]},
-        context_metadata={
-            "task_id": task.task_id,
-            "event_id": notification.message_id,
-            "kind": getattr(notification, "kind", "assistant_reminder"),
-        },
-    )
-    results = result.get("delivery_results", [])
-    if (
-        len(results) == 1
-        and results[0].get("social_user_id") == recipient
-        and results[0].get("sent")
-    ):
-        return "provider_accepted"
-    return "unknown"
+    # 对话社交渠道（个人微信/QQ）已退役：weixin: 收件人一律拒绝。
+    return "rejected"

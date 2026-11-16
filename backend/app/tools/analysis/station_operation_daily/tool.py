@@ -11,12 +11,12 @@ class StationOperationDailyTool(LLMTool):
     def __init__(self):
         super().__init__(
             name='station_operation_daily',
-            description='抓取站点原始小时数据并确定性计算运行状态，仅对连续缺数超过4小时的事件生成昨日10时至今日10时的Word日报；数据恢复上传即结束跟进，已恢复事件仅记录过去24小时的缺失，持续未恢复上传事件继续跟进，不设天数上限。',
+            description='抓取站点原始小时数据并确定性计算运行状态，仅对整站小时数据无数据达到4小时的事件生成昨日10时至今日10时的Word日报；数据恢复上传即结束跟进，已恢复事件仅记录过去24小时的缺失（出报前被平台回补的缺口当期仍列出），持续未恢复上传事件继续跟进，不设天数上限。',
             category=ToolCategory.ANALYSIS,
             requires_context=False,
             function_schema={
                 'name': 'station_operation_daily',
-                'description': '使用部署配置的站点名录及小时接口，保存原始快照，仅将连续缺数超过4小时的事件记入日报；数据恢复上传即结束跟进（回补仅作备注），已恢复事件超过24小时窗口不再跟进，持续未恢复上传事件不设跟进天数上限。action=record_feedback 用于用户在对话中反馈缺失原因/是否无法回补时，记录原因到日报排查结果并关闭该事件跟进。不得把缺数直接解释成设备故障。',
+                'description': '使用部署配置的站点名录及小时接口，保存原始快照，仅将整站小时数据无数据达到4小时的事件记入日报；数据恢复上传即结束跟进（平台整段回补不抹掉事件，已回补缺口在24小时窗口内仍按已恢复列出），已恢复事件超过24小时窗口不再跟进，持续未恢复上传事件不设跟进天数上限。action=record_feedback 用于用户在对话中反馈缺失原因/是否无法回补时，记录原因到日报排查结果并关闭该事件跟进。不得把缺数直接解释成设备故障。',
                 'parameters': {'type':'object','properties': {
                     'action': {'type':'string','enum':['collect','report','record_feedback'],'default':'report'},
                     'date': {'type':'string','description':'可选报告日期YYYY-MM-DD；默认北京时间今天'},

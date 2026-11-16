@@ -19,7 +19,7 @@ def test_social_binding_migration_preserves_legacy_rows_and_adds_unique_active_i
 
 
 @pytest.mark.asyncio
-async def test_init_db_ensures_social_binding_schema(monkeypatch):
+async def test_init_db_ensures_runtime_schemas(monkeypatch):
     calls = []
 
     class FakeConnection:
@@ -40,24 +40,24 @@ async def test_init_db_ensures_social_binding_schema(monkeypatch):
     async def fake_uploaded_files_schema(connection):
         calls.append(("uploaded_files", connection))
 
-    async def fake_social_binding_schema(connection):
-        calls.append(("social_binding", connection))
-
     async def fake_session_resources_schema(connection):
         calls.append(("session_resources", connection))
+
+    async def fake_coordinator_quick_prompts_schema(connection):
+        calls.append(("coordinator_quick_prompts", connection))
 
     monkeypatch.setattr(database, "engine", FakeEngine())
     monkeypatch.setattr(database, "_ensure_uploaded_files_schema", fake_uploaded_files_schema)
     monkeypatch.setattr(
         database,
-        "_ensure_social_binding_schema",
-        fake_social_binding_schema,
+        "_ensure_session_resources_schema",
+        fake_session_resources_schema,
         raising=False,
     )
     monkeypatch.setattr(
         database,
-        "_ensure_session_resources_schema",
-        fake_session_resources_schema,
+        "_ensure_coordinator_quick_prompts_schema",
+        fake_coordinator_quick_prompts_schema,
         raising=False,
     )
 
@@ -67,59 +67,9 @@ async def test_init_db_ensures_social_binding_schema(monkeypatch):
         "create_all",
         "create_all",
         "uploaded_files",
-        "social_binding",
         "session_resources",
+        "coordinator_quick_prompts",
     ]
-
-
-@pytest.mark.asyncio
-async def test_social_binding_schema_uses_idempotent_postgresql_ddl():
-    statements = []
-
-    class FakeDialect:
-        name = "postgresql"
-
-    class FakeConnection:
-        dialect = FakeDialect()
-
-        async def execute(self, statement):
-            statements.append(str(statement))
-
-    await database._ensure_social_binding_schema(FakeConnection())
-
-    ddl = "\n".join(statements)
-    for column in (
-        "platform_user_id",
-        "platform_username",
-        "platform_display_name",
-        "account_id",
-        "ilink_user_id",
-    ):
-        assert f"ADD COLUMN IF NOT EXISTS {column}" in ddl
-
-    assert "CREATE TABLE IF NOT EXISTS weixin_scan_tasks" in ddl
-    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_platform_user" in ddl
-    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_ilink_user" in ddl
-    assert "CREATE INDEX IF NOT EXISTS idx_social_users_active_account" in ddl
-    assert ddl.count("WHERE status = 'active'") == 2
-
-
-@pytest.mark.asyncio
-async def test_social_binding_schema_skips_non_postgresql_dialects():
-    statements = []
-
-    class FakeDialect:
-        name = "sqlite"
-
-    class FakeConnection:
-        dialect = FakeDialect()
-
-        async def execute(self, statement):
-            statements.append(str(statement))
-
-    await database._ensure_social_binding_schema(FakeConnection())
-
-    assert statements == []
 
 
 def _patch_worker_startup(monkeypatch, calls, *, database_ready):
@@ -148,11 +98,6 @@ def _patch_worker_startup(monkeypatch, calls, *, database_ready):
     )
     monkeypatch.setattr(
         startup,
-        "start_social_platform_service",
-        lambda app: record("start_social_platform_service"),
-    )
-    monkeypatch.setattr(
-        startup,
         "start_social_worker_api_service",
         lambda app: record("start_social_worker_api_service"),
     )
@@ -160,6 +105,11 @@ def _patch_worker_startup(monkeypatch, calls, *, database_ready):
         startup,
         "start_knowledge_base_services",
         lambda: record("start_knowledge_base_services"),
+    )
+    # run_startup 在 worker 就绪路径内即时 import 并调用图谱恢复任务
+    monkeypatch.setattr(
+        "app.api.knowledge_graph_routes.start_graph_build_recovery",
+        lambda: calls.append("start_graph_build_recovery"),
     )
 
 
@@ -175,9 +125,9 @@ async def test_worker_social_services_start_only_after_database_is_ready(monkeyp
         "initialize_tools_and_agents",
         "init_database_and_fetchers",
         "start_scheduled_task_service",
-        "start_social_platform_service",
         "start_social_worker_api_service",
         "start_knowledge_base_services",
+        "start_graph_build_recovery",
     ]
 
 

@@ -22,7 +22,6 @@ from app.lifecycle.nacos import stop_nacos
 from app.lifecycle.operation_access import stop_operation_access_policy
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import stop_scheduled_task_service
-from app.lifecycle.social import stop_social_platform_service
 from app.lifecycle.social_worker_api import stop_social_worker_api_service
 from app.agent.runtime.steering import steering_registry
 from app.utils.http_client import http_client
@@ -49,7 +48,6 @@ async def run_shutdown(app: FastAPI) -> None:
     if starts_background_services(app_role):
         await stop_social_worker_api_service(app)
         await stop_scheduled_task_service()
-        await stop_social_platform_service(app)
         await stop_data_fetchers()
         await stop_knowledge_base_services()
     else:

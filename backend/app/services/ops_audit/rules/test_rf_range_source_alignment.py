@@ -53,7 +53,14 @@ def _has(issues, rule_id="RF_RANGE_OUT_OF_SPEC"):
         ("RF_W_GASEOUSCHECK_CO", "天虹", "CO", "GYCHECKVALUE", "10000", False),
         ("RF_W_GASEOUSCHECK_CO", "天虹", "CO", "GYCHECKVALUE", "1999", True),
         ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "FYCHECKVALUE", "48", False),
-        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "FYCHECKVALUE", "46", True),
+        # XH 贴牌 API，样品温度按 API 44-52 口径（2026-11-16 档案校正，原 47-49 过窄）
+        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "FYCHECKVALUE", "46", False),
+        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "FYCHECKVALUE", "43.9", True),
+        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "GYCHECKVALUE", "4037", False),
+        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "GYCHECKVALUE", "2400", True),
+        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "CBCHECKVALUE", "1.205", False),
+        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "CYLLCHECKVALUE", "810", False),
+        ("RF_W_GASEOUSCHECK_CO", "XH", "CO", "CYLLCHECKVALUE", "890", True),
         # NOX: RF_W_GASEOUSCHECK_NOX.cshtml:212-395
         ("RF_W_GASEOUSCHECK_NOX", "FPI", "NOX", "CYLLCHECKVALUE", "350", False),
         ("RF_W_GASEOUSCHECK_NOX", "FPI", "NOX", "CYLLCHECKVALUE", "650", False),
@@ -79,8 +86,9 @@ def _has(issues, rule_id="RF_RANGE_OUT_OF_SPEC"):
         ("RF_W_GASEOUSCHECK_NOX", "FPI", "NOX", "NOXYLCHECKVALUE", "0.85", False),
         ("RF_W_GASEOUSCHECK_NOX", "FPI", "NOX", "NOXYLCHECKVALUE", "1.15", False),
         ("RF_W_GASEOUSCHECK_NOX", "FPI", "NOX", "NOXYLCHECKVALUE", "0.7", True),
-        ("RF_W_GASEOUSCHECK_NOX", "XH", "NOX", "FYSHICHECKVALUE", "20", False),
-        ("RF_W_GASEOUSCHECK_NOX", "XH", "NOX", "FYSHICHECKVALUE", "5.8", True),
+        # XH 贴牌 API，反应室压力按 In-Hg-A <10 口径（2026-11-16 档案校正，原 13-34 kPa 单位口径错配）
+        ("RF_W_GASEOUSCHECK_NOX", "XH", "NOX", "FYSHICHECKVALUE", "9.5", False),
+        ("RF_W_GASEOUSCHECK_NOX", "XH", "NOX", "FYSHICHECKVALUE", "20", True),
         # O3: RF_W_GaseousCheck_O3.cshtml:170-265
         ("RF_W_GASEOUSCHECK_O3", "FPI", "O3", "CYLLCHECKVALUE", "720", False),
         ("RF_W_GASEOUSCHECK_O3", "FPI", "O3", "CYLLCHECKVALUE", "880", False),
