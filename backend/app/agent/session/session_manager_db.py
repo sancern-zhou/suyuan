@@ -5,7 +5,10 @@
 保持 API 兼容，方便迁移。
 """
 
+import asyncio
 import json
+import re
+import shutil
 import structlog
 import time
 from pathlib import Path
@@ -644,6 +647,7 @@ class SessionManagerDB:
 
             if success or manifest_deleted:
                 logger.info("session_deleted_from_db", session_id=session_id)
+                await self._cleanup_session_files(session_id)
 
             return bool(success or manifest_deleted)
 
@@ -654,6 +658,65 @@ class SessionManagerDB:
                 error=str(e)
             )
             return False
+
+    @staticmethod
+    def _session_file_dirs(session_id: str) -> List[Path]:
+        """会话相关磁盘目录（工作目录 + 已发布资源内容）。
+
+        session_id 过白名单校验且解析后必须仍位于 sessions 目录之下，
+        防止异常 id 构造出逃逸路径；不合法时返回空列表。
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+            return []
+        try:
+            from app.utils.path_config import get_sessions_dir
+
+            sessions_root = get_sessions_dir().resolve()
+        except Exception as e:
+            logger.warning("session_files_root_unavailable", error=str(e))
+            return []
+        candidates = [
+            sessions_root / f"agent_session_{session_id}",
+            sessions_root / "resource_content" / session_id,
+        ]
+        safe_dirs: List[Path] = []
+        for directory in candidates:
+            try:
+                resolved = directory.resolve()
+            except OSError:
+                continue
+            if resolved != sessions_root and sessions_root in resolved.parents:
+                safe_dirs.append(resolved)
+        return safe_dirs
+
+    async def _cleanup_session_files(self, session_id: str) -> None:
+        """删除会话磁盘产物；失败仅告警不阻断（DB 已删，孤儿目录可人工清理）。"""
+        directories = self._session_file_dirs(session_id)
+        if not directories:
+            return
+
+        def _remove() -> None:
+            for directory in directories:
+                if not directory.exists():
+                    continue
+                try:
+                    shutil.rmtree(directory)
+                    logger.info("session_files_removed", path=str(directory))
+                except OSError as e:
+                    logger.warning(
+                        "session_files_remove_failed",
+                        path=str(directory),
+                        error=str(e),
+                    )
+
+        try:
+            await asyncio.to_thread(_remove)
+        except Exception as e:
+            logger.warning(
+                "session_files_cleanup_failed",
+                session_id=session_id,
+                error=str(e),
+            )
 
     async def list_sessions(
         self,
