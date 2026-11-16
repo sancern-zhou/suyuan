@@ -46,7 +46,7 @@ async def test_runtime_stops_before_execution_when_registration_fails(monkeypatc
     runtime = object.__new__(AgentRuntime)
     runtime.memory = NS(session_id="s")
     runtime.executor = NS()
-    runtime.config = NS(enhance_with_history=True, board_context=None, cancel_event=asyncio.Event())
+    runtime.config = NS(enhance_with_history=True, board_context=None, cancel_event=asyncio.Event(), runtime_metadata=None)
     claim = AsyncMock(return_value=False)
     register_owner = AsyncMock()
     monkeypatch.setattr(module.cancellation_registry, "attach_run_id", claim)

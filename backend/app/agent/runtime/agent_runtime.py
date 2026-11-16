@@ -134,6 +134,7 @@ class AgentRuntime:
         if isinstance(data, dict):
             data.setdefault("session_id", state.session_id)
             data.setdefault("run_id", state.run_id)
+        return event
 
     def _setup_deferred_tools(self, state: RunState) -> frozenset:
         """deferred tools 启用装配：注入 tool_search 动态工具并返回存根化集合。
