@@ -13,4 +13,4 @@
 - [许昌市城市超标污染溯源报告](backend/docs/skills/xuchang_city_exceedance_source_report.md) - 暂无描述
 - [许昌市昨日污染回顾分析](backend/docs/skills/xuchang_station_daily_source_report.md) - 以站点小时浓度连续快速抬升过程为日报专项分析对象，分钟告警仅作匹配线索；使用 Fetcher 冻结的确定性证据生成 QMD 报告。
 - [生态环境招投标市场分析](backend/docs/skills/生态环境招投标市场分析.md) - 面向广东旭诚科技有限公司市场分析人员和大气环境产品经理的可追溯分析报告工作流，覆盖招投标市场研究、数据分析、洞察提炼和 Word/PPT/HTML/Excel 交付。
-- [站点运行监控日报](backend/docs/skills/station-operation-daily/SKILL.md) - 通过无需LLM的固定工作流按原始Word模板生成国控、省控站点运行监控日报，使用小时数据快照确定性判定连续缺数超过4小时的事件及其恢复、回补，并跟进历史未结事件。用于站点运行日报定时任务及同口径补跑。
+- [站点运行监控日报](backend/docs/skills/station-operation-daily/SKILL.md) - 通过无需LLM的固定工作流按原始Word模板生成国控、省控站点运行监控日报，使用小时数据快照确定性判定整站无数据达到4小时的离线事件及其恢复、回补，并跟进历史未结事件。用于站点运行日报定时任务及同口径补跑。

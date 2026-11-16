@@ -120,6 +120,20 @@ def test_only_gaps_over_four_hours_are_recorded(tmp_path):
     assert any('离线达到4小时即列入日报' in item for item in report(store,end)['limitations'])
 
 
+def test_entries_list_earliest_offline_start_first(tmp_path):
+    """事件按离线开始时间升序：先离线的排在前面，不按城市/编码。"""
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    # A（国控、编码靠前）离线较晚；B（省控）离线较早：B 必须排在前面。
+    missing={('A',h) for h in hours(BASE+timedelta(hours=10),BASE+timedelta(hours=15))}
+    ingest(store,BASE,end,rows(BASE,end,missing=missing))
+    missing={('B',h) for h in hours(BASE+timedelta(hours=2),BASE+timedelta(hours=7))}
+    ingest(store,BASE,end,rows(BASE,end,missing=missing))
+    entries=report(store,end)['entries']
+    assert [e['code'] for e in entries]==['B','A']
+    assert local_time(entries[0]['offline_start'])<local_time(entries[1]['offline_start'])
+
+
 class FakeSource:
     calls=[]
     def __init__(self,config):pass
@@ -430,8 +444,8 @@ def test_fixed_template_rejects_extra_content(tmp_path):
     assert document.paragraphs[10].text == '编制：许凡                              校核：张涛'
     assert document.paragraphs[11].text == '主送：省生态环境厅监测处                抄送：各驻市站'
     assert not any(p.text=='数据核查说明' for p in document.paragraphs)
-    assert document.paragraphs[7].text == '过去24小时内，无国控站点出现过离线超4小时的情况。'
-    assert document.paragraphs[9].text == '过去24小时内，无省控站点出现过离线超4小时的情况。'
+    assert document.paragraphs[7].text == '过去24小时内，无国控站点出现过离线达到4小时的情况。'
+    assert document.paragraphs[9].text == '过去24小时内，无省控站点出现过离线达到4小时的情况。'
     document.paragraphs[7].text = '过去24小时内，无国控站点出现数据缺失的情况。'
     document.save(output)
     with pytest.raises(ValueError, match='section_wording'):
@@ -500,8 +514,8 @@ def test_report_text_and_table_match_business_template(tmp_path):
     write_word(data, {'template_path':str(source)}, output)
     d=Document(output)
     text='\n'.join(p.text for p in d.paragraphs)
-    assert '过去24小时内，有1个国控站点出现过离线超4小时的情况，经核实，情况如下：' in text
-    assert '过去24小时内，有2个省控站点出现过离线超4小时的情况，经核实，情况如下：' in text
+    assert '过去24小时内，有1个国控站点出现过离线达到4小时的情况，经核实，情况如下：' in text
+    assert '过去24小时内，有2个省控站点出现过离线达到4小时的情况，经核实，情况如下：' in text
     assert '其余国控和省控站点运行正常。' in d.paragraphs[5].text
     assert '具体如下' not in text
     assert '揭阳市产业园龙尾站：经核实为区域网络基站异常，累计影响数据时长65小时，正在持续跟进。' in text
@@ -533,9 +547,9 @@ def test_business_backfill_notes_keep_recovery_separate(recovered, status, note)
 
 
 @pytest.mark.parametrize('kinds,expected', [
-    (['省控'], '有1个省控站点出现过离线超4小时的情况，其余国控和省控站点运行正常。'),
-    (['国控'], '有1个国控站点出现过离线超4小时的情况，其余国控和省控站点运行正常。'),
-    (['国控','省控'], '有1个国控站点和1个省控站点出现过离线超4小时的情况，其余国控和省控站点运行正常。'),
+    (['省控'], '有1个省控站点出现过离线达到4小时的情况，其余国控和省控站点运行正常。'),
+    (['国控'], '有1个国控站点出现过离线达到4小时的情况，其余国控和省控站点运行正常。'),
+    (['国控','省控'], '有1个国控站点和1个省控站点出现过离线达到4小时的情况，其余国控和省控站点运行正常。'),
     ([], '国控和省控站点运行正常。')])
 def test_overview_uses_exact_template_wording(kinds, expected):
     from app.services.station_operation_monitor.word import overview_summary
