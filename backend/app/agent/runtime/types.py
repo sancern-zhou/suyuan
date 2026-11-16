@@ -81,8 +81,9 @@ class RunState:
     suppress_tool_names_next_turn: set[str] = field(default_factory=set)
     suppress_tool_names_current_turn: set[str] = field(default_factory=set)
     # deferred tools（tool_search 按需注入 schema）：本模式的存根化候选集
-    # （空集=模式未 opt-in，机制完全不介入）与已升级工具集（模型已调用，
-    # 下一轮换回全 schema 常驻）。
+    # （空集=模式未 opt-in，机制完全不介入）与本运行内新调用工具的增量集
+    # （调用即升级）。跨轮次持久经会话历史派生（collect_called_deferred_tools），
+    # 组装时取并集——历史是发现状态的唯一持久来源。
     deferred_tool_names: frozenset = field(default_factory=frozenset)
     discovered_tools: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
