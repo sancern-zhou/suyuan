@@ -82,6 +82,18 @@ test('coordinator agent catalog is grouped by capability type', async () => {
   assert.match(source, /v-for="group in agentGroups"/)
 })
 
+test('agent platform hides the assistant card when the floating assistant is the unified entry', async () => {
+  const source = await readSource('./AgentPlatform.vue')
+  const policy = await readSource('./platformCardPolicy.js')
+
+  assert.match(source, /filterPlatformAgentCards\(/)
+  assert.match(source, /assistantFloating: projectConfig\.hasFeature\('assistant_floating'\)/)
+  assert.match(source, /platformAgents\.length/)
+  assert.doesNotMatch(source, /v-for="agent in agents"/)
+  assert.match(source, /platformAgents\.value\.find\(agent => agent\.id === mode\)/)
+  assert.match(policy, /agent\.id !== 'assistant'/)
+})
+
 test('sidebar navigation omits work resource and system group labels', async () => {
   const source = await readSource('../AssistantSidebar.vue')
 

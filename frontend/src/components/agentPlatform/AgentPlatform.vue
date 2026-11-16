@@ -37,7 +37,7 @@
         </div>
         <div class="platform-summary" aria-label="平台概览">
           <span class="live-status"><i aria-hidden="true"></i>平台运行中</span>
-          <span class="agent-count">已接入 <strong>{{ agents.length }}</strong> 个智能体</span>
+          <span class="agent-count">已接入 <strong>{{ platformAgents.length }}</strong> 个智能体</span>
         </div>
       </header>
 
@@ -105,7 +105,7 @@
 
         <div v-else class="agent-grid">
           <button
-            v-for="agent in agents"
+            v-for="agent in platformAgents"
             :key="agent.id"
             class="agent-card"
             type="button"
@@ -196,6 +196,7 @@ import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 import CoordinatorHome from '@/components/coordinator/CoordinatorHome.vue'
 import CoordinatorCommandCenter from '@/components/coordinator/CoordinatorCommandCenter.vue'
+import { filterPlatformAgentCards } from './platformCardPolicy.js'
 
 const props = defineProps({
   agents: { type: Array, default: () => selectAgentModes(projectConfig.agentModeIds, projectConfig.agentModeOverrides) },
@@ -228,10 +229,15 @@ onMounted(() => {
 })
 const isCoordinatorLayout = computed(() => props.layout === 'coordinator')
 const isSceneLayout = computed(() => props.layout === 'scenes')
+// 助手模式入口统一收敛到浮球/浮窗，平台卡片按共享策略隐藏（仅 assistant_floating 项目生效）。
+const platformAgents = computed(() => filterPlatformAgentCards(
+  (Array.isArray(props.agents) ? props.agents : []),
+  { assistantFloating: projectConfig.hasFeature('assistant_floating') }
+))
 const sceneGroups = computed(() => (Array.isArray(props.scenes) ? props.scenes : []).map(scene => ({
   ...scene,
   agents: (Array.isArray(scene.modeIds) ? scene.modeIds : [])
-    .map(mode => (Array.isArray(props.agents) ? props.agents : []).find(agent => agent.id === mode))
+    .map(mode => platformAgents.value.find(agent => agent.id === mode))
     .filter(Boolean)
 })).filter(scene => scene.agents.length))
 const isRunning = mode => (Array.isArray(props.runningModes) ? props.runningModes : []).includes(mode)
