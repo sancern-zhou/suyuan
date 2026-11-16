@@ -1,7 +1,7 @@
 """Read-only PostgreSQL SQL query tool for the smart-event center tables.
 
 The smart-event center persists structured events, task cards and review state
-in PostgreSQL (see ``app.services.smart_event_db``).  Alarm-history analysis is
+in PostgreSQL (see ``app.services.jiangsu_smart_event_db``).  Alarm-history analysis is
 much cheaper against those promoted/indexed columns than against the raw
 operations alarm API, so this tool is exposed to the operations-analysis mode
 instead of forcing a full platform sweep.
@@ -128,7 +128,7 @@ class ExecuteSmartEventSQLQueryTool(LLMTool):
         if not describe_table and not sql:
             return {"success": False, "data": None, "summary": "请提供 describe_table（查看表结构）或 sql（执行查询）"}
 
-        from app.services.smart_event_db import smart_event_db_enabled
+        from app.services.jiangsu_smart_event_db import smart_event_db_enabled
 
         if not smart_event_db_enabled():
             return {

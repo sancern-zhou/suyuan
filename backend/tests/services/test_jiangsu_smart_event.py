@@ -1588,7 +1588,7 @@ async def test_file_list_stats_follow_filters_when_db_is_unavailable(tmp_path, m
          "site_id": "D", "latest_occurrence_time": "2026-09-01T08:00:00"},
     ], "tasks": []})
 
-    from app.services import smart_event_db as db_module
+    from app.services import jiangsu_smart_event_db as db_module
 
     async def immediate(coro, timeout=30.0):
         return await coro
@@ -1630,7 +1630,7 @@ async def test_db_list_syncs_review_archive_state_and_filters_by_effective_statu
          "review_id": pending_id, "archived": False, "site_id": "B"},
     ]
 
-    from app.services import smart_event_db as db_module
+    from app.services import jiangsu_smart_event_db as db_module
 
     monkeypatch.setattr(db_module, "smart_event_db_enabled", lambda: True)
     monkeypatch.setattr("app.services.task_review.load_reviews",

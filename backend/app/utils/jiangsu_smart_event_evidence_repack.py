@@ -74,7 +74,7 @@ def _parse_day(value: str, *, end: bool) -> datetime:
 def _event_time_clause():
     from sqlalchemy import func
 
-    from app.db.models.smart_event_db import SmartEventDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB
 
     return func.coalesce(SmartEventDB.latest_occurrence_time, SmartEventDB.event_start_time)
 
@@ -82,7 +82,7 @@ def _event_time_clause():
 async def _fetch_targets(start: datetime, end: datetime, event_id: str | None):
     from sqlalchemy import select
 
-    from app.db.models.smart_event_db import SmartEventDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB
     from app.db.sync_bridge import bridge_session
 
     stmt = select(SmartEventDB.event_id, SmartEventDB.data, SmartEventDB.evidence_package_path)
@@ -98,7 +98,7 @@ async def _fetch_targets(start: datetime, end: datetime, event_id: str | None):
 def _run_db(start: datetime, end: datetime, event_id: str | None, apply: bool) -> dict:
     from app.db.sync_bridge import run_db
     from app.services.jiangsu_smart_event_store import JiangsuEventPackages, read_package_file
-    from app.services.smart_event_db import _packages
+    from app.services.jiangsu_smart_event_db import _packages
     from app.utils.path_config import format_agent_path, resolve_agent_path
 
     packages = _packages()
@@ -167,7 +167,7 @@ async def _update_pointer(event_id: str, event: dict, new_ref: str) -> None:
     from sqlalchemy import text
 
     from app.db.sync_bridge import bridge_session
-    from app.services.smart_event_db import ADVISORY_LOCK_KEY
+    from app.services.jiangsu_smart_event_db import ADVISORY_LOCK_KEY
 
     async with bridge_session() as session:
         async with session.begin():
@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     start = _parse_day(args.start, end=False)
     end = _parse_day(args.end, end=True)
 
-    from app.services.smart_event_db import smart_event_db_enabled
+    from app.services.jiangsu_smart_event_db import smart_event_db_enabled
 
     runner = _run_db if smart_event_db_enabled() else _run_files
     report = runner(start, end, args.event_id, args.apply)

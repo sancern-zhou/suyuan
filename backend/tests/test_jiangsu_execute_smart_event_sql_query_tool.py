@@ -1,6 +1,6 @@
 import pytest
 
-from app.tools.query.execute_smart_event_sql_query.tool import (
+from app.tools.jiangsu.execute_smart_event_sql_query.tool import (
     SMART_EVENT_SQL_TABLES,
     ExecuteSmartEventSQLQueryTool,
 )
@@ -8,7 +8,7 @@ from app.tools.query.execute_smart_event_sql_query.tool import (
 
 def _enable_db(monkeypatch, enabled=True):
     monkeypatch.setattr(
-        "app.services.smart_event_db.smart_event_db_enabled", lambda: enabled
+        "app.services.jiangsu_smart_event_db.smart_event_db_enabled", lambda: enabled
     )
 
 

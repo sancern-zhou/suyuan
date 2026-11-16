@@ -522,7 +522,7 @@ class JiangsuSmartEventService:
     def _evidence_package_path(self, event_id: str) -> Path:
         if self._db_mode():
             from app.db.sync_bridge import run_db
-            from app.services.smart_event_db import get_evidence_path_async
+            from app.services.jiangsu_smart_event_db import get_evidence_path_async
 
             reference = run_db(get_evidence_path_async(str(event_id)))
             if reference:
@@ -538,7 +538,7 @@ class JiangsuSmartEventService:
         return self.data_root / "jiangsu_smart_events" / "evidence" / f"{safe_id}.json"
 
     def _db_mode(self) -> bool:
-        from app.services.smart_event_db import smart_event_db_enabled
+        from app.services.jiangsu_smart_event_db import smart_event_db_enabled
 
         return smart_event_db_enabled()
 
@@ -639,7 +639,7 @@ class JiangsuSmartEventService:
     def _load_store(self, *, event_ids: set[str] | None = None) -> dict[str, Any]:
         if self._db_mode():
             from app.db.sync_bridge import run_db
-            from app.services.smart_event_db import load_store_async
+            from app.services.jiangsu_smart_event_db import load_store_async
 
             store = run_db(load_store_async(event_ids=event_ids))
             return self._with_review_states(store)
@@ -683,7 +683,7 @@ class JiangsuSmartEventService:
     def _save_store(self, store: dict[str, Any]) -> None:
         if self._db_mode():
             from app.db.sync_bridge import run_db
-            from app.services.smart_event_db import save_store_async
+            from app.services.jiangsu_smart_event_db import save_store_async
 
             run_db(save_store_async(store))
             return
@@ -768,7 +768,7 @@ class JiangsuSmartEventService:
         if not lazy or not self._db_mode():
             return
         from app.db.sync_bridge import run_db
-        from app.services.smart_event_db import load_evidence_async
+        from app.services.jiangsu_smart_event_db import load_evidence_async
 
         mapping = run_db(load_evidence_async([str(event["event_id"]) for event in lazy]))
         for event in lazy:
@@ -1715,7 +1715,7 @@ class JiangsuSmartEventService:
     async def _list_events_from_db(self, *, start_time, end_time, station_codes, status,
                                    keyword, event_type, event_types, level, limit, page, sync_state) -> dict[str, Any] | None:
         from app.db.sync_bridge import run_db_async
-        from app.services import smart_event_db
+        from app.services import jiangsu_smart_event_db as smart_event_db
 
         if not smart_event_db.smart_event_db_enabled():
             return None
@@ -1928,7 +1928,7 @@ class JiangsuSmartEventService:
     def list_tasks(self, *, event_id: str | None = None, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         if self._db_mode():
             from app.db.sync_bridge import run_db
-            from app.services.smart_event_db import list_tasks_async
+            from app.services.jiangsu_smart_event_db import list_tasks_async
 
             return run_db(list_tasks_async(event_id=event_id, status=status, limit=limit))
         tasks = [item for item in self._load_list_store().get("tasks", []) if isinstance(item, dict)]
@@ -1941,7 +1941,7 @@ class JiangsuSmartEventService:
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         if self._db_mode():
             from app.db.sync_bridge import run_db
-            from app.services.smart_event_db import get_task_by_id_async
+            from app.services.jiangsu_smart_event_db import get_task_by_id_async
 
             return run_db(get_task_by_id_async(task_id))
         return next((item for item in self.list_tasks(limit=1000) if item.get("task_id") == task_id), None)

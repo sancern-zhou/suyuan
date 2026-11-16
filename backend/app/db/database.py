@@ -287,8 +287,8 @@ async def init_db():
     import app.knowledge_base.graph_build_models  # noqa: F401
     import app.boards.models  # noqa: F401
     import app.exam.models  # noqa: F401
-    import app.db.models.task_review_db  # noqa: F401
-    import app.db.models.smart_event_db  # noqa: F401
+    import app.db.models.jiangsu_task_review_db  # noqa: F401
+    import app.db.models.jiangsu_smart_event_db  # noqa: F401
     import app.db.report_package_model  # noqa: F401
     import app.db.coordinator_quick_prompt_model  # noqa: F401
 

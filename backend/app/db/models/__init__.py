@@ -22,10 +22,10 @@ from .report_template import ReportTemplate, ReportGenerationHistory
 from app.db.report_package_model import ReportPackageDB
 
 # 导入任务审核模型
-from .task_review_db import TaskReviewDB
+from .jiangsu_task_review_db import TaskReviewDB
 
 # 导入智能事件模型
-from .smart_event_db import SmartEventDB, SmartEventTaskDB
+from .jiangsu_smart_event_db import SmartEventDB, SmartEventTaskDB
 from app.db.report_package_model import ReportPackageDB
 
 __all__ = [

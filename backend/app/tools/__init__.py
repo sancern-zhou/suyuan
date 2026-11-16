@@ -484,7 +484,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # 智能事件中心 PostgreSQL 结构化查询工具（按模式注入事件中心表白名单）。
     if is_project_tool_enabled(context, "legacy", "execute_smart_event_sql_query"):
         try:
-            from app.tools.query.execute_smart_event_sql_query.tool import ExecuteSmartEventSQLQueryTool
+            from app.tools.jiangsu.execute_smart_event_sql_query.tool import ExecuteSmartEventSQLQueryTool
 
             registry.register(ExecuteSmartEventSQLQueryTool(), priority=47)
             logger.info("tool_loaded", tool="execute_smart_event_sql_query")

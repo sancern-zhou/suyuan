@@ -70,11 +70,14 @@ async def start_scheduled_task_service() -> None:
         from app.agent.react_agent import create_react_agent
         from app.scheduled_tasks import init_service, start_service
         from app.scheduled_tasks.event_result_hooks import register_event_result_handler
-        from app.services.jiangsu_smart_event import persist_scheduled_task_result
 
-        # The callback is process-local, so register it in both web and worker
-        # processes before event tasks can execute.
-        register_event_result_handler(persist_scheduled_task_result)
+        # 江苏智能事件结果落库回调：项目域经 event_result_hooks 订阅共享事件引擎
+        # （该机制本就为项目解耦设计），仅江苏部署注册；回调进程本地，web 与 worker
+        # 都执行本函数，注册语义不变。
+        if context.manifest.project == "jiangsu-ops":
+            from app.services.jiangsu_smart_event import persist_scheduled_task_result
+
+            register_event_result_handler(persist_scheduled_task_result)
 
         service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
         from app.scheduled_tasks.default_tasks import ensure_project_default_tasks

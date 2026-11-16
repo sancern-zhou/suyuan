@@ -195,7 +195,7 @@ def _db_record_to_dict(row) -> dict:
 async def _db_load_review(review_id: str) -> dict | None:
     from sqlalchemy import select
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -208,7 +208,7 @@ async def _db_load_review(review_id: str) -> dict | None:
 async def _db_save_review(review: dict) -> None:
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     values = {
@@ -253,7 +253,7 @@ async def _db_save_review(review: dict) -> None:
 def _db_filters(pending_only: bool, category: str | None, task_id: str | None):
     from sqlalchemy import and_
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
 
     clauses = []
     if pending_only:
@@ -268,7 +268,7 @@ def _db_filters(pending_only: bool, category: str | None, task_id: str | None):
 async def _db_list_reviews(*, pending_only=True, category=None, task_id=None, limit=None, offset=0) -> list[dict]:
     from sqlalchemy import select
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -286,7 +286,7 @@ async def _db_list_reviews(*, pending_only=True, category=None, task_id=None, li
 async def _db_list_categories() -> list[str]:
     from sqlalchemy import distinct, select
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -297,7 +297,7 @@ async def _db_list_categories() -> list[str]:
 async def _db_has_active_review(task_id: str, subject_id: str) -> bool:
     from sqlalchemy import func, select
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -312,7 +312,7 @@ async def _db_has_active_review(task_id: str, subject_id: str) -> bool:
 async def _db_pending_feedback_reviews() -> list[dict]:
     from sqlalchemy import String, cast, or_, select
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -329,7 +329,7 @@ async def _db_pending_feedback_reviews() -> list[dict]:
 async def _db_list_reviews_payload(*, pending_only=True, category=None, limit=100, offset=0) -> dict:
     from sqlalchemy import distinct, func, select
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -363,7 +363,7 @@ def load_review(review_id):
 async def _db_load_reviews(review_ids: list[str]) -> dict[str, dict]:
     from sqlalchemy import select
 
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     if not review_ids:

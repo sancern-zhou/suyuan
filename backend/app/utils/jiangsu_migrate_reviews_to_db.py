@@ -1,7 +1,7 @@
 """One-shot migration: existing task-review JSON files into the database.
 
 Usage (from backend/):
-    python -m app.utils.migrate_reviews_to_db --env-file .env.jiangsu-ops
+    python -m app.utils.jiangsu_migrate_reviews_to_db --env-file .env.jiangsu-ops
 """
 from __future__ import annotations
 

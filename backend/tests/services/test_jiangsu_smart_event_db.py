@@ -13,9 +13,9 @@ def compile_jsonb_as_sqlite_json(type_, compiler, **kwargs):
 
 
 from app.db.database import Base
-from app.db.models.smart_event_db import SmartEventDB, SmartEventStateDB
-from app.db.models.task_review_db import TaskReviewDB
-from app.services import smart_event_db
+from app.db.models.jiangsu_smart_event_db import SmartEventDB, SmartEventStateDB
+from app.db.models.jiangsu_task_review_db import TaskReviewDB
+from app.services import jiangsu_smart_event_db
 
 
 @pytest.mark.asyncio

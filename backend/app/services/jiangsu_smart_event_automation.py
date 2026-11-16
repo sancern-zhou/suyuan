@@ -337,11 +337,11 @@ class JiangsuSmartEventAutomation:
     async def _human_card_refs(self):
         """返回 (待派发的人工增量卡引用, 执行中的 AI 卡数)，不加载事件正文。"""
         service = self.service
-        from app.services.smart_event_db import smart_event_db_enabled
+        from app.services.jiangsu_smart_event_db import smart_event_db_enabled
 
         if smart_event_db_enabled():
             from app.db.sync_bridge import run_db_async
-            from app.services.smart_event_db import list_ai_judgment_card_refs_async
+            from app.services.jiangsu_smart_event_db import list_ai_judgment_card_refs_async
 
             rows = await run_db_async(list_ai_judgment_card_refs_async())
         else:

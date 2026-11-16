@@ -94,7 +94,7 @@ def _task_row_values(task: dict) -> dict:
 
 
 async def load_store_async(event_ids=None) -> dict:
-    from app.db.models.smart_event_db import SmartEventDB, SmartEventStateDB, SmartEventTaskDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB, SmartEventStateDB, SmartEventTaskDB
     from app.db.sync_bridge import bridge_session
     from app.services.jiangsu_smart_event_store import SCHEMA, StoreSnapshot
 
@@ -118,7 +118,7 @@ async def load_store_async(event_ids=None) -> dict:
 
 
 async def save_store_async(store) -> dict:
-    from app.db.models.smart_event_db import SmartEventDB, SmartEventStateDB, SmartEventTaskDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB, SmartEventStateDB, SmartEventTaskDB
     from app.db.sync_bridge import bridge_session
     from app.services.jiangsu_smart_event_store import EventStoreConflict
 
@@ -206,8 +206,8 @@ async def query_events_overview_async(
 ) -> dict:
     from sqlalchemy import and_, case, distinct, or_
 
-    from app.db.models.smart_event_db import SmartEventDB, SmartEventStateDB
-    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB, SmartEventStateDB
+    from app.db.models.jiangsu_task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -304,7 +304,7 @@ async def query_events_overview_async(
 
 async def load_evidence_async(event_ids: list[str]) -> dict[str, dict]:
     """Fetch the heavy legacy evidence payloads for the given events."""
-    from app.db.models.smart_event_db import SmartEventDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB
     from app.db.sync_bridge import bridge_session
 
     if not event_ids:
@@ -318,7 +318,7 @@ async def load_evidence_async(event_ids: list[str]) -> dict[str, dict]:
 
 
 async def list_tasks_async(*, event_id=None, status=None, limit=100) -> list[dict]:
-    from app.db.models.smart_event_db import SmartEventTaskDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventTaskDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -335,7 +335,7 @@ async def list_ai_judgment_card_refs_async() -> list[dict]:
     """轻量列出 AI 研判卡（不加载事件正文），用于人工退回升量派发。"""
     from sqlalchemy import func, select
 
-    from app.db.models.smart_event_db import SmartEventTaskDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventTaskDB
     from app.db.sync_bridge import bridge_session
 
     feedback = func.jsonb_extract_path_text(SmartEventTaskDB.data, "continuity", "feedback")
@@ -352,7 +352,7 @@ async def list_ai_judgment_card_refs_async() -> list[dict]:
 
 
 async def get_task_by_id_async(task_id: str) -> dict | None:
-    from app.db.models.smart_event_db import SmartEventTaskDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventTaskDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
@@ -362,7 +362,7 @@ async def get_task_by_id_async(task_id: str) -> dict | None:
 
 
 async def get_evidence_path_async(event_id: str) -> str | None:
-    from app.db.models.smart_event_db import SmartEventDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB
     from app.db.sync_bridge import bridge_session
     from app.utils.path_config import resolve_agent_path
 
@@ -377,7 +377,7 @@ async def get_evidence_path_async(event_id: str) -> str | None:
 
 async def import_store_from_files_async() -> dict:
     """One-time import of the legacy manifest/packages store into the database."""
-    from app.db.models.smart_event_db import SmartEventDB, SmartEventStateDB, SmartEventTaskDB
+    from app.db.models.jiangsu_smart_event_db import SmartEventDB, SmartEventStateDB, SmartEventTaskDB
     from app.db.sync_bridge import bridge_session
     from app.services.jiangsu_smart_event_store import SCHEMA
 

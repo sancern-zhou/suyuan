@@ -6,7 +6,7 @@ switches all reads and writes to the database. Evidence package files stay
 on disk and are only referenced by path.
 
 Usage (from backend/):
-    python -m app.utils.migrate_smart_events_to_db --env-file .env.jiangsu-ops
+    python -m app.utils.jiangsu_migrate_smart_events_to_db --env-file .env.jiangsu-ops
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def main() -> int:
 
     from app.db.database import DATABASE_URL
     from app.db.sync_bridge import run_db
-    from app.services.smart_event_db import import_store_from_files_async
+    from app.services.jiangsu_smart_event_db import import_store_from_files_async
 
     if not DATABASE_URL:
         print("DATABASE_URL is not configured; nothing to migrate.")
