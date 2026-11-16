@@ -123,7 +123,12 @@ class Settings(BaseSettings):
         default="Src", description="站点小时抓取口径：Src=原始；App=审核后"
     )
     zhongda_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
-    zhongda_login_retries: int = Field(default=8, ge=1, le=30, description="验证码 OCR 重试次数")
+    zhongda_login_retries: int = Field(
+        default=3,
+        ge=1,
+        le=30,
+        description="单次登录尝试上限；平台连续失败3次即锁10分钟，重试过多会自我续锁",
+    )
 
     # 空气质量信息联网系统（旧云平台，许昌乡镇站 5 分钟/小时/日数据替代源）。
     # TownStationData 2026-10-21 起停更后启用；账号密码环境变量注入。
