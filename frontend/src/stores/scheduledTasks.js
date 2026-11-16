@@ -75,9 +75,11 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async fetchSocialUsers() {
-      const response = await authFetch('/api/social/users');
-      if (!response.ok) throw new Error('Failed to fetch social users');
-      this.socialUsers = await response.json();
+      // 对话社交渠道（个人微信/QQ）退役后，接收人只剩 App 账号。
+      const response = await authFetch(`${API_BASE}/recipients`);
+      if (!response.ok) throw new Error('Failed to fetch broadcast recipients');
+      const data = await response.json();
+      this.socialUsers = Array.isArray(data) ? data : [];
       return this.socialUsers;
     },
 

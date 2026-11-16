@@ -143,6 +143,53 @@ def test_list_event_types(monkeypatch):
     assert response.json()[0]["event_type"] == "xuchang.station_deviation.alert_created"
 
 
+def test_list_recipients_returns_active_app_accounts(monkeypatch):
+    from config.settings import settings as app_settings
+
+    client, _ = _client(monkeypatch)
+    monkeypatch.setattr(
+        app_settings,
+        "app_accounts_json",
+        '{"admin-1": {"secret": "s1", "name": "Admin One", "status": "active"}, '
+        '"admin-2": {"secret": "s2", "name": "Admin Two", "status": "disabled"}}',
+    )
+
+    response = client.get("/api/scheduled-tasks/recipients")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": "app-account-admin-1",
+            "name": "Admin One",
+            "status": "active",
+            "social_user_id": "app:android:admin-1",
+            "channel": "app",
+            "bot_account": "android",
+            "sender_id": "admin-1",
+        }
+    ]
+
+
+def test_recipient_ids_pass_event_task_validation(monkeypatch):
+    """The ids the recipient list hands the UI must survive save-time validation."""
+    from config.settings import settings as app_settings
+
+    client, _ = _client(monkeypatch)
+    monkeypatch.setattr(
+        app_settings,
+        "app_accounts_json",
+        '{"admin-1": {"secret": "s1", "name": "Admin One", "status": "active"}}',
+    )
+    (recipient,) = client.get("/api/scheduled-tasks/recipients").json()
+
+    for user_id in (recipient["id"], recipient["social_user_id"]):
+        payload = _event_payload()
+        payload["execution_mode"] = "office"
+        payload["target_user_ids"] = [user_id]
+        response = client.post("/api/scheduled-tasks", json=payload)
+        assert response.status_code == 200, response.text
+
+
 def test_super_admin_account_can_see_disabled_tasks(monkeypatch):
     client, service = _client(
         monkeypatch,
