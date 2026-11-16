@@ -26,7 +26,8 @@ test('default project enables core and legacy', () => {
     agentSceneOverrides: {},
     agentPlatformLayout: 'scenes',
     agentScenes: [],
-    sidebarAgentModes: ['query']
+    sidebarAgentModes: ['query'],
+    platformGuide: null
   })
 })
 
