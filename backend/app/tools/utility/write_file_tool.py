@@ -39,6 +39,7 @@ from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS, memory_capacity_
 from app.utils.path_config import (
     BACKEND_ROOT,
     TEMP_ROOT,
+    get_data_registry,
     is_agent_protected_write_path,
     is_path_within,
     resolve_agent_path,
@@ -323,7 +324,12 @@ format:
             if not resolved_path:
                 return {
                     "success": False,
-                    "error": f"文件路径无效或超出工作目录范围: {path}",
+                    "error": (
+                        f"文件路径无效或超出工作目录范围: {path}。"
+                        "相对路径以仓库根为基准解析，写入范围仅限 backend/ 与临时目录；"
+                        "需要发布到文件面板的产物请写进数据注册表目录 "
+                        f"{get_data_registry()}。"
+                    ),
                     "summary": f"写入失败：路径不合法",
                     "error_code": 1
                 }

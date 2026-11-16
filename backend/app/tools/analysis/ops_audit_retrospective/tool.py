@@ -179,12 +179,18 @@ class OpsAuditRetrospectiveStatsTool(LLMTool):
                             "type": "string",
                             "description": (
                                 "只统计该定时任务的反馈台账（如 gd_sup_station_work_order_audit）。"
-                                "台账由全部审核任务共用，分任务复盘必须传，否则会统计到其他任务。"
+                                "不传=全量复盘台账中全部审核任务的信号（常规站月度复盘用此口径）；"
+                                "仅单一任务口径的复盘才传。台账由全部审核任务共用，"
+                                "分任务复盘必须传，否则会混入其他任务信号。"
                             ),
                         },
                         "rule_prefix": {
                             "type": "string",
-                            "description": "只统计该前缀的规则（如 SUP_ 组分站规则）；可与 task_id 叠加。",
+                            "description": (
+                                "只统计该前缀的规则（如 SUP_ 组分站规则）；不传=不过滤规则前缀。"
+                                "注意：传前缀会过滤掉该任务命中的其他前缀规则"
+                                "（如组分站审核同样产出 RF_/FORM_ 通用规则命中）。"
+                            ),
                         },
                     },
                     "required": [],
