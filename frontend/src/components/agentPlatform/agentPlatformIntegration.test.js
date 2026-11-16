@@ -75,11 +75,16 @@ test('agent platform supports project-selected scene, environment grid and coord
 
 test('coordinator agent catalog is grouped by capability type', async () => {
   const source = await readSource('../coordinator/CoordinatorHome.vue')
+  const platform = await readSource('./AgentPlatform.vue')
 
   assert.match(source, /aria-label="智能体类型"/)
   assert.match(source, /props\.scenes/)
   assert.match(source, /agentGroups/)
   assert.match(source, /v-for="group in agentGroups"/)
+  // 江苏专属 coordinator 布局同样执行助手卡片过滤：苏环智管首页目录
+  // 只消费过滤后的 platformAgents，未过滤列表不得透传给 CoordinatorHome。
+  assert.match(platform, /<CoordinatorHome[\s\S]*?:agents="platformAgents"/)
+  assert.doesNotMatch(platform, /<CoordinatorHome[\s\S]*?:agents="agents"/)
 })
 
 test('agent platform hides the assistant card when the floating assistant is the unified entry', async () => {

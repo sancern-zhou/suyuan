@@ -2,7 +2,7 @@
   <CoordinatorHome
     v-if="isCoordinatorLayout && coordinatorView === 'home'"
     :coordinator="coordinator"
-    :agents="agents"
+    :agents="platformAgents"
     :scenes="scenes"
     :running-modes="runningModes"
     :selecting-mode="selectingMode"
