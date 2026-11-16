@@ -195,7 +195,7 @@ import { computed, onMounted, ref } from 'vue'
 import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 import CoordinatorHome from '@/components/coordinator/CoordinatorHome.vue'
-import CoordinatorCommandCenter from '@/components/coordinator/CoordinatorCommandCenter.vue'
+import CoordinatorCommandCenter from '@/components/coordinator/JiangsuCoordinatorCommandCenter.vue'
 import { filterPlatformAgentCards } from './platformCardPolicy.js'
 
 const props = defineProps({

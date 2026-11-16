@@ -120,7 +120,7 @@ test('review list keeps conversation entry, detail dialog and shared emits', asy
   assert.match(layout, /managementPanel === 'smart-events'/)
   assert.match(layout, /@close="\$emit\('close-smart-event-management-panel'\)"/)
   // 对话右侧 tab 仅展示当前工单分析，不提供刷新/返回列表（整页模式保持默认 true）。
-  const panel = await readFile(new URL('../management/WorkOrderReviewCenterPanel.vue', import.meta.url), 'utf8')
+  const panel = await readFile(new URL('../management/JiangsuWorkOrderReviewCenterPanel.vue', import.meta.url), 'utf8')
   assert.match(panel, /showListActions: \{ type: Boolean, default: true \}/)
   assert.match(panel, /listReturnCloses: \{ type: Boolean, default: false \}/)
   assert.match(panel, /if \(props\.listReturnCloses\) \{\s*\n\s*emit\('close'\)/)

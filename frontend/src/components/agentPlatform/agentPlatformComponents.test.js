@@ -26,7 +26,7 @@ test('coordinator layout delegates to the controlled coordinator home', async ()
 test('coordinator layout switches between the personal home and voice-driven command center', async () => {
   const platform = await readComponent('AgentPlatform.vue')
   const home = await readComponent('../coordinator/CoordinatorHome.vue')
-  const commandCenter = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const commandCenter = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
 
   assert.match(platform, /coordinatorView === 'home'/)
   assert.match(platform, /<CoordinatorCommandCenter/)
@@ -46,7 +46,7 @@ test('coordinator layout switches between the personal home and voice-driven com
 })
 
 test('command center is a viewport-filling, non-scrolling large-screen surface', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
 
   assert.match(source, /position: fixed/)
   assert.match(source, /width: 100vw/)
@@ -61,7 +61,7 @@ test('command center is a viewport-filling, non-scrolling large-screen surface',
 })
 
 test('command center uses an open workbench instead of a grid of dashboard cards', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
 
   assert.match(source, /class="workbench"/)
   assert.match(source, /class="goal-workspace"/)
@@ -72,7 +72,7 @@ test('command center uses an open workbench instead of a grid of dashboard cards
 })
 
 test('duty overview is map-first with three concise scenario summaries and the AI entry', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
 
   assert.match(source, /class="overview-map-stage"/)
   assert.match(source, /class="overview-events"/)
@@ -87,7 +87,7 @@ test('duty overview is map-first with three concise scenario summaries and the A
 })
 
 test('command center visible headings and units are consistently Chinese', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
   const retiredLabels = [
     'OPERATION SITUATION', 'PRIORITY', 'FIELD EVIDENCE', 'DATA &amp; DIAGNOSIS',
     'TASK DRAFT', 'PERSONNEL', 'PROGRESS', 'PROVINCE SITUATION',
@@ -101,7 +101,7 @@ test('command center visible headings and units are consistently Chinese', async
 })
 
 test('command center separates display-level insight from homepage business execution', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
 
   assert.match(source, /今日值守总览/)
   assert.match(source, /源创包装厂房站点异常连续调查工作区/)
@@ -114,7 +114,7 @@ test('command center separates display-level insight from homepage business exec
 })
 
 test('particulate interruption enlarges conversation and visual evidence without a duplicate event rail', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
   const visual = await readComponent('../coordinator/StationInterruptionEvidence.vue')
 
   assert.match(source, /class="conversation-evidence"/)
@@ -132,7 +132,7 @@ test('particulate interruption enlarges conversation and visual evidence without
 })
 
 test('smart dispatch uses map evidence and a continuous AI conversation instead of insight cards', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
 
   assert.match(source, /class="dispatch-evidence"/)
   assert.match(source, /class="conversation-evidence dispatch-conversation"/)
@@ -144,7 +144,7 @@ test('smart dispatch uses map evidence and a continuous AI conversation instead 
 })
 
 test('external interference grows video, correlation, impact and evidence-package turns in one AI workspace', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
   const evidence = await readComponent('../coordinator/ExternalInterferenceEvidence.vue')
 
   assert.match(source, /外部环境干扰识别连续分析工作区/)
@@ -190,7 +190,7 @@ test('command center map uses real Jiangsu boundaries and the original platform 
 })
 
 test('command center grows persistent workspaces while retaining presenter fallbacks', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const source = await readComponent('../coordinator/JiangsuCoordinatorCommandCenter.vue')
 
   assert.match(source, /getCommandCenterWorkspace/)
   assert.match(source, /getCommandCenterRevealLevel/)

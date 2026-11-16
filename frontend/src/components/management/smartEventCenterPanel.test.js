@@ -4,7 +4,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 const source = fs.readFileSync(
-  path.join(import.meta.dirname, 'SmartEventCenterPanel.vue'),
+  path.join(import.meta.dirname, 'JiangsuSmartEventCenterPanel.vue'),
   'utf8'
 )
 
