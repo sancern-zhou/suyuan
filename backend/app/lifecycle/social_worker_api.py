@@ -49,6 +49,8 @@ def create_social_worker_api_app(
                 {"detail": "Social worker token is not configured"},
                 status_code=503,
             )
+        if request.url.path == "/health":
+            return await call_next(request)
         if internal_token and request.headers.get("x-social-worker-token") != internal_token:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
         identity_path = (
