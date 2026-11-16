@@ -176,6 +176,11 @@ backend:
     - xuchang_cube_metrics
     - query_xuchang_traffic_status
     - execute_crawler_sql_query
+  # 共享 prompt builder 的项目补充口径片段（query_monitoring_* 报告 DAG 子模式）：
+  # 许昌中台路由与本市口径只在项目片段里维护，共享层保持中性。
+  prompt_fragment_files:
+    query_monitoring_station: projects/xuchang/prompts/fragments/query_monitoring_station.md
+    query_monitoring_city: projects/xuchang/prompts/fragments/query_monitoring_city.md
   agent_mode_tools:
     query:
       - run_agent_workflow
