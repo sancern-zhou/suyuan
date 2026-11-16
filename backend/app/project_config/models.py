@@ -135,6 +135,11 @@ class BackendManifest(StrictModel):
     # 项目受众契约文件（相对仓库根）：平台提示词的"用户面向与表达约定"段落
     # 按项目提供。未声明时使用共享中性默认——共享层不得写死任何项目地名。
     audience_contract_file: str | None = None
+    # 项目提示词片段文件（相对仓库根），key=共享 builder 的片段锚点 id（如
+    # query_monitoring_station/query_monitoring_city）：共享 prompt builder 在
+    # 固定锚点追加"项目补充口径"段落。未声明的锚点不追加——共享层不得写死
+    # 任何项目地名/中台视图。
+    prompt_fragment_files: dict[str, str] = Field(default_factory=dict)
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
     # Project-scoped tools appended to a shared mode whitelist.  Unlike
     # ``agent_mode_tools`` (full replacement), these are unioned on top of the
