@@ -716,6 +716,28 @@ backend:
       - jiangsu_fetch_attendance_records
       - jiangsu_fetch_station_data
       - execute_python
+  # deferred tools opt-in（共享层 eac48eb1 机制）：值 = 模式 always_on 工具（全 schema 常驻），
+  # 其余模式白名单工具以薄存根常驻（描述/路由在，参数契约经运行时注入的 tool_search
+  # 按需取回，调用即升级回全 schema；≤600 字符小工具自动豁免存根）。
+  # 选型依据 2026-11-16 生产调用审计（session_messages，53 会话/近 30 天 31 会话）与
+  # schema 体积量化：存根化 13 个零/低频且参数重的工具，净省常驻 schema 24%
+  # （50,478 → 38,362 字符，含 tool_search 自身 447 字符）。
+  agent_mode_deferred_tools:
+    jiangsu_query:
+      # 高频主力（近 30 天 ≥19/31 会话使用）：存根只省参数契约，反付每会话检索往返。
+      - execute_jiangsu_mart_sql
+      - execute_python
+      - execute_echarts_python
+      - read_file
+      # 提示词路由首选目标（口径唯一、优先），保持全 schema 免盲调。
+      - jiangsu_query_metrics
+      # 小工具：本就在 ≤600 豁免线内，显式列出防描述日后增长越过豁免线。
+      - jiangsu_fetch_station_directory
+      - jiangsu_resolve_geography
+      - read_session_resource
+      - write_file
+      - publish_session_file
+      - get_current_weather
   mode_prompt_files:
     jiangsu_ops_data_workorder: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_workorder.md
     jiangsu_ops_data_alarm: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_alarm.md
