@@ -1,3 +1,4 @@
+from app.services.ops_audit.final_issue_list import build_final_issue_list
 from app.services.ops_audit.rules import attachment_rules
 from app.services.ops_audit.semantic import reviewer
 
@@ -196,11 +197,22 @@ def test_station_maintenance_filename_batch_confirms_missing_photos(monkeypatch)
         },
     )
 
-    results = reviewer.build_semantic_review_results(_audit_with_attachment_candidate("WO-B"), {})
+    audit = _audit_with_attachment_candidate("WO-B")
+    results = reviewer.build_semantic_review_results(audit, {})
 
     assert results["results"][0]["judgment"] == "confirmed_issue"
     assert results["results"][0]["supported_rule_ids"] == ["ATTACHMENT_STATION_MAINTAIN_PHOTO_SEMANTIC_MISSING"]
     assert "particle_clock_photo" in results["results"][0]["conclusion"]
+
+    final_list = build_final_issue_list(audit, results)
+    promoted = [
+        item
+        for item in final_list["items"]
+        if item["rule_id"] == "ATTACHMENT_STATION_MAINTAIN_PHOTO_SEMANTIC_MISSING"
+    ]
+    assert len(promoted) == 1
+    assert promoted[0]["source"] == "semantic_review"
+    assert "data_logger_clock_photo" in (promoted[0].get("semantic_conclusion") or "")
 
 
 def _audit_with_attachment_candidate(code: str) -> dict:

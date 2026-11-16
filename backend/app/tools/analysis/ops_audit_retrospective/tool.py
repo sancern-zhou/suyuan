@@ -175,6 +175,23 @@ class OpsAuditRetrospectiveStatsTool(LLMTool):
                             "type": "boolean",
                             "description": "是否执行通道3 回库分诊（重取源库+复跑规则，默认 false 控 DB 负载）。",
                         },
+                        "task_id": {
+                            "type": "string",
+                            "description": (
+                                "只统计该定时任务的反馈台账（如 gd_sup_station_work_order_audit）。"
+                                "不传=全量复盘台账中全部审核任务的信号（常规站月度复盘用此口径）；"
+                                "仅单一任务口径的复盘才传。台账由全部审核任务共用，"
+                                "分任务复盘必须传，否则会混入其他任务信号。"
+                            ),
+                        },
+                        "rule_prefix": {
+                            "type": "string",
+                            "description": (
+                                "只统计该前缀的规则（如 SUP_ 组分站规则）；不传=不过滤规则前缀。"
+                                "注意：传前缀会过滤掉该任务命中的其他前缀规则"
+                                "（如组分站审核同样产出 RF_/FORM_ 通用规则命中）。"
+                            ),
+                        },
                     },
                     "required": [],
                 },
@@ -187,10 +204,14 @@ class OpsAuditRetrospectiveStatsTool(LLMTool):
         context=None,
         month: Optional[str] = None,
         enable_db_recheck: bool = False,
+        task_id: Optional[str] = None,
+        rule_prefix: Optional[str] = None,
         **_: Any,
     ) -> Dict[str, Any]:
         try:
-            result = await asyncio.to_thread(_stats_sync, month, bool(enable_db_recheck))
+            result = await asyncio.to_thread(
+                _stats_sync, month, bool(enable_db_recheck), task_id or None, rule_prefix or None
+            )
             return _success(self.name, _stats_summary(result), result)
         except ValueError as exc:
             return _failure(self.name, f"复盘统计失败: {exc}", str(exc))
@@ -250,6 +271,7 @@ def _reconcile_sync(
             {
                 "kind": "checklist_reconciliation",
                 "reconciliation_id": reconciliation["reconciliation_id"],
+                "task_id": _task_id_from_path(issue_path),
                 "full_review_declared": full_review_declared,
                 "source_sha256": reconciliation["source_sha256"],
                 "metrics": reconciliation["metrics"],
@@ -306,18 +328,48 @@ def _reconcile_summary(result: Dict[str, Any]) -> str:
     )
 
 
-def _stats_sync(month: Optional[str], enable_db_recheck: bool) -> Dict[str, Any]:
+def _scoped_records(
+    task_id: Optional[str], rule_prefix: Optional[str]
+) -> List[Dict[str, Any]]:
+    """Read the ledger narrowed to one audit stream (same predicate as stats)."""
+
+    from app.services.ops_audit import feedback_ledger
+    from app.services.ops_audit.retrospective_stats import _record_in_scope
+
+    records = feedback_ledger.read_records()
+    if not task_id and not rule_prefix:
+        return records
+    return [r for r in records if _record_in_scope(r, task_id, rule_prefix)]
+
+
+def _task_id_from_path(path: str | Path) -> Optional[str]:
+    """Scheduled artifact path -> owning task id (``<task_id>/<execution_id>``)."""
+
+    from app.services.ops_audit import feedback_ledger
+
+    ref = feedback_ledger.derive_execution_ref(path)
+    if not ref:
+        return None
+    return ref.split("/", 1)[0] or None
+
+
+def _stats_sync(
+    month: Optional[str],
+    enable_db_recheck: bool,
+    task_id: Optional[str] = None,
+    rule_prefix: Optional[str] = None,
+) -> Dict[str, Any]:
     from app.services.ops_audit import feedback_ledger
     from app.services.ops_audit.retrospective_stats import (
         build_retrospective_stats,
         run_db_recheck,
     )
 
-    stats = build_retrospective_stats(month=month)
+    stats = build_retrospective_stats(month=month, task_id=task_id, rule_prefix=rule_prefix)
     month_key = stats["month"]
     recheck: Dict[str, Any] | None = None
     if enable_db_recheck:
-        records = feedback_ledger.read_records()
+        records = _scoped_records(task_id, rule_prefix)
         recheck = run_db_recheck(
             records,
             month=month_key,
@@ -333,12 +385,15 @@ def _stats_sync(month: Optional[str], enable_db_recheck: bool) -> Dict[str, Any]
             for key in ("month", "eligible_count", "counts", "archive_path")
             if key in recheck
         }
-    archive_path = archive_dir / f"stats_{month_key}.json"
+    suffix = f"_{task_id}" if task_id else ""
+    archive_path = archive_dir / f"stats_{month_key}{suffix}.json"
     archive_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     feedback_ledger.append_metrics_history(
         {
             "kind": "monthly_retrospective",
             "month": month_key,
+            "task_id": task_id,
+            "rule_prefix": rule_prefix,
             "checklist_metrics": stats["checklist_metrics"],
             "panel_metrics": stats["panel_metrics"],
         }
@@ -385,8 +440,13 @@ def _stats_summary(result: Dict[str, Any]) -> str:
         if top_rules
         else "本月无按规则的显式判定记录。"
     )
+    scope = result.get("scope") or {}
+    scope_text = ""
+    if scope.get("task_id") or scope.get("rule_prefix"):
+        parts = [str(value) for value in (scope.get("task_id"), scope.get("rule_prefix")) if value]
+        scope_text = f"（口径：{' / '.join(parts)}）"
     return (
-        f"{result['month']} 复盘统计：台账 {result['record_count']} 条。"
+        f"{result['month']} 复盘统计{scope_text}：台账 {result['record_count']} 条。"
         f"{checklist['identification_rate']['text']}；{checklist['error_rate']['text']}；"
         f"{panel['panel_confirm_rate']['text']}；{panel['panel_exclude_rate']['text']}。"
         f"候选新规则信号 {result['candidate_new_rules']['missed_without_rule_count']} 条。"
