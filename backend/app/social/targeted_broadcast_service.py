@@ -13,16 +13,30 @@ from app.social.broadcast_service import SocialBroadcastService
 from app.utils.path_config import (
     resolve_agent_path, get_data_registry, agent_content_read_roots, is_path_within,
 )
-from app.social.user_registry import get_social_user_registry
-from app.social.user_registry import SocialUserRecord
+from dataclasses import dataclass
+
 from app.social.app_identity import _accounts
+
+
+@dataclass
+class _AppUserRecord:
+    """Minimal recipient record; chat channels are retired, App accounts only."""
+
+    id: str
+    name: str
+    status: str
+    social_user_id: str
+    channel: str
+    bot_account: str
+    sender_id: str
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class TargetedSocialBroadcastService:
     """Resolve exact user names and fan out through the live social broadcaster."""
 
-    def __init__(self, user_registry=None, broadcast_service=None):
-        self.user_registry = user_registry or get_social_user_registry()
+    def __init__(self, broadcast_service=None):
         self.broadcast_service = broadcast_service or SocialBroadcastService()
 
     async def broadcast(
@@ -42,7 +56,8 @@ class TargetedSocialBroadcastService:
             return self._result([], names, "缺少广播内容")
 
         users_by_name: dict[str, list[Any]] = defaultdict(list)
-        users = await self.user_registry.list_users()
+        # 对话社交渠道（个人微信/QQ）已退役：目标用户只来自 APP 账号。
+        users: list[Any] = []
         existing_social_ids = {user.social_user_id for user in users}
         now = datetime.now().isoformat()
         app_aliases: dict[str, str] = {}
@@ -52,7 +67,7 @@ class TargetedSocialBroadcastService:
                 continue
             if str(account.get("status", "active")).lower() != "active":
                 continue
-            users.append(SocialUserRecord(
+            users.append(_AppUserRecord(
                 id=social_user_id,
                 name=str(account.get("name") or account_id),
                 status="active",

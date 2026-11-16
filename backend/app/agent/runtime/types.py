@@ -80,6 +80,11 @@ class RunState:
     board_quality_repair_count: int = 0
     suppress_tool_names_next_turn: set[str] = field(default_factory=set)
     suppress_tool_names_current_turn: set[str] = field(default_factory=set)
+    # deferred tools（tool_search 按需注入 schema）：本模式的存根化候选集
+    # （空集=模式未 opt-in，机制完全不介入）与已升级工具集（模型已调用，
+    # 下一轮换回全 schema 常驻）。
+    deferred_tool_names: frozenset = field(default_factory=frozenset)
+    discovered_tools: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
     last_loop_block_signature: Optional[str] = None
     last_missing_tool_signature: Optional[str] = None

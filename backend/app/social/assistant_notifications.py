@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import structlog
 from sqlalchemy import func, select, update
@@ -136,6 +137,65 @@ class AssistantNotificationService:
         await self._update_matter(task, message_id, successful)
         return message_id
 
+    async def enqueue_monitor_report(self, *, project, content, title=None, report_key=None):
+        """Route a watchdog report into the owner's assistant inbox.
+
+        监控通报是系统侧成稿：落进 settings.monitor_report_owner 名下一个
+        确定性的 WEB 助手会话（目录与 sessions 表双注册，幂等），不跑合成
+        轮；入队后由回复时钟（start_result_replies，10s 周期）投递。未配置
+        接收人时返回 None，调用方如实反馈而非静默丢弃。
+        """
+        from hashlib import sha256
+
+        from config.settings import settings
+
+        owner = (settings.monitor_report_owner or "").strip()
+        if not owner or owner == "system":
+            return None
+        from app.conversations import ConversationSource
+        from app.social.web_assistant import web_assistant_recipient
+
+        session_id = f"monitor-report-{project}-{sha256(owner.encode()).hexdigest()[:16]}"
+        await self.catalog.register_identity(
+            session_id=session_id,
+            owner_user_id=owner,
+            owner_username=owner,
+            owner_display_name=owner,
+            source=ConversationSource.WEB,
+            mode="assistant",
+            title=settings.monitor_report_session_title,
+        )
+        from app.db.models_session import SessionDB
+
+        async with self.transcript_factory() as db:
+            row = (
+                await db.execute(select(SessionDB).where(SessionDB.session_id == session_id))
+            ).scalar_one_or_none()
+            if row is None:
+                db.add(
+                    SessionDB(
+                        session_id=session_id,
+                        query="后台运行监控通报（Watchdog 自动写入）",
+                        mode="assistant",
+                    )
+                )
+                await db.commit()
+        message_id = f"monitor:{report_key}" if report_key else f"monitor:{uuid4().hex}"
+        await self.enqueue(
+            message_id=message_id,
+            project=project,
+            owner=owner,
+            source_session_id=session_id,
+            recipient=web_assistant_recipient(owner),
+            content=content,
+            data={
+                "kind": "monitor_report",
+                "title": title or settings.monitor_report_session_title,
+                "media": [],
+            },
+        )
+        return message_id
+
     async def publish_web(
         self, session, *, message_id, project, owner, source_session_id, recipient, content, data
     ):
@@ -181,8 +241,8 @@ class AssistantNotificationService:
         ):
             raise PermissionError("通知归属不匹配")
         if row.state == "pending":
-            await self._append_web_reply(session, row)
-            row.state = "inbox_saved"
+            notified = await self._append_web_reply(session, row)
+            row.state = "inbox_saved" if notified else "silent"
             await session.flush()
         return row.state
 
@@ -336,8 +396,8 @@ class AssistantNotificationService:
                 ):
                     row.state = "rejected"
                 else:
-                    await self._append_web_reply(session, row)
-                    row.state = "inbox_saved"
+                    notified = await self._append_web_reply(session, row)
+                    row.state = "inbox_saved" if notified else "silent"
                 await session.commit()
                 return row.state
             content, recipient, owner, source_id = (
@@ -381,12 +441,24 @@ class AssistantNotificationService:
             await session.commit()
         return state
 
-    async def _append_web_reply(self, session, row):
+    async def _append_web_reply(self, session, row) -> bool:
+        """Write the reply into the web conversation; False = 助手选择静默。
+
+        静默不是丢弃：通知行保留原文与状态（silent），仅不落会话消息、
+        不计未读；事项状态更新（_update_matter）不受影响。
+        """
         from config.settings import settings
 
-        if settings.assistant_schedule_reply_synthesis:
+        # monitor_report 的正文已是面向用户的成稿（watchdog 按通报格式
+        # 写出），跳过合成轮直写会话；事件驱动路径不唤醒模型。
+        kind = (row.data or {}).get("kind") if isinstance(row.data, dict) else None
+        if settings.assistant_schedule_reply_synthesis and kind != "monitor_report":
             try:
                 synthesized = await self._synthesize_reply(row)
+                if synthesized is None:
+                    # 助手核对后认为无需打扰用户：不写会话，标记已读。
+                    row.read_at = row.read_at or datetime.utcnow()
+                    return False
                 if synthesized:
                     row.content = synthesized
             except Exception as exc:
@@ -397,27 +469,27 @@ class AssistantNotificationService:
                 )
         async with self.transcript_factory() as transcript:
             if transcript.get_bind().url == session.get_bind().url:
-                return await self._append_transcript(session, row)
+                await self._append_transcript(session, row)
+                return True
             # A crash after transcript commit can replay the outbox. The parent
             # lock and notification identity below make that replay idempotent.
             await self._append_transcript(transcript, row)
             await transcript.commit()
+            return True
 
-    async def _synthesize_reply(self, row) -> str:
+    async def _synthesize_reply(self, row) -> str | None:
         """以助手身份对定时结果做一轮跟进整理，返回面向用户的最终文本。
 
         通知结果不再直写对话：先进入助手上下文（含绑定事项的目标与完成
         标准），由助手核对、筛选、更新事项并组织汇报；失败时调用方回退
-        为原始内容直写。
+        为原始内容直写。助手核对后认为无需打扰用户时可选择静默（返回
+        None）：不写会话，但通知行与事项状态更新保留，静默可审计。
         """
         from app.agent.react_agent import create_react_agent
         from app.auth.models import CurrentUser
-        from app.social.web_assistant import (
-            assistant_account_context,
-            web_assistant_context,
-        )
+        from app.social.web_assistant import web_assistant_context
 
-        user = CurrentUser(id=row.owner_user_id, username=None, display_name=None)
+        user = CurrentUser(id=row.owner_user_id, username="", display_name="")
         data = row.data if isinstance(row.data, dict) else {}
         parts = ["后台定时任务已执行完成，请以助手身份向用户汇报。"]
         title = data.get("task_name") or ""
@@ -440,14 +512,20 @@ class AssistantNotificationService:
         parts.append(
             "要求：核对结果是否满足完成标准；向用户输出整理后的汇报（关键结论、口径、产物引用、异常与建议）；"
             "不要复述本提示；如事项状态需要更新，调用 manage_assistant_tasks 更新状态与下一步；"
-            "最终回复直接面向用户。"
+            "最终回复直接面向用户。\n"
+            "静默规则：仅当本次结果对用户无新信息且无行动价值（例行成功、与上次一致、无异常）时，"
+            "最终回复仅输出一行 NO_NOTIFY，不写其他任何内容；"
+            "执行失败或超时的结果原则上不静默，除非你确认用户已通过其他途径知晓。"
         )
-        agent = create_react_agent()
+        # 跟进整理是单轮有界合成，不是开放执行：迭代上界收紧，防止
+        # 合成轮复刻实时诊断的无界搜索问题（P1 教训）。
+        agent = create_react_agent(max_iterations=6)
         final_answer = ""
         async for event in agent.analyze(
             "\n".join(parts),
             session_id=row.source_session_id,
             manual_mode="assistant",
+            max_iterations=6,
             **web_assistant_context(user),
         ):
             if event.get("type") != "agent_finish":
@@ -456,13 +534,21 @@ class AssistantNotificationService:
             candidate = payload.get("answer") or payload.get("final_message") or ""
             if candidate:
                 final_answer = str(candidate)
-        if not final_answer.strip():
+        answer = final_answer.strip()
+        if answer and next((line.strip() for line in answer.splitlines() if line.strip()), "") == "NO_NOTIFY":
+            logger.info(
+                "assistant_reply_synthesis_silent",
+                message_id=row.message_id,
+                session_id=row.source_session_id,
+            )
+            return None
+        if not answer:
             logger.warning(
                 "assistant_reply_synthesis_empty",
                 message_id=row.message_id,
                 session_id=row.source_session_id,
             )
-        return final_answer.strip()
+        return answer
 
     @staticmethod
     async def _append_transcript(session, row):

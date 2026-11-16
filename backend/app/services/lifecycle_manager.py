@@ -58,14 +58,18 @@ from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDai
 from app.fetchers.xuchang_weather_situation import (
     XuchangAirQualityForecastFetcher, XuchangWeatherSituationEvidenceFetcher,
 )
-from app.fetchers.xuchang_pollution_cause_trigger import XuchangPollutionCauseTriggerFetcher
-from app.fetchers.xuchang_monthly_review_evidence import XuchangMonthlyReviewEvidenceFetcher
-from app.fetchers.xuchang_enterprise_clue_weekly import XuchangEnterpriseClueWeeklyFetcher
 try:
+    from app.fetchers.xuchang_pollution_cause_trigger import XuchangPollutionCauseTriggerFetcher
+    from app.fetchers.xuchang_monthly_review_evidence import XuchangMonthlyReviewEvidenceFetcher
+    from app.fetchers.xuchang_enterprise_clue_weekly import XuchangEnterpriseClueWeeklyFetcher
     from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+    from app.fetchers.xuchang_town_hour_day import XuchangTownAirDataFetcher
 except ImportError:  # xuchang 分支专属模块，main 工作树上不存在（可选导入）
+    XuchangPollutionCauseTriggerFetcher = None
+    XuchangMonthlyReviewEvidenceFetcher = None
+    XuchangEnterpriseClueWeeklyFetcher = None
     XuchangTownFiveMinuteFetcher = None
-from app.fetchers.xuchang_town_hour_day import XuchangTownAirDataFetcher
+    XuchangTownAirDataFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -170,17 +174,20 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
-        "xuchang_town_five_minute_fetcher": XuchangTownFiveMinuteFetcher,
-        "xuchang_town_hour_fetcher": lambda: XuchangTownAirDataFetcher(data_kind="hour"),
-        "xuchang_town_day_fetcher": lambda: XuchangTownAirDataFetcher(data_kind="day"),
-        "xuchang_pollution_cause_trigger_fetcher": XuchangPollutionCauseTriggerFetcher,
-        "xuchang_monthly_review_evidence_fetcher": XuchangMonthlyReviewEvidenceFetcher,
-        "xuchang_enterprise_clue_weekly_fetcher": XuchangEnterpriseClueWeeklyFetcher,
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
+    # xuchang 分支专属 fetcher：仅 xuchang 工作树提供模块；main 工作树跳过注册。
     if XuchangTownFiveMinuteFetcher is not None:
-        # 仅 xuchang 分支工作树提供该模块；main 工作树跳过注册。
         factories["xuchang_town_five_minute_fetcher"] = XuchangTownFiveMinuteFetcher
+    if XuchangTownAirDataFetcher is not None:
+        factories["xuchang_town_hour_fetcher"] = lambda: XuchangTownAirDataFetcher(data_kind="hour")
+        factories["xuchang_town_day_fetcher"] = lambda: XuchangTownAirDataFetcher(data_kind="day")
+    if XuchangPollutionCauseTriggerFetcher is not None:
+        factories["xuchang_pollution_cause_trigger_fetcher"] = XuchangPollutionCauseTriggerFetcher
+    if XuchangMonthlyReviewEvidenceFetcher is not None:
+        factories["xuchang_monthly_review_evidence_fetcher"] = XuchangMonthlyReviewEvidenceFetcher
+    if XuchangEnterpriseClueWeeklyFetcher is not None:
+        factories["xuchang_enterprise_clue_weekly_fetcher"] = XuchangEnterpriseClueWeeklyFetcher
     from app.services.station_operation_monitor.runtime import config_path
     if config_path().is_file():
         from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher

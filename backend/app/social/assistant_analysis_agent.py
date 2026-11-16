@@ -70,18 +70,8 @@ async def verify_analysis_owner(claim):
         return
     if recipient.startswith("app:") and recipient == task["owner_user_id"]:
         return
-    from app.social.binding_service import get_social_binding_service
-
-    parts = recipient.rsplit(":", 2)
-    binding = await get_social_binding_service().active_for_platform_user(task["owner_user_id"])
-    if (
-        len(parts) != 3
-        or not parts[0].startswith("weixin")
-        or not binding
-        or binding.bot_account != parts[1]
-        or binding.ilink_user_id != parts[2]
-    ):
-        raise PermissionError("后台分析账号绑定已失效")
+    # 对话社交渠道已退役：仅允许 Web / App 归属。
+    raise PermissionError("unsupported recipient channel")
 
 
 def validate_output(payload, evidence_ids):

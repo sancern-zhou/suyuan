@@ -150,7 +150,7 @@ async def test_social_mode_does_not_override_llm_provider_or_model(monkeypatch):
             user_query="hello",
             session_id="social_no_model_override",
             manual_mode="social",
-            user_identifier="weixin:bot:user",
+            user_identifier="app:android:user",
         )
     ]
 

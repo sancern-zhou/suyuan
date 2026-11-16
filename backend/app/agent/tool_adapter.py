@@ -12,9 +12,10 @@ Tool Adapter for ReAct Agent - 单一注册源适配器
 注意：现在是完全单一注册源，不允许独立注册工具。
 """
 
-from typing import Dict, Any, List, Mapping, Optional, Callable, Tuple
+from typing import AbstractSet, Dict, Any, List, Mapping, Optional, Callable, Tuple
 from datetime import datetime
 import copy
+import json
 import re
 import structlog
 from app.agent.context.data_result_policy import (
@@ -798,6 +799,74 @@ def get_detailed_schemas_for_tools(
                 found=len(detailed_schemas))
 
     return detailed_schemas
+
+
+# ========================================
+# Deferred Tools 存根化（tool_search 按需注入 schema）
+# ========================================
+
+# 全 schema 不超过该字符数的工具不值得存根化：省不了多少上下文，
+# 反而让模型多付一轮 tool_search 往返。
+DEFERRED_STUB_SCHEMA_CHAR_FLOOR = 600
+
+_DEFERRED_STUB_HINT = (
+    "［参数契约未常驻］本工具的参数结构未注入本次请求："
+    "先调用 tool_search 查询本工具名获取完整参数契约，再按契约调用。"
+)
+
+
+def make_stub_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """把完整 schema 降为薄存根：保留 name 与路由描述，参数契约替换为宽松对象。
+
+    与「工具描述只放路由」的既有策略一致——描述（路由知识）常驻，
+    parameters（契约主体，瘦身运动后的上下文大头）按需。
+    """
+    description = schema.get("description") or ""
+    return {
+        "name": schema.get("name"),
+        "description": f"{description}\n{_DEFERRED_STUB_HINT}".strip(),
+        # 宽松参数对象：模型盲调不被 schema 拦截（executor 按名分发，
+        # 工具自行校验），失败时兜底注入完整 schema（错误信息即召回钩子）。
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+    }
+
+
+def apply_deferred_tool_stubs(
+    tool_schemas: List[Dict[str, Any]],
+    *,
+    deferred_names: AbstractSet[str],
+    discovered_names: AbstractSet[str] = frozenset(),
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """对未发现的 deferred 工具套用存根。
+
+    Args:
+        tool_schemas: _run_planner_stream 组装完成的 OpenAI 风格 schema 列表
+        deferred_names: 本模式存根化候选集（tool_registry.compute_deferred_tool_names）
+        discovered_names: 已升级工具（模型已调用过，本轮换回全 schema）
+
+    Returns:
+        (新列表, 存根化数量, 估算节省字符数)。小工具（全 schema ≤
+        DEFERRED_STUB_SCHEMA_CHAR_FLOOR）豁免存根化。
+    """
+    if not deferred_names:
+        return list(tool_schemas), 0, 0
+    discovered = set(discovered_names or ())
+    stubbed = 0
+    saved_chars = 0
+    result: List[Dict[str, Any]] = []
+    for schema in tool_schemas:
+        name = schema.get("name") or schema.get("function", {}).get("name")
+        if name in deferred_names and name not in discovered:
+            original_chars = len(json.dumps(schema, ensure_ascii=False, default=str))
+            if original_chars > DEFERRED_STUB_SCHEMA_CHAR_FLOOR:
+                stub = make_stub_schema(schema)
+                stub_chars = len(json.dumps(stub, ensure_ascii=False, default=str))
+                saved_chars += original_chars - stub_chars
+                stubbed += 1
+                result.append(stub)
+                continue
+        result.append(schema)
+    return result, stubbed, saved_chars
 
 
 def get_tool_metadata() -> Dict[str, Any]:

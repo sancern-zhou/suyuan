@@ -203,6 +203,9 @@ backend/app/agent/executors/quick_trace_executor.py
 # Temporary analysis files
 *_analysis.md
 !projects/jiangsu-ops/prompts/operations_analysis.md
+!projects/guangdong/prompts/operations_analysis.md
+!projects/guangdong/prompts/internal/gd_ops_regular_analysis.md
+!projects/guangdong/prompts/internal/gd_ops_risk_analysis.md
 *_summary.md
 *_report.md
 *_solution.md
@@ -320,6 +323,9 @@ frontend/dist-*/
 backend/backend_data_registry*/
 deploy/postgres/backups/
 deploy/postgres/.env
+# nginx -p 前缀目录下的运行时临时目录（client_body/proxy 缓冲），删掉会让代理请求报错
+deploy-local/nginx-8092/temp/
+deploy-local/nginx-*/logs/
 
 # Vendor SDK clones
 suncere*/
@@ -344,6 +350,12 @@ id_ed25519*
 # 本机部署专属（不入 git）
 迁移包/
 deploy/nginx/templates-local/
+
+# 广东运维工单语义契约与项目文档不受全局忽略规则约束
+!backend/app/tools/query/guangdong_ops_sql_query/contract.txt
+!backend/app/tools/query/guangdong_ops_sql_query/ods_contract.txt
+!projects/guangdong/docs/
+
 # ZCode 会话产物（计划存档等本地文件）
 .zcode/
 

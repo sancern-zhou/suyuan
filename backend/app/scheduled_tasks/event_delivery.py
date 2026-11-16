@@ -4,17 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.social.broadcast_service import SocialBroadcastService
-from app.social.user_registry import get_social_user_registry
 from app.social.app_identity import _accounts
+from app.social.broadcast_service import SocialBroadcastService
 
 from .event_output import EventTaskOutput
 from .models import ScheduledTask, TaskEvent, TaskExecution
 
 
 class EventTaskDelivery:
-    def __init__(self, user_registry=None, broadcast_service=None):
-        self.user_registry = user_registry or get_social_user_registry()
+    """Event task broadcast delivery.  Chat channels (personal WeChat / QQ)
+    are retired; App identities are the only supported recipients."""
+
+    def __init__(self, broadcast_service=None):
         self.broadcast_service = broadcast_service or SocialBroadcastService()
 
     async def resolve_recipients(
@@ -36,18 +37,6 @@ class EventTaskDelivery:
                     "social_user_id": user_id,
                     "name": user_id.rsplit(":", 1)[-1],
                 })
-                continue
-            record = await self.user_registry.get_user(user_id)
-            if not record or record.status != "active" or not record.social_user_id:
-                continue
-            channel = str(record.channel or "")
-            if not channel.startswith(("weixin", "app")):
-                continue
-            recipients.append({
-                "user_id": user_id,
-                "social_user_id": record.social_user_id,
-                "name": record.name,
-            })
         return recipients
 
     async def deliver(
@@ -66,14 +55,10 @@ class EventTaskDelivery:
             recipient["social_user_id"]: recipient["user_id"]
             for recipient in recipients
         }
-        channels = sorted({
-            "app" if str(recipient.get("social_user_id", "")).startswith("app:") else "weixin"
-            for recipient in recipients
-        })
         result = await self.broadcast_service.broadcast(
             message=output.broadcast.message,
             media=output.broadcast.media,
-            channels=channels,
+            channels=["app"],
             target_user_ids=list(social_to_user),
             persist_context=True,
             context_metadata={

@@ -36,12 +36,9 @@ def validate_reminder_recipient(request, owner):
     from app.social.web_assistant import web_assistant_recipient
 
     web_recipient = request.delivery_user_id == web_assistant_recipient(owner)
-    if (
-        len(route) != 3
-        or route[0] not in {"app", "weixin"} and not web_recipient
-        and not route[0].startswith("weixin:")
-    ):
-        raise PermissionError("当前仅支持 Web、App 和已绑定微信的个人提醒")
+    # 对话社交渠道（个人微信/QQ）已退役：仅支持 Web / App 提醒。
+    if len(route) != 3 or (route[0] != "app" and not web_recipient):
+        raise PermissionError("当前仅支持 Web 和 App 的个人提醒")
     if route[0] == "app" and request.delivery_user_id != owner:
         raise PermissionError("不能替其他 App 用户设置提醒")
 
