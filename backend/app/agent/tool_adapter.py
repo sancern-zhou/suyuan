@@ -831,6 +831,36 @@ def make_stub_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def collect_called_deferred_tools(
+    conversation_history: List[Dict[str, Any]],
+    deferred_names: AbstractSet[str],
+) -> set:
+    """从会话历史派生已实际调用过的 deferred 工具（调用即升级，跨轮次持久）。
+
+    ZCode collectToolSearchHistory 的派生思想：历史是发现状态的唯一来源，
+    不维护独立可变状态（与历史失步即 bug 源）。本仓库语义下只派生
+    assistant 消息里的 tool_use（模型调用过 = 下一轮起换回全 schema）；
+    检索命中不升级——tool_search 结果本身已在历史里，升级会造成契约双份
+    占上下文。历史 append-only（KV-cache 友好），tool_use 块不会被结果
+    投影/降采样裁掉，派生稳定。
+    """
+    if not deferred_names:
+        return set()
+    discovered = set()
+    for message in conversation_history or []:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                name = block.get("name")
+                if name in deferred_names:
+                    discovered.add(name)
+    return discovered
+
+
 def apply_deferred_tool_stubs(
     tool_schemas: List[Dict[str, Any]],
     *,

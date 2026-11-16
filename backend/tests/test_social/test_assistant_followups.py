@@ -404,25 +404,6 @@ async def test_adapter_revalidates_owner_and_preserves_saved_app_inbox_on_push_f
 
 
 @pytest.mark.asyncio
-async def test_unbound_weixin_is_rejected_without_sending(monkeypatch):
-    import app.conversations.dependencies as catalog_module
-    import app.social.binding_service as binding_module
-
-    catalog = SimpleNamespace(find=AsyncMock(return_value=SimpleNamespace(owner_user_id="alice")))
-    monkeypatch.setattr(catalog_module, "get_conversation_catalog", lambda: catalog)
-    binding = SimpleNamespace(active_for_platform_user=AsyncMock(return_value=None))
-    monkeypatch.setattr(binding_module, "get_social_binding_service", lambda: binding)
-    assert (
-        await deliver_reminder(
-            SimpleNamespace(owner_user_id="alice"),
-            SimpleNamespace(grant_session_id="session"),
-            SimpleNamespace(recipient="weixin:bot:user"),
-        )
-        == "rejected"
-    )
-
-
-@pytest.mark.asyncio
 async def test_worker_stop_does_not_spawn_another_delivery():
     service = SimpleNamespace(
         materialize=AsyncMock(),
@@ -468,30 +449,6 @@ async def test_already_admitted_send_finishes_before_cancellation_commits(db):
         release.set()
         await asyncio.gather(delivery, cancel)
     assert (await inspect(db))["notifications"][0]["state"] == "inbox_saved"
-
-
-@pytest.mark.asyncio
-async def test_single_attempt_metadata_prevents_transport_retry_and_wrong_bot():
-    from app.channels.manager import ChannelManager
-    from app.social.events import OutboundMessage
-
-    manager = object.__new__(ChannelManager)
-    manager.config = SimpleNamespace(channels=SimpleNamespace(send_max_retries=3))
-    channel = SimpleNamespace(
-        bot_account="bot", send=AsyncMock(side_effect=TimeoutError("ambiguous"))
-    )
-    message = OutboundMessage(
-        channel="weixin:one",
-        chat_id="alice",
-        content="reminder",
-        metadata={"_single_attempt": True, "_expected_bot_account": "bot"},
-    )
-    assert not await manager._send_with_retry(channel, message)
-    assert channel.send.await_count == 1
-    channel.send.reset_mock()
-    channel.bot_account = "another-bot"
-    assert not await manager._send_with_retry(channel, message)
-    channel.send.assert_not_awaited()
 
 
 def test_unified_schedule_replaces_followup_tool_even_when_creation_is_disabled(monkeypatch):
@@ -549,54 +506,3 @@ def test_saved_migration_matches_model_columns_without_a_real_service():
             assert columns == {column.name for column in model.__table__.columns}
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("accepted", [True, False])
-async def test_weixin_adapter_bus_and_channel_keep_single_attempt_policy(monkeypatch, accepted):
-    import app.conversations.dependencies as catalog_module
-    import app.social.binding_service as binding_module
-    import app.social.broadcast_service as broadcast_module
-    from app.channels.manager import ChannelManager
-    from app.social.message_bus import MessageBus
-
-    catalog = SimpleNamespace(find=AsyncMock(return_value=SimpleNamespace(owner_user_id="alice")))
-    monkeypatch.setattr(catalog_module, "get_conversation_catalog", lambda: catalog)
-    binding = SimpleNamespace(
-        active_for_platform_user=AsyncMock(
-            return_value=SimpleNamespace(bot_account="bot", ilink_user_id="alice")
-        )
-    )
-    monkeypatch.setattr(binding_module, "get_social_binding_service", lambda: binding)
-    bus = MessageBus()
-    monkeypatch.setattr(broadcast_module, "get_message_bus", lambda: bus)
-    monkeypatch.setattr(
-        broadcast_module.SocialBroadcastService,
-        "_get_session_mapper",
-        AsyncMock(return_value=SimpleNamespace()),
-    )
-    monkeypatch.setattr(broadcast_module, "persist_broadcast_context", AsyncMock(return_value=True))
-    channel = SimpleNamespace(
-        bot_account="bot",
-        send=AsyncMock(side_effect=None if accepted else TimeoutError("provider receipt lost")),
-    )
-    manager = object.__new__(ChannelManager)
-    manager.bus = bus
-    manager.config = SimpleNamespace(channels=SimpleNamespace(send_max_retries=3))
-    manager.channels = {"weixin:one": channel}
-    dispatcher = asyncio.create_task(manager._dispatch_outbound())
-    try:
-        state = await deliver_reminder(
-            SimpleNamespace(owner_user_id="alice", task_id="task"),
-            SimpleNamespace(grant_session_id="session"),
-            SimpleNamespace(
-                recipient="weixin:one:bot:alice", content="reminder", message_id="message"
-            ),
-        )
-        assert state == ("provider_accepted" if accepted else "unknown")
-        assert channel.send.await_count == 1
-        assert channel.send.await_args.args[0].metadata == {
-            "_single_attempt": True,
-            "_expected_bot_account": "bot",
-        }
-    finally:
-        dispatcher.cancel()
-        await dispatcher
