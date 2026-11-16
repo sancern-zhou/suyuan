@@ -35,7 +35,7 @@ from Crypto.PublicKey import RSA
 
 from config.settings import settings
 from app.fetchers.base.fetcher_interface import DataFetcher
-from app.integrations.town_cloud_client import (
+from app.integrations.xuchang.town_cloud_client import (
     CAPTCHA_VISION_CANDIDATES,
     _vision_endpoint,
 )

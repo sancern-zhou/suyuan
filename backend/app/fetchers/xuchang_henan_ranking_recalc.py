@@ -21,7 +21,7 @@ import aiomysql
 import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
-from app.integrations.henan_ssfb_client import HenanSsfbClient
+from app.integrations.xuchang.henan_ssfb_client import HenanSsfbClient
 from config.settings import settings
 
 logger = structlog.get_logger()

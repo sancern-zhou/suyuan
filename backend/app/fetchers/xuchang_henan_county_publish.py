@@ -1,7 +1,7 @@
 """Fetch Henan real-time publish data at county (区县) granularity.
 
 数据来源为河南省空气质量实时发布系统（详见
-``app.integrations.henan_ssfb_client``）。平台前端"区县"页签即调用
+``app.integrations.xuchang.henan_ssfb_client``）。平台前端"区县"页签即调用
 城市组接口（airQualityGroupHours/Days）的区县口径（queryType=2），
 cityIDs 传区县树（GetGroupCountyTree，189 叶子）+ 济源示范区（218，
 不在树中但可查），因此本采集与平台"区县"数据完全同源同口径：
@@ -37,7 +37,7 @@ from app.fetchers.xuchang_henan_ssfb_publish import (
     resolve_collection_window,
     wave_schedule,
 )
-from app.integrations.henan_ssfb_client import (
+from app.integrations.xuchang.henan_ssfb_client import (
     JIYUAN_COUNTY_GROUP_ID,
     HenanSsfbClient,
     county_groups_from_tree,

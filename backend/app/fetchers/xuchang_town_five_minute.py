@@ -23,7 +23,7 @@ import aiomysql
 import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
-from app.integrations.town_cloud_client import TownCloudClient
+from app.integrations.xuchang.town_cloud_client import TownCloudClient
 from config.settings import settings
 
 logger = structlog.get_logger()

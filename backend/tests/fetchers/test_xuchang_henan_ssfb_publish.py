@@ -8,7 +8,7 @@ import pytest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
-from app.integrations.henan_ssfb_client import (
+from app.integrations.xuchang.henan_ssfb_client import (
     SSFB_AES_IV,
     SSFB_AES_KEY,
     city_groups_from_tree,

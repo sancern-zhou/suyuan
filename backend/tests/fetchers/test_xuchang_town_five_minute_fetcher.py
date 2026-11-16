@@ -6,7 +6,7 @@ from app.fetchers.xuchang_town_five_minute import (
     XuchangTownFiveMinuteFetcher,
     record_from_row,
 )
-from app.integrations.town_cloud_client import eval_captcha_expression
+from app.integrations.xuchang.town_cloud_client import eval_captcha_expression
 
 
 def test_eval_captcha_expression_supports_four_operators():

@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from app.integrations.henan_ssfb_client import (
+from app.integrations.xuchang.henan_ssfb_client import (
     JIYUAN_COUNTY_GROUP_ID,
     county_groups_from_tree,
 )

@@ -1,7 +1,7 @@
 """Fetch Henan real-time publish data (18 cities incl. Jiyuan + Xuchang sites).
 
 数据来源为河南省空气质量实时发布系统（详见
-``app.integrations.henan_ssfb_client``）。该平台小时/日值仅保留约
+``app.integrations.xuchang.henan_ssfb_client``）。该平台小时/日值仅保留约
 最近 8 天。三波采样点保持每小时 3 次（首波覆盖整点后约 15-20 分钟的
 按小时发布、次波覆盖迟到发布、第三波覆盖平台 :27-:28 批量修正），但
 每波只回看最近少数小时：首波 6 小时、次波/三波 2 小时，每日 00:xx
@@ -31,7 +31,7 @@ import aiomysql
 import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
-from app.integrations.henan_ssfb_client import (
+from app.integrations.xuchang.henan_ssfb_client import (
     HenanSsfbClient,
     build_henan_district_directory,
     city_groups_from_tree,

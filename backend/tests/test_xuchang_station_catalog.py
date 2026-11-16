@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.integrations.henan_ssfb_client import HenanSsfbError
+from app.integrations.xuchang.henan_ssfb_client import HenanSsfbError
 from app.tools.xuchang.airdata_platform.client import AirDataPlatformClient
 from app.tools.xuchang.station_catalog import catalog as catalog_module
 from app.tools.xuchang.station_catalog.catalog import (

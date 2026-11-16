@@ -22,7 +22,7 @@ from typing import Any
 
 import structlog
 
-from app.integrations.henan_ssfb_client import (
+from app.integrations.xuchang.henan_ssfb_client import (
     HenanSsfbClient,
     HenanSsfbError,
     city_groups_from_tree,
