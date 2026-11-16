@@ -479,6 +479,35 @@ async def list_task_skills(
         "count": len(items),
     }
 
+
+@router.get("/recipients")
+async def list_task_recipients(
+    _: CurrentUser = Depends(require_current_user),
+):
+    """List App accounts selectable as broadcast recipients.
+
+    对话社交渠道（个人微信/QQ）已退役，广播接收人只来自 APP_ACCOUNTS_JSON 的
+    启用账号；id 与 social_user_id 与 ``_validate_event_task_config`` 接受的两
+    种写法一致，前端提交任一形式均可通过校验。
+    """
+    recipients = []
+    for account_id, account in _accounts().items():
+        if str(account.get("status", "active")).lower() != "active":
+            continue
+        recipients.append(
+            {
+                "id": f"app-account-{account_id}",
+                "name": str(account.get("name") or account_id),
+                "status": "active",
+                "social_user_id": f"app:android:{account_id}",
+                "channel": "app",
+                "bot_account": "android",
+                "sender_id": account_id,
+            }
+        )
+    return recipients
+
+
 @router.post("", response_model=TaskResponse)
 async def create_task(
     request: CreateTaskRequest,
