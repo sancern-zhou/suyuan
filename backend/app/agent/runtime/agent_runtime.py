@@ -109,6 +109,7 @@ class AgentRuntime:
         )
         if isinstance(initial_fixed_progress, dict) and initial_fixed_progress:
             state.fixed_workflow_progress = dict(initial_fixed_progress)
+        state.deferred_tool_names = self._setup_deferred_tools(state)
         self.executor.resource_run_id = state.run_id
 
         if self.config.cancel_event is not None:
@@ -133,6 +134,45 @@ class AgentRuntime:
         if isinstance(data, dict):
             data.setdefault("session_id", state.session_id)
             data.setdefault("run_id", state.run_id)
+
+    def _setup_deferred_tools(self, state: RunState) -> frozenset:
+        """deferred tools 启用装配：注入 tool_search 动态工具并返回存根化集合。
+
+        未 opt-in 的模式返回空集（零行为变化）。tool_search 按运行模式构造
+        （mode 烘焙进实例），走 submit_result 同款 executor 注册表动态注入 +
+        _allowed_tool_names_for_state 补名 + _run_planner_stream 回填路径，
+        不进全局注册表，非 opt-in 模式不产生任何泄漏。
+        """
+        from app.agent.prompts.tool_registry import (
+            compute_deferred_tool_names,
+            resolve_deferred_tool_config,
+        )
+
+        try:
+            config = resolve_deferred_tool_config(state.mode)
+        except Exception:  # noqa: BLE001 — 配置解析异常退回现状行为
+            logger.warning("deferred_tools_resolve_failed", mode=state.mode)
+            return frozenset()
+        if config is None:
+            return frozenset()
+        deferred_names = compute_deferred_tool_names(state.mode, config)
+        registry = getattr(self.executor, "tool_registry", None)
+        if not deferred_names or not isinstance(registry, dict):
+            return frozenset()
+        from app.tools.agent_tools.tool_search_tool import ToolSearchTool
+
+        registry["tool_search"] = ToolSearchTool(mode=state.mode)
+        # 失败兜底（tool_coordinator）经 executor.runtime_metadata 读取运行模式。
+        metadata = getattr(self.executor, "runtime_metadata", None)
+        if isinstance(metadata, dict):
+            metadata["mode"] = state.mode
+        logger.info(
+            "deferred_tools_enabled",
+            mode=state.mode,
+            deferred_count=len(deferred_names),
+            always_on=sorted(config.always_on),
+        )
+        return deferred_names
         return event
 
     async def _run(
@@ -996,6 +1036,32 @@ class AgentRuntime:
                 original_tool_count=original_count,
                 filtered_tool_count=len(tool_schemas),
             )
+        if state.deferred_tool_names:
+            from app.agent.tool_adapter import (
+                apply_deferred_tool_stubs,
+                collect_called_deferred_tools,
+            )
+
+            # 发现状态 = 会话历史派生（调用即升级跨轮次持久，ZCode 派生思想）
+            # ∪ 本运行内增量（本轮刚调用、尚未写回历史的工具）。
+            discovered_names = (
+                collect_called_deferred_tools(conversation_history, state.deferred_tool_names)
+                | state.discovered_tools
+            )
+            tool_schemas, stub_count, stub_saved_chars = apply_deferred_tool_stubs(
+                tool_schemas,
+                deferred_names=state.deferred_tool_names,
+                discovered_names=discovered_names,
+            )
+            if stub_count:
+                logger.info(
+                    "deferred_stubs_applied",
+                    mode=state.mode,
+                    iteration=state.iteration,
+                    stubbed_tools=stub_count,
+                    discovered_count=len(state.discovered_tools & set(state.deferred_tool_names)),
+                    saved_chars_est=stub_saved_chars,
+                )
         tool_schema_chars = len(json.dumps(tool_schemas, ensure_ascii=False, default=str))
         tool_schema_tokens_est = int(tool_schema_chars / 1.5)
         context_tokens = context_result.get("tokens", {})
@@ -1129,6 +1195,18 @@ class AgentRuntime:
                 )
                 state.has_seen_tool_use = True
                 buffer.note_tool_use()
+                # deferred tools 调用即升级：模型对存根工具发起调用（无论参数
+                # 是否猜对）即说明本任务需要它，记入 discovered_tools，下一轮
+                # 组装换回全 schema 常驻（executor 按名分发，本轮调用不受影响）。
+                if state.deferred_tool_names and tool_name in state.deferred_tool_names:
+                    if tool_name not in state.discovered_tools:
+                        state.discovered_tools.add(tool_name)
+                        logger.info(
+                            "deferred_tool_upgraded_on_call",
+                            mode=state.mode,
+                            tool=tool_name,
+                            iteration=state.iteration,
+                        )
                 planner_result.tool_calls.append(ToolCall(tool_name, tool_input, tool_use_id))
                 tool_action = {
                     "type": "TOOL_CALL",
@@ -1256,7 +1334,9 @@ class AgentRuntime:
         executor_registry = getattr(executor, "tool_registry", None) or {}
         # escalate（升级提问）与 submit_result 同等待遇：由 call_sub_agent 动态
         # 注入 child registry，不在模式白名单里，必须保持全阶段可见。
-        for dynamic_tool_name in ("submit_result", "escalate", "report_finding"):
+        # tool_search 由 _setup_deferred_tools 在 deferred 模式注入 registry，
+        # 同样不在白名单里，同样必须全阶段可见。
+        for dynamic_tool_name in ("submit_result", "escalate", "report_finding", "tool_search"):
             if dynamic_tool_name in executor_registry:
                 names.append(dynamic_tool_name)
         workflow_definition = get_mode_workflow(state.mode)
@@ -1269,13 +1349,14 @@ class AgentRuntime:
             # 否则带 result_schema 的问数节点无法结构化交付。
             names = [
                 name for name in names
-                if name in phase_tools or name in {"submit_result", "escalate", "report_finding"}
+                if name in phase_tools or name in {"submit_result", "escalate", "report_finding", "tool_search"}
             ]
         elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
             # 无固定工作流时 None 表示回退到模式默认工具集；但动态注入的
-            # 交付工具不在模式白名单里，必须在回退前显式保留，否则
-            # _run_planner_stream 的动态 schema 补齐循环会空转，模型看不到它们。
-            if not any(
+            # 交付工具（submit_result/escalate/report_finding）与 deferred 模式
+            # 注入的 tool_search 都不在模式白名单里，必须在回退前显式保留，
+            # 否则 _run_planner_stream 的动态 schema 补齐循环会空转，模型看不到它们。
+            if "tool_search" not in names and not any(
                 name in executor_registry
                 for name in ("submit_result", "escalate", "report_finding")
             ):
@@ -1293,10 +1374,11 @@ class AgentRuntime:
         allowed = fixed_workflow_allowed_tools(definition, state.fixed_workflow_progress)
         requested = [name for name, _ in self._planner_action_tool_calls(action)]
         # submit_result 是交付边界工具、escalate 是升级提问工具（均见
-        # _allowed_tool_names_for_state），全阶段放行。
+        # _allowed_tool_names_for_state），全阶段放行；tool_search 是 deferred
+        # 模式的检索入口，同样全阶段放行。
         blocked = [
             name for name in requested
-            if name not in allowed and name not in {"submit_result", "escalate", "report_finding"}
+            if name not in allowed and name not in {"submit_result", "escalate", "report_finding", "tool_search"}
         ]
         if not blocked:
             return None

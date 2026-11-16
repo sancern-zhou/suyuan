@@ -146,11 +146,6 @@
             @delete-sessions="$emit('delete-sessions', $event)"
           />
 
-          <SocialPlatformPanel
-            v-else-if="managementPanel === 'social-platform'"
-            @close="$emit('close-management-panel')"
-          />
-
           <SharedConversationsPanel
             v-else-if="managementPanel === 'shared-conversations'"
             :report-collapsed="sharedReportCollapsed"
@@ -284,7 +279,6 @@ import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspa
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
 import SharedConversationsPanel from '@/components/management/SharedConversationsPanel.vue'
 import PlatformGuidePanel from '@/components/management/PlatformGuidePanel.vue'
-import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
 import QuickPromptsPanel from '@/components/management/QuickPromptsPanel.vue'

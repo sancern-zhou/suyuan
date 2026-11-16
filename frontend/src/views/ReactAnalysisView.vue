@@ -629,10 +629,6 @@ const handleSidebarAction = async (actionId) => {
       showManagementPanel('session-history')
       await refreshSessionHistory()
       break
-    case 'social-platform':
-      console.log('[ReactAnalysisView] Showing social-platform panel')
-      showManagementPanel('social-platform')
-      break
     case 'shared-conversations':
       console.log('[ReactAnalysisView] Showing shared-conversations panel')
       showManagementPanel('shared-conversations')

@@ -16,18 +16,6 @@ class FakeUser:
         self.social_user_id = f"{channel}:bot:{user_id}"
 
 
-class FakeRegistry:
-    def __init__(self):
-        self.users = {
-            "admin-1": FakeUser("admin-1"),
-            "admin-2": FakeUser("admin-2"),
-            "qq-user": FakeUser("qq-user", channel="qq"),
-        }
-
-    async def get_user(self, user_id):
-        return self.users.get(user_id)
-
-
 class FakeToolRegistry:
     statuses = {"read_file": "enabled", "write_file": "enabled", "disabled": "disabled"}
 
@@ -96,10 +84,15 @@ def _fake_event_definitions():
     ]
 
 
+APP_ACCOUNTS = '{"admin-1": {"secret": "s1", "name": "Admin One", "status": "active"}, "admin-2": {"secret": "s2", "name": "Admin Two", "status": "active"}}'
+
+
 def _client(monkeypatch, user=None):
+    from config.settings import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "app_accounts_json", APP_ACCOUNTS)
     service = FakeService()
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
-    monkeypatch.setattr(routes, "get_social_user_registry", lambda: FakeRegistry())
     monkeypatch.setattr(routes, "get_tool_registry", lambda: FakeToolRegistry())
     monkeypatch.setattr(routes, "get_event_definitions", _fake_event_definitions)
     monkeypatch.setattr(
@@ -132,7 +125,7 @@ def _event_payload():
         "event_type": "xuchang.station_deviation.alert_created",
         "event_filters": {"city": "许昌市"},
         "broadcast_enabled": True,
-        "target_user_ids": ["admin-1", "admin-2"],
+        "target_user_ids": ["app-account-admin-1", "app-account-admin-2"],
         "enabled": True,
         "prompt": "执行许昌告警溯源报告任务",
         "timeout_seconds": 1800,
@@ -233,7 +226,7 @@ def test_create_event_task_with_multiple_users(monkeypatch):
     assert response.status_code == 200
     task = response.json()["task"]
     assert task["trigger_type"] == "event"
-    assert task["target_user_ids"] == ["admin-1", "admin-2"]
+    assert task["target_user_ids"] == ["app-account-admin-1", "app-account-admin-2"]
     assert task["schedule_type"] is None
     assert task["owner_user_id"] == "creator-1"
     assert task["owner_username"] == "creator"
@@ -337,7 +330,8 @@ def test_create_rejects_unregistered_event_type(monkeypatch):
     assert "Unregistered event_type" in response.json()["detail"]
 
 
-def test_create_rejects_non_wechat_recipient(monkeypatch):
+def test_create_rejects_non_app_recipient(monkeypatch):
+    # 对话社交渠道已退役：非 App 用户一律拒绝。
     client, _ = _client(monkeypatch)
     payload = _event_payload()
     payload["target_user_ids"] = ["qq-user"]
@@ -345,7 +339,7 @@ def test_create_rejects_non_wechat_recipient(monkeypatch):
     response = client.post("/api/scheduled-tasks", json=payload)
 
     assert response.status_code == 400
-    assert "active bound WeChat user" in response.json()["detail"]
+    assert "not an active App user" in response.json()["detail"]
 
 
 def test_create_rejects_empty_broadcast_recipient_list_as_bad_request(monkeypatch):

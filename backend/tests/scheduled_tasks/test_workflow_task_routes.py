@@ -57,7 +57,6 @@ class FakeCaseStorage:
 def _client(monkeypatch, service=None):
     service = service or FakeService()
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
-    monkeypatch.setattr(routes, "get_social_user_registry", lambda: SimpleNamespace(get_user=None))
     monkeypatch.setattr(
         "app.scheduled_tasks.workflow_tasks.registered_workflows", lambda: REGISTERED
     )

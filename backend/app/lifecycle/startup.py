@@ -24,12 +24,38 @@ from app.lifecycle.nacos import start_nacos
 from app.lifecycle.operation_access import start_operation_access_policy
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import start_scheduled_task_service
-from app.lifecycle.social import start_social_platform_service
 from app.lifecycle.social_worker_api import start_social_worker_api_service
 from app.lifecycle.tools import initialize_tools_and_agents
 from config.settings import settings
 
 logger = structlog.get_logger()
+
+
+async def ensure_subagent_manager_only() -> None:
+    """只初始化 SubagentManager 单例（对话社交渠道已退役，不再有渠道层）。
+
+    Web/App 助手会话的 spawn 长任务派发依赖该单例；归属按服务端认证身份，
+    完成回投走 task_store 状态 + best-effort App 推送，不依赖任何聊天渠道。
+    """
+    from app.agent.react_agent import create_react_agent
+    from app.social.message_bus import MessageBus
+    from app.social.message_bus_singleton import get_message_bus, set_message_bus
+    from app.social.subagent_manager import SubagentManager
+    from app.social.subagent_singleton import get_subagent_manager, set_subagent_manager
+    from app.social.task_status_store import TaskStatusStore
+
+    if get_subagent_manager() is not None:
+        return
+    message_bus = get_message_bus() or MessageBus()
+    set_message_bus(message_bus)
+    set_subagent_manager(
+        SubagentManager(
+            agent=create_react_agent(),
+            task_store=TaskStatusStore(),
+            message_bus=message_bus,
+        )
+    )
+    logger.info("subagent_manager_initialized", reason="manager_only")
 
 
 async def run_startup(app: FastAPI) -> None:
@@ -65,7 +91,6 @@ async def run_startup(app: FastAPI) -> None:
         await start_scheduled_task_service()
 
         if database_ready:
-            await start_social_platform_service(app)
             if app_role == "worker":
                 await start_social_worker_api_service(app)
             await start_knowledge_base_services()
@@ -84,8 +109,6 @@ async def run_startup(app: FastAPI) -> None:
         # （如 xuchang --workers 3）存在跨进程可见性与并发写问题，勿在该
         # 场景启用 Web spawn。
         try:
-            from app.lifecycle.social import ensure_subagent_manager_only
-
             await ensure_subagent_manager_only()
         except Exception as e:
             logger.warning("web_subagent_manager_init_failed", error=str(e))

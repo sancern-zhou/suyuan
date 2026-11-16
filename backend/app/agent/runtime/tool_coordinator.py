@@ -296,6 +296,7 @@ class ToolCoordinator:
             )
         observation = self._tag_board_tool_result(tool_name, observation)
         self._inject_schema_if_needed(tool_name, observation)
+        self._inject_deferred_schema_if_failed(tool_name, observation, state)
         is_error = not observation.get("success", False)
         tool_call_id = action.get("tool_call_id", f"fallback_{tool_name}")
         tool_records.append({
@@ -331,6 +332,7 @@ class ToolCoordinator:
             result_data = self._tag_board_tool_result(execution.tool_name, result_data)
 
             self._inject_schema_if_needed(execution.tool_name, result_data)
+            self._inject_deferred_schema_if_failed(execution.tool_name, result_data, state)
 
             is_error = execution.status in (ToolStatus.FAILED, ToolStatus.CANCELLED) or not result_data.get("success", False)
             tool_records.append({
@@ -409,6 +411,39 @@ class ToolCoordinator:
         observation["schema_injection_notice"] = (
             f"你连续{self.schema_injector.consecutive_error_threshold}次调用工具{tool_name}失败。"
             "已自动注入该工具的完整schema，请仔细阅读参数要求后再试。"
+        )
+
+    def _inject_deferred_schema_if_failed(self, tool_name: str, observation: Dict[str, Any], state: Any) -> None:
+        """deferred 存根工具盲调失败时附完整 schema（错误信息即召回钩子）。
+
+        模型对着存根猜参数而失败是 deferred 模式特有的失败形态：把完整
+        契约直接喂回 observation，模型下一跳就能按契约重试（无需再走
+        tool_search 一轮）。已升级（discovered）或非 deferred 工具不介入。
+        """
+        if not tool_name or not isinstance(observation, dict):
+            return
+        if observation.get("success", False):
+            return
+        deferred = getattr(state, "deferred_tool_names", None) or frozenset()
+        if tool_name not in deferred:
+            return
+        discovered = getattr(state, "discovered_tools", None) or set()
+        if tool_name in discovered:
+            return
+        try:
+            from app.agent.tool_adapter import get_detailed_schemas_for_tools
+
+            schemas = get_detailed_schemas_for_tools([tool_name], mode=getattr(state, "mode", None))
+        except Exception:  # noqa: BLE001 — 兜底通道自身失败不掩盖工具原始错误
+            return
+        if not schemas:
+            return
+        from app.agent.core.schema_injection import format_schema_text
+
+        observation["schema_injection"] = format_schema_text(tool_name, schemas[0])
+        observation["schema_injection_notice"] = (
+            f"工具 {tool_name} 的参数契约未常驻（deferred tools 模式）。"
+            "本次失败可能是参数猜测不准，已附完整 schema，请按契约重试。"
         )
 
     def tool_calls_from_action(self, action: Dict[str, Any]) -> List[ToolCall]:

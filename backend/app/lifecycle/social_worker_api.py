@@ -11,8 +11,6 @@ from fastapi.responses import JSONResponse
 import structlog
 import uvicorn
 
-from app.api.social_account_routes import router as social_account_router
-from app.api.social_account_routes import set_channel_manager_override
 from app.api.fetcher_worker_routes import router as fetcher_worker_router
 from app.api.scheduled_task_routes import router as scheduled_task_router
 from app.api.social_broadcast_worker_routes import router as social_broadcast_worker_router
@@ -42,8 +40,6 @@ def create_social_worker_api_app(
 ) -> FastAPI:
     """Create the internal worker API app bound to the worker's runtime state."""
     app = FastAPI(title="Social Worker Internal API", docs_url=None, redoc_url=None)
-
-    set_channel_manager_override(getattr(worker_state, "channel_manager", None))
 
     @app.middleware("http")
     async def require_internal_token(request: Request, call_next):
@@ -92,7 +88,6 @@ def create_social_worker_api_app(
     def health() -> dict:
         return {"status": "ok"}
 
-    app.include_router(social_account_router)
     app.include_router(fetcher_worker_router)
     app.include_router(scheduled_task_router)
     app.include_router(social_broadcast_worker_router)
