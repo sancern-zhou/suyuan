@@ -441,13 +441,10 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_postgres_sql_query", error=str(e))
 
-    # MySQL 采集库长历史数据查询工具（站点/城市小时、逐日、PM2.5 年均值）
-    try:
-        from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
-        registry.register(ExecuteCrawlerSQLQueryTool(), priority=47)
-        logger.info("tool_loaded", tool="execute_crawler_sql_query")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="execute_crawler_sql_query", error=str(e))
+    # MySQL 采集库长历史数据查询工具（execute_crawler_sql_query）属许昌专属：
+    # 模块本体与数据源在 project/xuchang 的 backend/app/tools/xuchang/
+    # execute_crawler_sql_query/，经 backend.tool_options 声明按项目启用；
+    # 共享 main 不注册（其他部署无许昌采集库，注册也查不到数据）。
 
     # 企业运输管控平台 Big_Data SQL Server 查询工具（道闸违规/在线/通行记录）
     try:

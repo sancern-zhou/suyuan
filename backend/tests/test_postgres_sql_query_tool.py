@@ -10,7 +10,6 @@ from app.tools.query.execute_postgres_sql_query.tool import (
     MAX_LIMIT,
     PERMIT_SQL_TABLES,
     WEATHER_SQL_TABLES,
-    XUCHANG_TRAFFIC_SQL_TABLES,
     ExecutePostgresSQLQueryTool,
 )
 
@@ -107,27 +106,66 @@ def test_postgres_sql_tool_is_registered_and_available_to_query_agents():
 
 
 def test_postgres_sql_tool_whitelist_partitions():
+    # 共享白名单只保留所有部署共有的表；项目专属业务表（许昌路况时序/告警事件
+    # 聚合等）经 backend.tool_options.execute_postgres_sql_query.allowed_tables_extra 注入。
     assert ALLOWED_SQL_TABLES == (
-        PERMIT_SQL_TABLES + WEATHER_SQL_TABLES + XUCHANG_TRAFFIC_SQL_TABLES + ALERT_RESULT_SQL_TABLES
+        PERMIT_SQL_TABLES + WEATHER_SQL_TABLES + ALERT_RESULT_SQL_TABLES
     )
+    assert "scheduled_task_results" in ALERT_RESULT_SQL_TABLES
+    assert "xuchang_station_alert_episodes" not in ALLOWED_SQL_TABLES
+
+
+def _xuchang_postgres_options():
+    return {
+        "allowed_tables_extra": [
+            "traffic_snapshot",
+            "traffic_section",
+            "v_station_traffic_hourly",
+            "xuchang_station_alert_episodes",
+        ],
+        "schema_notes": (
+            "【许昌路况时序】traffic_snapshot 路况快照；【站点快速告警结论】"
+            "task_id = 'task_xuchang_station_deviation_alert'；【站点编码】许昌站 ZzMTA。"
+        ),
+    }
 
 
 def test_postgres_sql_tool_allows_alert_result_queries():
     tool = ExecutePostgresSQLQueryTool()
 
     valid, error = tool.sql_validator.validate(
-        "SELECT started_at, station_name, target_pollutant, status, "
-        "peak_station_value, peak_deviation_ratio "
-        "FROM xuchang_station_alert_episodes ORDER BY started_at DESC LIMIT 50"
+        "SELECT completed_at, station_name, conclusion, broadcast_message "
+        "FROM scheduled_task_results "
+        "WHERE task_id = 'task_any_project_task' "
+        "ORDER BY completed_at DESC LIMIT 20"
     )
     assert valid is True
     assert error == ""
 
-    valid, error = tool.sql_validator.validate(
-        "SELECT completed_at, station_name, conclusion, broadcast_message "
-        "FROM scheduled_task_results "
-        "WHERE task_id = 'task_xuchang_station_deviation_alert' "
-        "ORDER BY completed_at DESC LIMIT 20"
+
+def test_postgres_sql_tool_project_options_extend_whitelist_and_notes(monkeypatch):
+    from app.tools.query.execute_postgres_sql_query import tool as pg_tool
+
+    # 未注入配置的默认部署基线（在 monkeypatch 之前构造）
+    default_tool = pg_tool.ExecutePostgresSQLQueryTool()
+    assert "xuchang_station_alert_episodes" not in default_tool.sql_validator.ALLOWED_TABLES
+    assert "【项目扩展口径】" not in default_tool.get_function_schema()["description"]
+
+    # 许昌扩展（allowed_tables_extra + schema_notes）经项目配置注入——
+    # 这里 monkeypatch 配置加载以在共享测试环境确定性验证注入行为。
+    monkeypatch.setattr(pg_tool, "_load_postgres_tool_options", _xuchang_postgres_options)
+    xuchang_tool = pg_tool.ExecutePostgresSQLQueryTool()
+
+    assert "xuchang_station_alert_episodes" in xuchang_tool.sql_validator.ALLOWED_TABLES
+    assert "traffic_snapshot" in xuchang_tool.sql_validator.ALLOWED_TABLES
+    description = xuchang_tool.get_function_schema()["description"]
+    assert "【项目扩展口径】" in description
+    assert "task_xuchang_station_deviation_alert" in description
+
+    valid, error = xuchang_tool.sql_validator.validate(
+        "SELECT started_at, station_name, target_pollutant, status, "
+        "peak_station_value, peak_deviation_ratio "
+        "FROM xuchang_station_alert_episodes ORDER BY started_at DESC LIMIT 50"
     )
     assert valid is True
     assert error == ""
@@ -137,11 +175,13 @@ def test_postgres_sql_tool_alert_tables_route_to_main_engine():
     tool = ExecutePostgresSQLQueryTool()
 
     assert tool._select_engine(["scheduled_task_results"]) is engine
-    assert tool._select_engine(["xuchang_station_alert_episodes"]) is engine
 
 
-def test_postgres_sql_tool_rejects_alert_weather_cross_database_join():
-    tool = ExecutePostgresSQLQueryTool()
+def test_postgres_sql_tool_rejects_alert_weather_cross_database_join(monkeypatch):
+    from app.tools.query.execute_postgres_sql_query import tool as pg_tool
+
+    monkeypatch.setattr(pg_tool, "_load_postgres_tool_options", _xuchang_postgres_options)
+    tool = pg_tool.ExecutePostgresSQLQueryTool()
 
     sql = (
         "SELECT e.station_name, o.temperature_2m FROM xuchang_station_alert_episodes e "
