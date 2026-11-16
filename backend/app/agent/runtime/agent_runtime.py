@@ -175,7 +175,6 @@ class AgentRuntime:
             always_on=sorted(config.always_on),
         )
         return deferred_names
-        return event
 
     async def _run(
         self,
