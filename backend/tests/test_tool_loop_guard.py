@@ -1,6 +1,7 @@
 """ToolLoopGuard unit tests."""
 
 import importlib.util
+from pathlib import Path
 import sys
 
 
@@ -12,7 +13,7 @@ def _load_module(name, path):
     return mod
 
 
-_guard_path = "/home/xckj/suyuan/backend/app/agent/runtime/tool_loop_guard.py"
+_guard_path = str(Path(__file__).resolve().parents[1] / "app/agent/runtime/tool_loop_guard.py")
 _guard = _load_module("tool_loop_guard", _guard_path)
 
 ToolLoopGuard = _guard.ToolLoopGuard

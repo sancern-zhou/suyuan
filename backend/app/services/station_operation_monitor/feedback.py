@@ -88,7 +88,7 @@ def record_feedback(config=None, *, station, reason, unrecoverable, start=None, 
     records.append(record)
     save_feedback(records, root)
     store = MonitorStore(root / 'monitor.sqlite3')
-    spans = store.open_gaps(match['code'])
+    spans = store.open_gaps(match['code'], include_backfilled=True)
     if start is None and end is None:
         matched = spans
     else:

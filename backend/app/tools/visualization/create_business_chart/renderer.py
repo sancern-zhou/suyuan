@@ -60,6 +60,8 @@ SPECIALIZED_CHART_TYPES = {
     "generic_pollutant_wind_rose",
     "wind_timeseries",
     "weather_timeseries",
+    # 共享通用：全国任意城市集合行政区填色地图（全项目可用）。
+    "city_boundary_map",
     # 许昌项目专用：河南省城市级 AQI/污染物地图（xuchang 分支叠加）。
     "henan_city_map",
 }

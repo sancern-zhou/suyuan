@@ -54,6 +54,10 @@
 
   启动后必须检查 `ss -ltnp` 中 web 端口和 worker 内部端口均在监听；停止或重启时使用 PID 文件操作对应进程，不能只关闭当前终端。
 - 许昌（xuchang）分支的部署环境 web 进程使用 3 个 uvicorn worker 启动（`--workers 3`），用于支撑多并发对话任务；对话（agent SSE）请求由 web 进程处理，跨进程 cancel/steer 依赖环境文件中的 Redis 配置（`REDIS_HOST`/`REDIS_PORT`/`REDIS_DB`/`REDIS_PASSWORD`）。`app.worker` 后台进程仍为单实例，不随 web worker 数量扩展。bge-m3 嵌入权重已收敛到独立服务（`python -m app.services.embedding_server`，默认 `127.0.0.1:8020`）：web/worker 配置 `EMBEDDING_SERVICE_URL` 后走 HTTP 调用、不再各自加载约 1G 权重，多开 worker 不再受模型内存约束；未配置该变量的部署仍按进程本地加载，小内存机器的 worker 上限（如 6.5G 内存机器 ≤3 个 web worker）继续适用。
+- Linux 部署机（非本机）按项目分工作树部署，布局如下（其他项目如 jiangxi、xuchang 部署时按实际环境单独规划，不受本条约束，详见 `deploy/nginx/README.md`）：
+  - 风清气智（main 共享项目，工作树 `/home/xckj/suyuan-main`）：前端 5174（容器 `suyuan-nginx`，挂载该工作树 `frontend/dist`）→ 后端 8000（`backend/.env`，用 `backend/restart_server.sh` 重启）+ 配套 worker（内部端口 8011）。
+  - 江苏运维（project/jiangsu-ops 分支，工作树 `/home/xckj/suyuan`）：前端 5175（容器 `suyuan-nginx-jiangsu`，挂载该工作树 `frontend/dist`）→ 后端 8001（`backend/.env.jiangsu-ops`）+ 配套 worker（`python -m app.worker --env-file .env.jiangsu-ops`，内部端口 8012）。
+  - 两个 Nginx 容器禁止挂载同一个 `frontend/dist`；风清气智 web/worker 固定从 `/home/xckj/suyuan-main/backend` 启动并使用该目录下的 `backend_data_registry`，江苏运维 web/worker 从 `/home/xckj/suyuan/backend` 启动并使用项目专属 registry。
 - 配置文件归属必须按工作树确认，不能把环境文件当作跨项目共享配置：`AGENTS.md`、`deploy/nginx/README.md` 和代码中的默认配置属于共享说明/代码层；`backend/.env.guangdong`（本机）、`backend/.env`、`backend/.env.jiangsu-ops` 是各自部署实例的运行环境文件，只能由对应工作树的 web 与 worker 成对使用。当前工作树若不存在某个环境文件，不得据文档假定它存在或用另一个项目的环境文件替代。
   - 每个项目的 web 进程与 worker 进程必须成对启动（worker 缺失时 fetchers/scheduled-tasks 等接口会 503）。
 - 所有部署环境的 `DATA_REGISTRY_DIR` 必须在对应后端环境文件中显式配置为绝对路径；同一项目的 web 与 worker 必须使用同一个值。禁止依赖工作树位置推导持久化目录，切换工作树前须先运行 `python -m app.utils.deployment_preflight --env-file <env-file>` 校验。
@@ -89,9 +93,12 @@ web/worker 进程的事件循环同时承载前端 API：worker 还承载 web �
 
 ## 分支与更新归属规范
 
-- 共享层改动一律提交到 `main`：`backend/app`（除 `tools/jiangsu/`、`fetchers/jiangsu_*`、`fetchers/weather/jiangsu_*`）、`backend/tests`（除 jiangsu 专用测试）、`backend/config`、`frontend/src` 公共组件与配置、CI、`.gitignore`、`AGENTS.md`。
-- 项目改动提交到对应 `project/*` 分支：`backend/app/tools/jiangsu/**`、`fetchers/jiangsu_*`、`backend/app/db/repositories/jiangsu_*`、`backend/app/db/models` 中的项目模型、`projects/jiangsu-ops/**`、`backend/tests/test_jiangsu_*`、`backend/tests/project_config/test_jiangsu_*`、项目专属前端（如 StationhouseInspectionPanel）。
-- 判定准则：路径含 jiangsu/项目名、或内容依赖 `projects/*/project.yaml`、`settings.project_id` 分支逻辑的，归项目分支；其余归 main。混合文件（如 `tools/__init__.py`、`tool_registry.py`）先在 main 提交共享部分，项目分支合并后再叠加项目部分。
-- 工作流程：先在 main 提交共享改动 → 项目分支 `git merge main` → 再提交项目改动。禁止在项目分支直接修改共享文件而不回合 main。
-- 项目分支每天开工先 `git merge main`；共享文件的改动永远以 main 为准。
+- 定位分工：`main` 承载平台架构与跨项目机制；`project/*` 分支承载具体项目的定时任务、业务场景与业务资产。需求只属于单个项目的代码，归该项目分支。
+- 共享层改动一律提交到 `main`：`backend/app` 不带项目名的路径、`backend/tests` 共享测试、`backend/config`、`frontend/src` 公共组件与配置、CI、`.gitignore`、`AGENTS.md`。
+- 项目改动提交到对应 `project/*` 分支：`backend/app` 下带项目名的路径（如 `tools/jiangsu/**`、`fetchers/jiangsu_*`、`fetchers/weather/jiangsu_*`、`scenarios/xuchang_*`）、`backend/app/db/repositories/jiangsu_*`、`backend/app/db/models` 中的项目模型、`projects/<project>/**`（project.yaml、scheduled_tasks、项目文档与技能）、`backend/tests/test_jiangsu_*`、`backend/tests/project_config/test_<project>_*`（如 test_guangdong_modes.py）、项目专属前端（如 StationhouseInspectionPanel）。
+- 判定准则（需求归属优先于实现耦合）：为单一项目需求编写、或当前只有单个项目使用的代码，归该项目分支，并应放在带项目名的路径下，使归属可按路径识别；内容依赖 `projects/*/project.yaml`、`settings.project_id` 分支逻辑的一律归项目分支。反之，把代码放入共享路径即视为承诺跨项目复用，该文件此后在项目分支上的改动必须回合 main，不得长期单侧演化。
+- 存量归属备注：`backend/app/services/station_operation_monitor/`（站点运行日报与小时采集引擎）为广东专属需求，历史上仅在 `project/guangdong` 演化，按项目层对待、无需回合 main；其他项目复用前，须先提炼为共享引擎提交 main（含把广东专属文案配置化），再由项目分支合并使用。
+- 混合文件（如 `tools/__init__.py`、`tool_registry.py`）：先在 main 提交共享部分，项目分支合并后再叠加项目部分。项目专属注册块在一个文件内只允许出现一次；合并共享文件后必须重启对应服务验证启动（曾因 main 侧复制了广东工具注册块，合并后 guangdong 全部进程重复注册崩溃）。
+- 工作流程：先在 main 提交共享改动 → 项目分支 `git merge main` → 再提交项目改动。禁止在项目分支直接修改共享层文件而不回合 main（带项目名的路径与上条存量备注所列文件除外）。
+- 项目分支每天开工先 `git merge main`；共享层文件的改动永远以 main 为准。
 - 禁止提交：`backend/.env.*`（模板除外）、`frontend/dist-*`、`backend/backend_data_registry*`、`suncere*/`（见 .gitignore）。

@@ -303,6 +303,15 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
         else:
             # 办公助手工具、任务管理工具：不需要 ExecutionContext
             # execute(self, **kwargs)
+            # wants_context：签名按 kwargs 接收 context 的工具（如 edit_file
+            # 的源码修复授权需要定时任务上下文，但保持位置参数兼容）。
+            tool_instance = tool_data.get("tool") if tool_data else None
+            if (
+                execution_context is not None
+                and getattr(tool_instance, "wants_context", False)
+                and "context" not in exec_kwargs
+            ):
+                exec_kwargs["context"] = execution_context
             result = await tool.execute(**exec_kwargs)
             logger.debug(
                 "tool_executed_without_context",
@@ -515,6 +524,7 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "report_data_id",
             "context_refs",
             "content_preview",
+            "stdout",
             "file_path",
             "file_paths",
             "report_file_path",

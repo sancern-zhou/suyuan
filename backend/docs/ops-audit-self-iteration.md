@@ -145,8 +145,8 @@
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 1-① | 反馈台账 + 通道1 面板落账 | **已实现**（2026-11-11） |
-| 1-② | 通道2 对账工具 `ops_audit_reconcile_checklist` + 指标统计 | 待实施 |
-| 1-③ | 月度复盘任务 + 通道3 回库分诊 | 待实施（原料依赖①②攒数据） |
+| 1-② | 通道2 对账工具 `ops_audit_reconcile_checklist` + 指标统计 | **已实现**（2026-11-11） |
+| 1-③ | 月度复盘任务 + 通道3 回库分诊 | **已实现**（2026-11-11） |
 | 2 | 提案 → 重放验证 → 审批（复用 task_review 状态机）→ 确定性生效 | 数据攒够后设计 |
 | 3 | 低风险白名单自动生效 + 例库向量检索（bge-m3/Qdrant 基建现成，但吸取长期向量记忆因检索无效被移除的教训，先用重放验证证明增益） | 视阶段2 数据 |
 
@@ -158,10 +158,13 @@
 - 共享层（先提交 main，再回合 `project/guangdong`）：
   `backend/app/services/ops_audit/**`、`backend/app/tools/**`、`backend/docs/**`、
   `backend/tests/**`。
-- 项目分支：`projects/guangdong/scheduled_tasks/gd_ops_audit_monthly_retrospective.json`。
+- 项目分支：`projects/guangdong/scheduled_tasks/gd_ops_audit_monthly_retrospective.json`、
+  `projects/guangdong/project.yaml` 的 ops 模式工具清单。
 - 测试：`backend/tests/test_ops_audit_feedback_ledger.py`（台账与面板落账）；
-  通道2 落地时补对账分类矩阵表驱动测试与指标 gating 测试（部分清单不算错误率、
-  tacit 权重分离）。
+  `backend/tests/test_ops_audit_checklist_reconcile.py`（对账分类矩阵表驱动 +
+  指标 gating：部分清单不算错误率、tacit 权重分离、幂等去重、归档）；
+  `backend/tests/test_ops_audit_retrospective_stats.py`（复盘统计 + 通道3 分诊四分支）；
+  `backend/tests/test_ops_audit_retrospective_tools.py`（工具层端到端）。
 
 ## 9. 阶段 1-① 实施记录
 
@@ -175,3 +178,65 @@
   隔离台账路径（避免测试记录写入真实 data registry）。
 - 已知环境限制：本机 `D:\conda\envs\backend_py311` 缺 `anthropic`，语义复核链路
   相关测试无法收集，属环境问题；改动涉及且可收集的 27 个测试全部通过。
+
+## 10. 阶段 1-② 实施记录（通道2 清单对账）
+
+- 新增 `backend/app/services/ops_audit/checklist_reconcile.py`：
+  - `normalize_checklist_items`：清单结构化校验。`problem_category` 必须命中
+    规则目录归一化 category 词表（一致性问题/完整性问题/异常说明问题/数值逻辑问题/
+    时间合理性问题/表单完整性问题/规范性问题/附件质量问题），未知词表以错误信息
+    回显合法值（召回钩子）；`verdict` 支持 problem/ok（兼容中文"有问题/没问题"）。
+  - `reconcile_checklist`：§3 通道2 六行矩阵的确定性实现，join 粒度为
+    （工单 × 问题分类）对；省略 problem_category = 工单级任意类型匹配；
+    `missed` 落 `rule_id=null`（候选新规则语义）；tacit 仅全量声明产生
+    （explicit=false）；`unmatched` 只回显不入账。纯函数，不落盘。
+  - `compute_reconciliation_metrics`：识别率恒可算；错误率仅全量声明可算
+    （gating_reason=partial_checklist），全部带分子分母文本（"78%（14/18）"）。
+  - `append_reconciliation_to_ledger`：以 `feedback_id=checklist:<hash12>`
+    （issue_list sha + 条目 + 声明位哈希）幂等去重；修正后清单哈希不同即新记录。
+  - `archive_reconciliation`：对账结果 + 结构化清单 JSON + 原始清单文件副本
+    归档到 `<issue_list目录>/checklist_reconcile/<时间戳>-<hash8>/`。
+- `feedback_ledger.py` 扩展：`default_metrics_history_path` / `append_metrics_history` /
+  `read_metrics_history`（`memory/ops/audit/ledger/metrics_history.jsonl` 时序）。
+- 新增工具 `ops_audit_reconcile_checklist`
+  （`backend/app/tools/analysis/ops_audit_retrospective/tool.py`）：条目校验先于
+  文件加载（词表召回不依赖路径正确）；落账后追加 metrics_history
+  （kind=checklist_reconciliation，含 full_review_declared 供月度 gating）；
+  echo_lines 截断 80 行回显。已注册 ops 模式（project.yaml）。
+- 测试：`test_ops_audit_checklist_reconcile.py`（11 用例：矩阵表驱动、tacit、
+  分类错配、指标 gating、词表校验、幂等去重、execution_ref、归档、回显）+
+  `test_ops_audit_retrospective_tools.py` 工具层端到端（3 用例）。
+
+## 11. 阶段 1-③ 实施记录（月度复盘 + 通道3 回库分诊）
+
+- 新增 `backend/app/services/ops_audit/retrospective_stats.py`：
+  - `build_retrospective_stats`：月度聚合（期次过滤、通道×结局计数、清单指标
+    【metrics_history 优先，台账兜底】、面板平行比率、按规则人工推翻率
+    【null 规则桶排尾】、候选新规则聚合、original_judgment×结局校准交叉表、
+    近 8 个 ISO 周滚动窗口）。纯函数，计数永不出 LLM。
+  - `run_db_recheck`：通道3 三分类。eligible=rejected 且带工单号与 rule_id；
+    生产路径 `_default_fetch_and_run` 按工单号批量重取本地库 → 直接跑确定性引擎
+    `audit_dataset`（**不走语义复核，零 LLM 调用**；输出隔离到
+    `memory/ops/audit/recheck/`，不碰线上 latest_* 工件）；分诊依据：
+    基线数据集指纹（source_ref 同目录的 dataset）vs 新取指纹 + 复跑命中
+    ——指纹一致且命中=verified、指纹不一致/工单消失=data_drifted、
+    指纹一致未命中=evidence_mismatch（无基线时按复跑结果降级分诊并注明）。
+    分诊记录以 `feedback_id=db_recheck:<月>` 幂等落账（explicit=false）。
+  - 实测修正：scoring_issue 不携带工单号（记录级字段），收集时补记；
+    dataset_orders 显式空集表示工单消失，不可回退为请求集。
+- 新增工具 `ops_audit_retrospective_stats`：stats JSON 归档
+  `memory/ops/audit/retrospective/stats_<月>.json` + metrics_history 追加
+  （kind=monthly_retrospective）；`enable_db_recheck` 默认 false 控 DB 负载。
+- 新增技能 `backend/docs/skills/ops_audit_retrospective.md`（+ SKILL_METADATA）：
+  通道2 编排（全量/部分声明确认、词表归一、回显纠正）与月度报告契约
+  （开篇 KPI → 分流清单【口径/数据管道/候选新规则/校准参考】→ 带证据链的
+  变更建议）；只读红线（不改 configs、不调 run_rules）。
+- 新增定时任务 `projects/guangdong/scheduled_tasks/gd_ops_audit_monthly_retrospective.json`
+  （每月 1 日 07:00，custom 模式，skill_id=ops_audit_retrospective，
+  history_learning.enabled=true 防重复提案）。
+- 测试：`test_ops_audit_retrospective_stats.py`（17 用例：期次解析、通道计数、
+  history gating、台账兜底、推翻率、候选新规则、校准、滚动窗口、分诊四分支、
+  无 eligible 短路、台账合法性）。
+- 本机真实验证：本地库真实工单端到端跑通通道3（真实命中规则→verified 带原文、
+  伪造规则→evidence_mismatch、全程零 LLM 调用）；`PROJECT=guangdong` 下
+  模式预算守门与异步阻塞守门全部通过。

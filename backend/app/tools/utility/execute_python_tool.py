@@ -65,6 +65,23 @@ _EXECUTION_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = w
 _MAX_CAPTURE_BYTES = 256 * 1024
 
 
+def _python_success_summary(output: str, stdout_bytes: int) -> "tuple[str, str]":
+    """成功结果的 (summary, stdout 别名)。
+
+    stdout 内容回填进 summary，避免模型只见"执行完成"却找不到输出在哪里，
+    被迫反复重跑打印充当探针；别名上限 2000 字符，完整输出仍在 data.output。
+    """
+    alias = output[:2000] if output else ""
+    if alias:
+        summary = (
+            f"✅ 执行成功（exit=0），stdout {stdout_bytes} 字符，"
+            f"完整输出在 data.output：{alias[:200]}"
+        )
+    else:
+        summary = "✅ 执行成功（exit=0），无 stdout 输出"
+    return summary, alias
+
+
 def _execution_lock_for(context) -> Optional[asyncio.Lock]:
     """Serialize executions sharing a session's writable artifact namespace."""
     if context is None:
@@ -752,8 +769,10 @@ class ExecutePythonTool(LLMTool):
                     result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
             from app.tools.resource_declarations import (
+                allocate_image_visual_ids,
                 data_file_resource,
                 generated_file_products,
+                generated_image_visuals,
                 resources_for_visuals,
             )
 
@@ -814,10 +833,22 @@ class ExecutePythonTool(LLMTool):
             ):
                 preview_paths[primary_file_path] = pdf_preview["pdf_path"]
 
+            # 图片产物统一视觉身份：声明带 metadata.visual_id，visuals 进
+            # 别名契约（executor 自动绑 [[chart:chart_N]] 短标记），与
+            # save_chart 路径共享同一条可内联引用链路。
+            image_visual_ids = allocate_image_visual_ids(generic_files)
             result["resources"] = generated_file_products(
                 generic_files,
                 tool_name=self.name,
                 preview_paths=preview_paths,
+                image_visual_ids=image_visual_ids,
+            )
+            result.setdefault("visuals", []).extend(
+                generated_image_visuals(
+                    generic_files,
+                    image_visual_ids,
+                    existing_visuals=result.get("visuals"),
+                )
             )
             result["resources"].extend(report_package_resources)
             result["resources"].extend(
@@ -825,8 +856,17 @@ class ExecutePythonTool(LLMTool):
                 for file_path in python_data_paths
             )
             if not self.enable_echarts_visuals:
+                # 仅 save_chart/base64 路径的 visuals 需要补发 chart-spec/chart-image
+                # 资源；generated_file 图片的身份已写入 primary 图片资源声明。
+                preexisting_visuals = [
+                    visual
+                    for visual in result.get("visuals", [])
+                    if isinstance(visual, dict)
+                    and isinstance(visual.get("meta"), dict)
+                    and visual["meta"].get("generator") != "generated_file"
+                ]
                 result["resources"].extend(
-                    resources_for_visuals(result.get("visuals", []), tool_name=self.name)
+                    resources_for_visuals(preexisting_visuals, tool_name=self.name)
                 )
             # Resource declarations above deliberately retain absolute host paths.
             # Only after they are complete do we expose the canonical Agent-facing
@@ -998,12 +1038,15 @@ class ExecutePythonTool(LLMTool):
                     "summary": error_info["summary"]
                 }
 
+            summary, stdout_alias = _python_success_summary(output, stdout_bytes)
+
             return {
                 "status": "success",
                 "success": True,
+                "stdout": stdout_alias,
                 "data": {"output": output, "declared_data_file_paths": declared_data_paths,
                          "execution": diagnostics},
-                "summary": "✅ 工具已执行完成，计算任务已完成",
+                "summary": summary,
                 **({"data_shapes": data_shapes} if data_shapes else {}),
             }
 
@@ -1794,7 +1837,10 @@ def artifact_path(filename: str) -> str:
             llm_resume["tool_hint"] = (
                 "Generated files have already been published to the unified session resource catalog. "
                 "Do not call publish_session_file and do not construct a sessions/... path. "
-                "Reuse the returned file_path exactly, or use list_session_resources to inspect the resource IDs."
+                "Reuse the returned file_path exactly. "
+                "Generated images and files are delivered to the user automatically as reply outcome cards; "
+                "do NOT wrap their file names or resource IDs in [[chart:...]] placeholders — "
+                "[[chart:...]] is reserved for chart marker lines ([[chart:chart_N]]) returned by chart tools."
             )
         if data_refs:
             llm_resume["file_paths"] = [ref["file_path"] for ref in data_refs]
@@ -3483,7 +3529,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
                 "最终答复可用工具返回 summary 中的图表标记（如 [[chart:chart_0]]，逐字符原样复制）将图片放在相应分析旁；"
-                "未提供标记时才用 visuals.id。未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
+                "未提供标记时才用 visuals.id。工具结果既无标记也无 visuals.id 的普通文件/图片产物，"
+                "禁止编造标记、禁止把文件名或资源 ID 填进 [[chart:...]]，这类产物会自动作为交付卡片出现在答复旁。"
+                "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),

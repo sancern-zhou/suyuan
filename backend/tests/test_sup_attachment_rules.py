@@ -179,3 +179,26 @@ def test_item_match_skips_without_attachments():
     # 无附件时 item_match 不判（无证据），但必需数据文件缺失仍命中。
     assert ITEM_MATCH_RULE_ID not in {issue.rule_id for issue in issues}
     assert MISSING_RULE_ID in {issue.rule_id for issue in issues}
+
+
+def test_item_match_normalizes_separator_between_pollutant_and_typecode():
+    """pollutanttype 含分隔符（CO2/CH4/CO/N2O）与 typecode 连续后缀
+    （CO2CH4CON2O）应视为匹配——2026-11-14 全年验证发现的温室气体族
+    系统性误报源（归一化未去 "/"）。"""
+
+    form = {
+        "RULEITEMTAG": "Sup_RF_HP_StationCheck",
+        "POLLUTANTTYPE": "CO2/CH4/CO/N2O",
+        "CHECKDATE": "2026-10-20 00:00:00",
+    }
+    files = [
+        _file("Sup_RF_HP_StationCheck_CO2CH4CON2O", "站房周检查照片1.jpg"),
+        _file("Sup_RF_HP_StationCheck_CO2CH4CON2O", "站房周检查照片2.jpg"),
+    ]
+    issues = _run([("SUP_RF_COMMON", form)], wo_commonfiles=files)
+    assert ITEM_MATCH_RULE_ID not in {issue.rule_id for issue in issues}
+
+    # 真正不匹配的后缀仍应命中
+    files_bad = [_file("Sup_RF_HP_StationCheck_PSF", "无关项目附件.jpg")]
+    issues = _run([("SUP_RF_COMMON", form)], wo_commonfiles=files_bad)
+    assert ITEM_MATCH_RULE_ID in {issue.rule_id for issue in issues}

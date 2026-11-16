@@ -47,7 +47,7 @@ class GetWeatherDataTool(LLMTool):
 1. 历史网格气象、历史边界层高度或短波辐射：用本工具。配置城市历史采集的项目优先读库，边界层缺失时小范围在线补采，大范围提交后台；检查history_backfill中的进度和警告，排队不代表已获取数据。
 2. 今天（含已过小时）、未来、或历史库未覆盖的近5天边界层高度/短波辐射：直接调用get_weather_forecast。不要向本工具传未来时段试探；纯ERA5有发布延迟，无法提供当天数据。
 3. 跨历史与未来的请求：历史段用本工具，当天及未来段用get_weather_forecast；根据actual_time_range核对缺口，按带时区的timestamp去重，每条保留data_source，不混称为ERA5或实测。
-4. 站点实测（温湿度、风等）：查询observed_weather_data观测表（工具可用时用execute_postgres_sql_query）；站点实测不能替代模式边界层高度/短波辐射，不得从气温风速自行估算缺失字段。
+4. 路由红线：站点级历史气象（城市/站点逐小时风向、风速、温湿度等观测）必须优先 data_type="observed"（或 execute_postgres_sql_query 查 observed_weather_data 观测表）；era5 网格是 0.25° 插值非站点实测，仅作无站点数据时的兜底，且答复必须声明网格口径。站点实测不能替代模式边界层高度/短波辐射，不得从气温风速自行估算缺失字段。
 5. 仅当用户明确要求纯ERA5时，核对data_source；本工具不能保证纯ERA5。不能因工具名或请求坐标按0.25°对齐，就声称数据来自ERA5网格。
 
 【时间与覆盖】
@@ -90,7 +90,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                     "data_type": {
                         "type": "string",
                         "enum": ["era5", "observed"],
-                        "description": "era5=历史网格库（兼容名称，实际模型见data_source）；当天/未来用get_weather_forecast。observed=站点实测"
+                        "description": "era5=历史网格库（0.25°网格插值，非站点实测，实际模型见data_source），仅作无站点数据时的兜底；当天/未来用get_weather_forecast。observed=站点实测，站点级历史风向/风速等问题必须用observed"
                     },
                     "lat": {
                         "type": "number",

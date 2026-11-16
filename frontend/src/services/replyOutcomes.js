@@ -17,6 +17,16 @@ const versionRank = resource => {
   return suffix ? Number(suffix[1]) * 1000 : 0
 }
 
+// 交互式 HTML 报告（html_artifact / 报告包的 HTML 预览）：目录型产物
+// （kind=artifact + entrypoint）的 preview 关系资源，直接内嵌对话区展示，
+// 不折叠进“文件成果”。metadata 不外泄（DTO 无该字段），以三字段组合判定。
+const isInlineHtmlReport = resource => (
+  resource.renderer === 'html'
+  && resource.kind === 'artifact'
+  && resource.relation === 'preview'
+  && resource.format === 'html'
+)
+
 export function replyOutcomes(message, messages, resources) {
   const runs = new Set(), ids = new Set(), ownedGroups = new Set()
   for (const event of [message, ...getUnifiedProcessMessages(message, messages)]) {
@@ -51,9 +61,10 @@ export function replyOutcomes(message, messages, resources) {
       latest.set(key, { ...item, rank: versionRank(item.resource) })
     }
   }
-  const outcomes = { files: [], others: [] }
+  const outcomes = { reports: [], files: [], others: [] }
   for (const { group, resource } of latest.values()) {
-    if (resource.renderer === 'chart' || resource.renderer === 'image') outcomes.others.push({ group, resource })
+    if (isInlineHtmlReport(resource)) outcomes.reports.push({ group, resource })
+    else if (resource.renderer === 'chart' || resource.renderer === 'image') outcomes.others.push({ group, resource })
     else outcomes.files.push({ group, resource })
   }
   return outcomes

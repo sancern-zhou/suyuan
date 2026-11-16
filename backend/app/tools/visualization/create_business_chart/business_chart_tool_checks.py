@@ -60,7 +60,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert set(properties["chart_type"]["enum"]) == {
         "aqi_calendar", "pollutant_calendar", "pollutant_wind_rose",
         "generic_pollutant_wind_rose", "wind_timeseries", "weather_timeseries",
-        "henan_city_map",
+        "city_boundary_map", "henan_city_map",
     }
     assert "不是 ECharts option" in properties["data"]["description"]
     assert "file_path" in properties["data"]["description"]
@@ -82,7 +82,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     expected_keys = {
         "index", "pollutant_calendar", "generic_pollutant_wind_rose",
         "wind_timeseries", "weather_timeseries", "aqi_calendar", "pollutant_wind_rose",
-        "henan_city_map",
+        "city_boundary_map", "henan_city_map",
     }
 
     assert set(paths) == expected_keys
@@ -97,6 +97,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     wind_timeseries_text = resolve_agent_path(paths["wind_timeseries"]).read_text(encoding="utf-8")
     weather_timeseries_text = resolve_agent_path(paths["weather_timeseries"]).read_text(encoding="utf-8")
     henan_city_map_text = resolve_agent_path(paths["henan_city_map"]).read_text(encoding="utf-8")
+    city_boundary_map_text = resolve_agent_path(paths["city_boundary_map"]).read_text(encoding="utf-8")
     index_text = resolve_agent_path(paths["index"]).read_text(encoding="utf-8")
     assert "aqi_calendar" in aqi_calendar_text
     assert "广东省专用" in aqi_calendar_text
@@ -107,6 +108,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     assert "wind_timeseries" in wind_timeseries_text
     assert "meteorological_from" in wind_timeseries_text
     assert "henan_city_map" in henan_city_map_text
+    assert "city_boundary_map" in city_boundary_map_text
     assert "Supply at least one of `data` or `file_path`" in index_text
     assert "current session" in index_text
     assert "not infer arbitrary record fields" in index_text
@@ -144,6 +146,52 @@ def test_henan_city_map_uses_new_standard_breakpoints_by_metric():
     assert NEW_STANDARD_CONCENTRATION_BREAKS["PM2_5"] == (35, 60, 115, 150, 250)
     assert NEW_STANDARD_CONCENTRATION_BREAKS["PM10"] == (50, 120, 250, 350, 420)
     assert NEW_STANDARD_CONCENTRATION_BREAKS["O3_8h"] == (100, 160, 215, 265, 800)
+    assert _metric_key("PM2.5") == "PM2_5"
+    assert _metric_key("O3_8H") == "O3_8h"
+
+
+@pytest.mark.asyncio
+async def test_city_boundary_map_renders_cross_province_records_from_asset():
+    result = await CreateBusinessChartTool().execute(
+        chart_id="city_boundary_map_asset_case",
+        chart_type="city_boundary_map",
+        title="华东空气质量指数（AQI）预报",
+        data={
+            "metric": "AQI",
+            "records": [
+                {"adcode": 320100, "city": "南京市", "value": 92},
+                {"adcode": 320300, "city": "徐州市", "value": 136},
+                {"adcode": 310000, "city": "上海市", "value": 55},
+                {"adcode": 330100, "city": "杭州市", "value": 70},
+                {"adcode": 370800, "city": "济宁市", "value": 105},
+            ],
+        },
+    )
+
+    assert result["success"] is True
+    assert Path(result["visuals"][0]["local_path"]).exists()
+    metadata = result["metadata"]
+    assert metadata["applied_chart_type"] == "city_boundary_map"
+    assert metadata["scope"] == "china_city_level"
+    assert metadata["city_count"] == 5
+    assert metadata["unmatched_record_count"] == 0
+    assert metadata["rendered_polygon_count"] >= 5
+    assert metadata["groups"] == []
+    assert metadata["breaks"] == [50, 100, 150, 200, 300]
+    assert metadata["classification_basis"] == "AQI"
+
+
+def test_city_boundary_map_constants_match_hj633_grading():
+    from app.tools.visualization.create_business_chart.domain.city_boundary_map import (
+        COLORS,
+        CONCENTRATION_BREAKS,
+        LEVELS,
+        _metric_key,
+    )
+
+    assert LEVELS == (50, 100, 150, 200, 300)
+    assert len(COLORS) == len(LEVELS) + 1 == len(("优", "良", "轻度", "中度", "重度", "严重"))
+    assert CONCENTRATION_BREAKS["PM2_5"] == (35, 60, 115, 150, 250)
     assert _metric_key("PM2.5") == "PM2_5"
     assert _metric_key("O3_8H") == "O3_8h"
 

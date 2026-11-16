@@ -504,6 +504,18 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
+    try:
+        from app.tools.analysis.ops_audit_retrospective.tool import (
+            OpsAuditReconcileChecklistTool,
+            OpsAuditRetrospectiveStatsTool,
+        )
+        registry.register(OpsAuditReconcileChecklistTool(), priority=51)
+        logger.info("tool_loaded", tool="ops_audit_reconcile_checklist")
+        registry.register(OpsAuditRetrospectiveStatsTool(), priority=52)
+        logger.info("tool_loaded", tool="ops_audit_retrospective_stats")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="ops_audit_retrospective_tools", error=str(e))
+
     # 广东运维工单数据集 SQL 查询 + 指标语义层（guangdong 分支专属模块，仅 guangdong 项目加载）
     if getattr(context.manifest, "project", "") == "guangdong":
         try:
@@ -1051,6 +1063,66 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="query_runtime_anomalies")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_runtime_anomalies", error=str(e))
+
+    try:
+        from app.tools.runtime_monitor.self_heal import (
+            retry_scheduled_task_tool,
+            trigger_fetcher_tool,
+        )
+        registry.register(
+            retry_scheduled_task_tool,
+            priority=367,
+            metadata={
+                "data_type": "self_heal",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        registry.register(
+            trigger_fetcher_tool,
+            priority=367,
+            metadata={
+                "data_type": "self_heal",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="retry_scheduled_task")
+        logger.info("tool_loaded", tool="trigger_fetcher")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="runtime_monitor_self_heal", error=str(e))
+
+    try:
+        from app.tools.runtime_monitor.service_ops import (
+            restart_service_tool,
+            verify_service_health_tool,
+        )
+        registry.register(
+            restart_service_tool,
+            priority=368,
+            metadata={
+                "data_type": "service_ops",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        registry.register(
+            verify_service_health_tool,
+            priority=368,
+            metadata={
+                "data_type": "service_ops",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="restart_service")
+        logger.info("tool_loaded", tool="verify_service_health")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="runtime_monitor_service_ops", error=str(e))
 
     try:
         from app.tools.scheduled_tasks import query_scheduled_task_results_tool

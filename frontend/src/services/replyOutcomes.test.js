@@ -15,7 +15,7 @@ test('groups multiple document formats into one card', () => {
 test('referenced chart hides its whole group and unreferenced chart is folded', () => {
   const resources = [{ ...resource('a','chart','json'), kind: 'visual', renderer: 'chart', visual_id: 'v1', interactive: true }, { ...resource('b','chart','png'), relation: 'rendition', renderer: 'image', visual_id: 'v1' }]
   assert.equal(replyOutcomes(message, [message], resources).others.length, 1)
-  assert.deepEqual(replyOutcomes({ ...message, content: '[[chart:v1]]' }, [], resources), { files: [], others: [] })
+  assert.deepEqual(replyOutcomes({ ...message, content: '[[chart:v1]]' }, [], resources), { reports: [], files: [], others: [] })
 })
 test('hides data and intermediate files', () => {
   assert.equal(replyOutcomes(message, [message], [resource('a','a','json'), { ...resource('b','b','csv'), kind: 'data' }]).files.length, 0)
@@ -42,4 +42,21 @@ test('distinct logical files are not merged', () => {
   const windbin = { ...resource('a', 'a', 'csv'), label: 'windbin.csv' }
   const periodStats = { ...resource('b', 'b', 'csv'), label: 'period_stats.csv' }
   assert.equal(replyOutcomes(message, [message], [windbin, periodStats]).files.length, 2)
+})
+test('html artifact previews surface inline in reports instead of files', () => {
+  const resources = [
+    { ...resource('q', 'report1', 'qmd'), relation: 'primary', renderer: 'markdown', kind: 'file', role: 'report' },
+    { ...resource('h', 'report1', 'html'), relation: 'preview', renderer: 'html', kind: 'artifact', role: 'report' }
+  ]
+  const result = replyOutcomes(message, [message], resources)
+  assert.equal(result.reports.length, 1)
+  assert.equal(result.reports[0].resource.resource_id, 'h')
+  assert.equal(result.files.length, 0)
+})
+test('standalone html file products stay as file cards', () => {
+  const standalone = { ...resource('s', 's', 'html'), renderer: 'html', kind: 'file', relation: 'primary' }
+  const rendition = { ...resource('d', 's', 'html'), renderer: 'html', kind: 'file', relation: 'rendition' }
+  const result = replyOutcomes(message, [message], [standalone, rendition])
+  assert.equal(result.reports.length, 0)
+  assert.equal(result.files.length, 1)
 })

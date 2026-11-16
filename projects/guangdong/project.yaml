@@ -465,6 +465,8 @@ backend:
     - ops_audit_fetch_dataset
     - ops_audit_run_rules
     - ops_audit_inspect
+    - ops_audit_reconcile_checklist
+    - ops_audit_retrospective_stats
     - guangdong_station_catalog
     - execute_guangdong_mart_sql
     - guangdong_query_metrics
@@ -816,3 +818,4 @@ scheduled_tasks:
 - gd_fault_work_order_audit
 - gd_routine_work_order_audit
 - gd_sup_station_work_order_audit
+- gd_ops_audit_monthly_retrospective

@@ -70,6 +70,28 @@ def render_specialized_chart(
             },
             "summary": f"报告图表已生成：{title}。",
         }
+    if chart_type == "city_boundary_map":
+        from app.tools.visualization.create_business_chart.domain.city_boundary_map import (
+            render_city_boundary_map,
+        )
+
+        image_base64, metadata, warnings = render_city_boundary_map(
+            title, data, options, output_context
+        )
+        visual = _cache_base64_image(image_base64, chart_id or "city_boundary_map", title)
+        return {
+            "chart_id": visual["image_id"],
+            "title": title,
+            "visuals": [visual],
+            "layout_warnings": warnings,
+            "metadata": {
+                "requested_chart_type": "city_boundary_map",
+                "applied_chart_type": "city_boundary_map",
+                "output_context": output_context,
+                **metadata,
+            },
+            "summary": f"报告图表已生成：{title}。",
+        }
     if chart_type == "henan_city_map":
         from app.tools.visualization.create_business_chart.domain.henan_city_map import render_henan_city_map
 

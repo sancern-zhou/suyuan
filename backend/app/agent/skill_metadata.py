@@ -53,6 +53,14 @@ SKILL_METADATA = {
             "create_report_package",
         ],
     },
+    "ops_audit_retrospective": {
+        "enabled": True,
+        "aliases": ["审核复盘", "清单对账", "自我迭代复盘"],
+        "required_tools": [
+            "ops_audit_reconcile_checklist", "ops_audit_retrospective_stats",
+            "read_file", "write_file",
+        ],
+    },
     "pollution_alert_classification": {"enabled": True, "aliases": [], "required_tools": []},
     "pollution_fault_diagnosis": {"enabled": True, "aliases": [], "required_tools": []},
     "ppt_master_workflow": {

@@ -78,6 +78,17 @@ async def run_startup(app: FastAPI) -> None:
                 services=["social_platform", "social_worker_api", "knowledge_base"],
             )
     else:
+        # web 进程也需要 spawn 后台任务能力（Web/App 助手会话的长任务派发
+        # 不依赖微信/QQ 渠道）。仅初始化 SubagentManager 单例，不启渠道与
+        # 心跳；已知边界：任务状态为进程内 JSON 存储，多 web worker 部署
+        # （如 xuchang --workers 3）存在跨进程可见性与并发写问题，勿在该
+        # 场景启用 Web spawn。
+        try:
+            from app.lifecycle.social import ensure_subagent_manager_only
+
+            await ensure_subagent_manager_only()
+        except Exception as e:
+            logger.warning("web_subagent_manager_init_failed", error=str(e))
         database_ready = await init_database()
         if database_ready:
             from app.api.knowledge_graph_routes import start_graph_build_recovery

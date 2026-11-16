@@ -1,5 +1,12 @@
 <template>
-  <details v-if="outcomes.files.length || outcomes.others.length" class="reply-outcomes" @toggle="opened = $event.target.open">
+  <div class="reply-outcomes-root">
+    <InlineHtmlCard
+      v-for="item in outcomes.reports"
+      :key="item.resource.resource_id"
+      :resource="item.resource"
+      @preview="$emit('preview', $event)"
+    />
+    <details v-if="outcomes.files.length || outcomes.others.length" class="reply-outcomes" @toggle="opened = $event.target.open">
     <summary>文件成果（{{ outcomes.files.length + outcomes.others.length }}）</summary>
     <template v-if="opened">
       <article v-for="item in outcomes.files" :key="item.group.group_id" class="file-card">
@@ -16,6 +23,7 @@
       </div>
     </template>
   </details>
+  </div>
 </template>
 <script setup>
 import { computed, ref } from 'vue'
@@ -23,6 +31,7 @@ import { replyOutcomes } from '@/services/replyOutcomes.js'
 import ResourcePreviewActions from './resources/ResourcePreviewActions.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import InlineChartCard from './InlineChartCard.vue'
+import InlineHtmlCard from './InlineHtmlCard.vue'
 const props = defineProps({ message: Object, messages: Array, resources: Array })
 defineEmits(['preview'])
 const opened = ref(false)
@@ -32,7 +41,8 @@ const iconClass = format => ['xls', 'xlsx', 'csv'].includes(format) ? 'green' : 
 const formats = group => [...new Set(group.resources.map(r => r.format).filter(f => f !== 'qmd'))].map(f => f.toUpperCase()).join(' · ')
 </script>
 <style scoped>
-.reply-outcomes { margin-top: 12px; display: grid; gap: 10px; }
+.reply-outcomes-root { margin-top: 12px; display: grid; gap: 10px; }
+.reply-outcomes { display: grid; gap: 10px; }
 .file-card { max-width: 480px; min-width: 0; border: 1px solid #e8eaed; border-radius: 12px; background: white; padding: 14px; }
 .file-summary { width: 100%; padding: 0; border: 0; background: none; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left; }
 .file-icon { flex: 0 0 44px; height: 52px; border-radius: 6px; color: white; display: grid; place-items: center; font-size: 11px; font-weight: 600; }

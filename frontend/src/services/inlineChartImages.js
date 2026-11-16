@@ -15,8 +15,12 @@ export function inlineChartImages(finalMessage, messages, resources, content = '
     .flatMap(message => message.data?.result?.visuals || [])
     .forEach(visual => interactiveIds.add(visual.id))
   const imageByVisualId = new Map((resources || [])
-    .filter(resource => resource.resource_key === 'chart-image'
-      && resource.status === 'active' && !interactiveIds.has(resource.visual_id))
+    .filter(resource => resource.status === 'active'
+      && resource.visual_id
+      && !interactiveIds.has(resource.visual_id)
+      // 视觉身份是内联契约的标志：chart-image（echarts/save_chart 静态图）
+      // 与带 visual_id 的图片文件产物（execute_python 生成图）均可内联引用。
+      && (resource.resource_key === 'chart-image' || resource.renderer === 'image'))
     .map(resource => [resource.visual_id, resource]))
   const seen = new Set()
   // Restored messages omit bulky tool-result visuals. Explicit placeholders

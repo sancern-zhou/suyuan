@@ -16,6 +16,34 @@ from config.settings import settings
 logger = structlog.get_logger()
 
 
+async def ensure_subagent_manager_only() -> None:
+    """只初始化 SubagentManager 单例（不启社交渠道/心跳）。
+
+    供两类场景使用：社交平台未启用的 worker、以及 web 进程（Web/App 助手
+    会话的 spawn 长任务派发不依赖微信/QQ；归属按服务端认证身份，完成回投
+    走 task_store 状态 + best-effort App 推送）。
+    """
+    from app.agent.react_agent import create_react_agent
+    from app.social.message_bus import MessageBus
+    from app.social.message_bus_singleton import get_message_bus, set_message_bus
+    from app.social.subagent_manager import SubagentManager
+    from app.social.subagent_singleton import get_subagent_manager, set_subagent_manager
+    from app.social.task_status_store import TaskStatusStore
+
+    if get_subagent_manager() is not None:
+        return
+    message_bus = get_message_bus() or MessageBus()
+    set_message_bus(message_bus)
+    set_subagent_manager(
+        SubagentManager(
+            agent=create_react_agent(),
+            task_store=TaskStatusStore(),
+            message_bus=message_bus,
+        )
+    )
+    logger.info("subagent_manager_initialized", reason="manager_only")
+
+
 async def start_social_platform_service(app: FastAPI) -> None:
     """Start configured social platform channels and Agent bridge."""
     try:
@@ -37,6 +65,7 @@ async def start_social_platform_service(app: FastAPI) -> None:
 
         if not any([social_config.qq.enabled, social_config.weixin.enabled]):
             logger.info("social_platform_disabled", reason="no_platforms_enabled")
+            await ensure_subagent_manager_only()
             return
 
         session_mapper = SessionMapper()
