@@ -446,6 +446,56 @@ backend:
   # 白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
   # 2026-10-25 ops 对标江苏改为审核专用全量白名单：仅保留例行/故障工单审核链路、
   # 语义层口径核对与最小只读佐证工具，分析类工具归 gd_query/运维分析。
+  # 固定问数工作流的项目声明（backend.fixed_query_workflow_tools）：广东报表包
+  # 视图/5 分钟数据/超站组分取数工具按部署注入；query_component 为本项目新增
+  # 的组分问数固定工作流（共享层不写死任何项目的工具路由）。
+  fixed_query_workflow_tools:
+    query_monitoring:
+      tools: [monitoring_station_catalog, component_station_catalog]
+    query_monitoring_station:
+      tools: [monitoring_station_catalog, component_station_catalog, query_station_standard_report, query_station_standard_yoy_report, get_5min_data]
+    query_monitoring_city:
+      tools: [query_gd_suncere_city_hour, query_gd_suncere_city_day, query_gd_suncere_district_day, query_city_standard_report, query_city_standard_yoy_report, query_gd_suncere_district_report]
+    query_forecast:
+      tools: [monitoring_station_catalog]
+    query_component:
+      tools: [get_vocs_data, get_vocs_species, get_vocs_ofp, get_ofp_top10, get_pm25_ionic, get_pm25_carbon, get_pm25_crustal, get_pm25_recovery, get_pm25_trace, component_station_catalog]
+      title: 超站组分数据固定问数流程
+      scope_line: >-
+        聚焦广东省超级站组分取数：水溶性离子、碳组分（OC/EC）、地壳元素、微量元素/重金属、
+        VOCs 类别与 117 物种、VOCs 类别 OFP、物种 OFP Top10 与累计贡献、PM2.5 官方质量重构，
+        多站点多组分批量并发查询；组分站点不接受城市名，站点清单见组分问数提示词；
+        碳组分、地壳元素与微量元素数值仅小时粒度（地壳/微量元素需审核口径 data_type=1），
+        VOCs 物种/OFP 小时窗口不超过 24 小时。
+  # target_mode 子代理契约的项目声明：组分问数/组分专家新契约 + expert_analysis
+  # boundary 指向组分专家 + office 压缩包能力（字段级覆盖保留共享默认其余字段）。
+  target_mode_contracts:
+    query_component:
+      positioning: 组分问数 Agent：面向广东省超级站组分数据（水溶性离子、碳组分、地壳元素、微量元素/重金属、VOCs 类别与物种、OFP、PM2.5 官方重构）的取数与整理。
+      scope: 超站组分站点的离子、OC/EC、地壳元素、微量元素、VOCs 类别与 117 物种、类别 OFP 时序、物种 OFP Top10 与累计贡献、官方九组分重构的小时数据，多站点批量取数、占比与简单统计核算、数据质量口径与缺口说明。
+      boundary: 只取数与整理，不做组分化学成因研判与来源指向结论（归 expert_component）；不取常规六参数监测与气象数据，不产出报告包。
+      outputs: 结构化组分数据文件（file_path）+ 站点清单、时间粒度、数据质量口径（原始/审核）和缺口说明。
+      warning: >-
+        运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。
+        组分站点与常规监测站点是两套体系，站点名→编码映射内置于工具；
+        用户给城市时先按站点清单换算为具体组分站点，该市无组分站点时如实说明；
+        碳组分/地壳元素/微量元素数值仅小时口径（地壳与微量元素需审核），
+        VOCs 物种与 OFP 小时窗口不超过 24 小时。
+    expert_component:
+      positioning: 组分专家 Agent：面向 PM2.5 组分化学与 VOCs 组成的专业研判。
+      scope: 二次无机盐（SO4²⁻/NO₃⁻/NH₄⁺ 与 SOR/NOR）、碳组分一次二次拆分（OC/EC、SOC）、地壳元素与扬尘指向、微量元素/重金属与工业燃煤源指向（富集因子）、VOCs 物种活性与官方 OFP（类别时序、物种 Top10、累计贡献）、官方九组分重构与质量闭合、来源指向性判断、证据与缺口说明。
+      boundary: 职责聚焦组分化学与来源指向；气象条件引用 expert_meteorology 上游结论，常规六参数研判归 expert_analysis，定量源解析谱与正式报告由对应节点完成。
+      outputs: 结构化组分分析结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。
+      warning: >-
+        组分专家自带超站组分取数与分析工具；同一数据源若已有 query 节点产出，
+        通过 dependencies 复用其 file_path，禁止重复取数；
+        OFP 与组分重构优先用平台官方接口（get_vocs_ofp/get_ofp_top10/get_pm25_recovery），
+        离线手算（MIR 系数、重构系数）仅在官方数据缺口时兜底并注明口径。
+    expert_analysis:
+      boundary: 职责聚焦常规监测数据；离子、碳组分、地壳元素、VOCs/OFP 由组分专家（expert_component）承担，气象判断引用上游气象节点，源解析定量和报告包由对应节点完成。
+    office:
+      scope: 文档阅读、压缩包（.zip）解压与包内文档读取、文件整理、普通文件编辑、表格清洗核对、轻量计算与 HTML 交付。
+      warning: 仅由 assistant 委派，不再次委派；不取业务或气象数据，不做业务图表、专业研判、知识问答和正式报告。
   agent_mode_tools:
     # assistant 仅声明 run_agent_workflow 以满足 workflow 父模式校验（每个父模式
     # 必须声明该工具）；助手工具面仍由共享 ASSISTANT_TOOL_NAMES 白名单收敛，

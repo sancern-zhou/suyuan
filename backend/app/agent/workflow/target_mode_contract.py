@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import structlog
+
+logger = structlog.get_logger()
+
 TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     "query": {
         "positioning": "问数 Agent：面向数据本身的取数、统计与核算。",
@@ -59,19 +63,6 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
             "预报数据的分析结论（如静稳形势、扩散条件）由 expert_meteorology 完成，本模式只交付数据。"
         ),
     },
-    "query_component": {
-        "positioning": "组分问数 Agent：面向广东省超级站组分数据（水溶性离子、碳组分、地壳元素、微量元素/重金属、VOCs 类别与物种、OFP、PM2.5 官方重构）的取数与整理。",
-        "scope": "超站组分站点的离子、OC/EC、地壳元素、微量元素、VOCs 类别与 117 物种、类别 OFP 时序、物种 OFP Top10 与累计贡献、官方九组分重构的小时数据，多站点批量取数、占比与简单统计核算、数据质量口径与缺口说明。",
-        "boundary": "只取数与整理，不做组分化学成因研判与来源指向结论（归 expert_component）；不取常规六参数监测与气象数据，不产出报告包。",
-        "outputs": "结构化组分数据文件（file_path）+ 站点清单、时间粒度、数据质量口径（原始/审核）和缺口说明。",
-        "warning": (
-            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
-            "组分站点与常规监测站点是两套体系，站点名→编码映射内置于工具；"
-            "用户给城市时先按站点清单换算为具体组分站点，该市无组分站点时如实说明；"
-            "碳组分/地壳元素/微量元素数值仅小时口径（地壳与微量元素需审核），"
-            "VOCs 物种与 OFP 小时窗口不超过 24 小时。"
-        ),
-    },
     "expert": {
         "positioning": "专家 Agent：面向机制、成因与判断依据的专业研判。",
         "scope": "气象/遥感/轨迹/源解析等专业分析、证据解释、适用条件和证据缺口说明。",
@@ -95,23 +86,11 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     "expert_analysis": {
         "positioning": "常规分析专家 Agent：面向空气质量监测数据的专业研判。",
         "scope": "六参数浓度特征与超标统计、AQI 与首要污染物变化、站点和城市时空对比、污染过程分段、本地累积与区域同步性的初步研判、判断依据和证据缺口说明。",
-        "boundary": "职责聚焦常规监测数据；离子、碳组分、地壳元素、VOCs/OFP 由组分专家（expert_component）承担，气象判断引用上游气象节点，源解析定量和报告包由对应节点完成。",
+        "boundary": "职责聚焦常规监测数据；离子、碳组分、地壳元素、VOCs/OFP 由后续组分专家承担，气象判断引用上游气象节点，源解析定量和报告包由对应节点完成。",
         "outputs": "结构化监测分析结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
         "warning": (
             "常规分析专家不配置气象与轨迹工具；需要气象结论时依赖 expert_meteorology 上游节点，"
             "同一数据源已有 query 节点产出时，通过 dependencies 复用其 file_path。"
-        ),
-    },
-    "expert_component": {
-        "positioning": "组分专家 Agent：面向 PM2.5 组分化学与 VOCs 组成的专业研判。",
-        "scope": "二次无机盐（SO4²⁻/NO₃⁻/NH₄⁺ 与 SOR/NOR）、碳组分一次二次拆分（OC/EC、SOC）、地壳元素与扬尘指向、微量元素/重金属与工业燃煤源指向（富集因子）、VOCs 物种活性与官方 OFP（类别时序、物种 Top10、累计贡献）、官方九组分重构与质量闭合、来源指向性判断、证据与缺口说明。",
-        "boundary": "职责聚焦组分化学与来源指向；气象条件引用 expert_meteorology 上游结论，常规六参数研判归 expert_analysis，定量源解析谱与正式报告由对应节点完成。",
-        "outputs": "结构化组分分析结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
-        "warning": (
-            "组分专家自带超站组分取数与分析工具；同一数据源若已有 query 节点产出，"
-            "通过 dependencies 复用其 file_path，禁止重复取数；"
-            "OFP 与组分重构优先用平台官方接口（get_vocs_ofp/get_ofp_top10/get_pm25_recovery），"
-            "离线手算（MIR 系数、重构系数）仅在官方数据缺口时兜底并注明口径。"
         ),
     },
     "board": {
@@ -140,14 +119,9 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     },
     "office": {
         "positioning": "办公模式：助手专属的日常轻办公子 Agent。",
-        "scope": "文档阅读、压缩包（.zip）解压与包内文档读取、文件整理、普通文件编辑、表格清洗核对、轻量计算与 HTML 交付。",
+        "scope": "文档阅读、文件整理、普通文件编辑、表格清洗核对、轻量计算与 HTML 交付。",
         "boundary": "仅由 assistant 委派，不再次委派；不取业务或气象数据，不做业务图表、专业研判、知识问答和正式报告。",
         "outputs": "经核对的办公文件、处理说明和资源引用。",
-        "warning": (
-            "解压用户上传的 zip 用 execute_python（zipfile）：上传附件位于 data registry（沙箱只读挂载），"
-            "解压产物写入会话目录或 artifacts 后登记交付；限制解压总大小、过滤条目路径穿越（../），"
-            "处理中文文件名编码（cp437/GBK）后再交付清单。"
-        ),
     },
 }
 
@@ -157,10 +131,8 @@ _ROUTING_RULES = (
     "城市口径与全国对比用 query_monitoring_city；层级混合拆成站点+城市两个节点，"
     "层级不明确先向用户确认口径，不要用 query_monitoring 兜底（报告 DAG 已禁用，仅限非报告父模式直接委托）；"
     "气象实况/预报与空气质量预报数据用 query_forecast；"
-    "广东省超级站组分数据（离子/碳组分/地壳元素/VOCs）取数用 query_component；"
-    "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis，"
-    "组分化学、SOC/OFP 与来源指向用 expert_component，"
-    "三者可并行拆分，交叉归因（如气象导致组分累积）在 synthesis 或报告整合阶段完成；"
+    "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
+    "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"
     "expert 需要 query 系数据时，把对应问数节点写入 dependencies 并复用其 file_path；"
     "无依赖的 source 节点并行且会话隔离；同源数据由一个节点获取，后续节点通过 dependencies 复用。"
 )
@@ -276,3 +248,28 @@ def build_target_mode_contract(compact: bool = True) -> str:
         lines.append(line)
     lines.append(_ROUTING_RULES)
     return "\n".join(lines)
+
+
+def _apply_declared_target_mode_contracts() -> None:
+    """合并部署项目声明的 target_mode 契约（backend.target_mode_contracts）。
+
+    已有契约按字段覆盖（如项目改写某模式的 boundary 指向项目专属子模式），
+    新 mode id 直接注册（如广东组分问数/组分专家）。项目专属子模式契约只
+    允许出现在 projects/<id>/project.yaml，共享契约不写死任何项目子模式。
+    """
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        declared = (
+            load_project_context(settings.project_id).manifest.backend.target_mode_contracts or {}
+        )
+    except Exception as exc:
+        logger.warning("target_mode_contract_declaration_unavailable", error=str(exc))
+        return
+    for mode_id, contract in declared.items():
+        base = TARGET_MODE_CONTRACTS.get(mode_id, {})
+        TARGET_MODE_CONTRACTS[mode_id] = {**base, **contract}
+
+
+_apply_declared_target_mode_contracts()

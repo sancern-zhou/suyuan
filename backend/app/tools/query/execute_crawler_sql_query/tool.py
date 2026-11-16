@@ -287,7 +287,7 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
 
     def _columns_hint(self, tables: Optional[list]) -> str:
         """渲染涉及表的真实字段清单（优先取契约文件，逐表限量防刷屏）。"""
-        from app.tools.query.execute_crawler_sql_query.table_contracts import table_columns
+        from app.utils.table_contracts import table_columns
 
         lines: list[str] = []
         for table in (tables or [])[:4]:
@@ -405,7 +405,7 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             build_data_shape,
             infer_column_types,
         )
-        from app.tools.query.execute_crawler_sql_query.table_contracts import (
+        from app.utils.table_contracts import (
             table_column_types,
         )
 

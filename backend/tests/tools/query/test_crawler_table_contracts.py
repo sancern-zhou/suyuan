@@ -5,9 +5,9 @@ import json
 import pytest
 
 from app.agent.context.data_shape import build_data_shape
-from app.tools.query.execute_crawler_sql_query import table_contracts
-from app.tools.query.execute_crawler_sql_query.table_contracts import table_column_types
-from app.tools.query.execute_crawler_sql_query.table_contracts import (
+from app.utils import table_contracts
+from app.utils.table_contracts import table_column_types
+from app.utils.table_contracts import (
     load_table_contracts,
     render_table_contracts,
     reset_cache,
