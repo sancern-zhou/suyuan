@@ -148,6 +148,12 @@ class BackendManifest(StrictModel):
     agent_mode_deferred_tools: dict[str, list[str]] = Field(default_factory=dict)
     agent_workflow_modes: dict[str, WorkflowModeManifest] = Field(default_factory=dict)
     agent_workflow_parents: dict[str, WorkflowParentManifest] = Field(default_factory=dict)
+    # Per-tool project options for shared tools (e.g. execute_sql_query
+    # allowed_tables/exclude_tables/schema_description/alternate_table_hints,
+    # query_xcai_city_history blocked-city rules).  Shared tool code reads these
+    # instead of hardcoding project names; absent config keeps the shared
+    # default behavior.
+    tool_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     _valid_workflow_modes = field_validator("agent_workflow_modes")(valid_identifier_map)
     _valid_workflow_parents = field_validator("agent_workflow_parents")(valid_identifier_map)

@@ -63,28 +63,9 @@ MONITORING_SQL_TABLES = [
     'information_schema.tables',
 ]
 
-# 许昌问数只开放当前监测与预报业务需要的表。其他项目继续使用
-# MONITORING_SQL_TABLES，避免项目专用表目录污染共享工具的 schema。
-XUCHANG_MONITORING_SQL_TABLES = [
-    'city_aqi_publish_history',
-    'CityDayAQIPublishHistory',
-    'CityAQIPublishHistory',
-    'CurrentAirQuality',
-    'XuchangNmcHourlyWeatherForecast',
-    'dbo.XuchangNmcHourlyWeatherForecast',
-    'XuchangWeatherComDailyForecast',
-    'dbo.XuchangWeatherComDailyForecast',
-    'dat_zhongda_station_minute',
-    'dat_zhongda_station_hour',
-    'dat_zhongda_city_hour',
-    'WeatherForecast7Day',
-    'city_168_statistics_new_standard',
-    'city_168_statistics_old_standard',
-    'province_statistics_new_standard',
-    'province_statistics_old_standard',
-    'information_schema.columns',
-    'information_schema.tables',
-]
+# 项目专属表目录（如许昌问数的受限子集）经 projects/<id>/project.yaml 的
+# backend.tool_options.execute_sql_query.allowed_tables 注入，共享层不再内置
+# 任何项目的白名单分支。
 
 
 AIR_QUALITY_SCHEMA_GUIDE = (
@@ -108,16 +89,24 @@ AIR_QUALITY_SCHEMA_GUIDE = (
 )
 
 
-XUCHANG_CRAWLER_TABLE_HINTS = {
-    "dat_station_hour": (
-        "许昌国控站点小时/日长历史不通过 execute_sql_query 查询；"
-        "请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。"
-    ),
-    "dat_station_day": (
-        "许昌国控站点小时/日长历史不通过 execute_sql_query 查询；"
-        "请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。"
-    ),
-}
+def _load_sql_tool_options(project_id: str | None) -> dict[str, Any]:
+    """读取项目 backend.tool_options 中的 execute_sql_query 覆盖。
+
+    支持 keys：allowed_tables（表白名单整体替换）、exclude_tables（大小写不敏感剔除，
+    自动连带 dbo. 前缀形式）、schema_description（工具描述整体替换）、
+    alternate_table_hints（table->hint 软路由字典）。项目专属表目录与路由文案只允许
+    出现在 projects/<id>/project.yaml；未配置时使用共享默认（MONITORING_SQL_TABLES）。
+    """
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        resolved = project_id or settings.project_id
+        manifest = load_project_context(resolved).manifest
+        return manifest.backend.tool_options.get("execute_sql_query") or {}
+    except Exception as exc:
+        logger.warning("execute_sql_query_tool_options_unavailable", error=str(exc))
+        return {}
 
 
 # describe_table 结果中注入的表级口径注记：写明建表机制推导出的查询硬规则，
@@ -130,20 +119,6 @@ TABLE_CALIBER_NOTES = {
         "远期时段 publish_time 停留在较早起报属正常（NMC 滚动翻新，近端新、远端旧）。"
     ),
 }
-
-
-def _build_xuchang_schema_guide() -> str:
-    """替换数据源优先级段，写明站点/城市长历史改走 crawler 工具。"""
-    guide = AIR_QUALITY_SCHEMA_GUIDE
-    priority_start = guide.index("\n【数据源优先级】")
-    forecast_start = guide.index("\n【预报数据源优先级】")
-    xuchang_priority = (
-        "\n【数据源优先级】国控站点小时/日长历史与城市长历史使用 "
-        "execute_crawler_sql_query。"
-        "中大平台站点5分钟/小时数据仍使用本工具的 dat_zhongda_station_minute/"
-        "dat_zhongda_station_hour。"
-    )
-    return guide[:priority_start] + xuchang_priority + guide[forecast_start:]
 
 
 OPS_SQL_TABLES = [
@@ -971,15 +946,18 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
     """问数/监测数据专用SQL查询工具。"""
 
     def __init__(self, project_id: str | None = None):
-        project_id = project_id or ""
-        is_xuchang = project_id == "xuchang"
-        allowed_tables = list(XUCHANG_MONITORING_SQL_TABLES if is_xuchang else MONITORING_SQL_TABLES)
-        if project_id == "xuchang":
+        options = _load_sql_tool_options(project_id)
+
+        allowed_tables = list(options.get("allowed_tables") or MONITORING_SQL_TABLES)
+        exclude_tables = {str(name).lower() for name in options.get("exclude_tables") or []}
+        if exclude_tables:
+            # 大小写不敏感剔除，自动连带 dbo. 前缀形式（与既有许昌 openmeteo 过滤语义一致）。
+            excluded = exclude_tables | {f"dbo.{name}" for name in exclude_tables}
             allowed_tables = [
                 table for table in allowed_tables
-                if table.lower() not in {"openmeteoairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
+                if table.lower() not in excluded
             ]
-        schema_guide = _build_xuchang_schema_guide() if is_xuchang else AIR_QUALITY_SCHEMA_GUIDE
+        schema_guide = AIR_QUALITY_SCHEMA_GUIDE
         schema_description = (
             "监测数据SQL Server查询工具。二选一：describe_table 查表结构，或 sql 执行 SELECT。"
             "硬约束：只允许 SELECT（禁写/DDL）；最大返回 1000 条；中文字符串加 N 前缀（如 N'广东'），"
@@ -994,27 +972,16 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "运维表单用 execute_ops_sql_query。各表字段与样例行用 describe_table 获取。"
             + schema_guide
         )
-        if is_xuchang:
-            schema_description = (
-                "监测数据SQL Server查询工具（许昌）。二选一：describe_table 查表结构，或 sql 执行 SELECT。"
-                "硬约束：只允许 SELECT；最大 1000 条；中文串加 N 前缀；分页用 TOP。database 默认 XcAiDb。"
-                "\n【常用表索引】WeatherForecast7Day(7天预报)/XuchangNmcHourlyWeatherForecast(NMC逐3小时气象)/"
-                "XuchangWeatherComDailyForecast(许昌1-15日)/CurrentAirQuality(当前+今明摘要)/"
-                "CityAQIPublishHistory·CityDayAQIPublishHistory(城市小时·日)/"
-                "dat_zhongda_station_minute·hour·city_hour(中大平台)/city_168_statistics_*·"
-                "province_statistics_*(统计)。"
-                "\n【路由】国控站点小时/日长历史改用 execute_crawler_sql_query；"
-                "国控站点日值（日及以上）优先 query_airdata_platform（v_s_d_app_145/v_s_d_src_145），"
-                "长历史才用 crawler StationDay。各表字段与样例行用 describe_table 获取。"
-                + schema_guide
-            )
+        # 项目专属描述（如许昌的路由规则文本）经 tool_options.schema_description 整体替换。
+        schema_description = str(options.get("schema_description") or schema_description)
+        alternate_hints = options.get("alternate_table_hints") or None
         super().__init__(
             tool_name="execute_sql_query",
             tool_description="Execute monitoring SQL queries on SQL Server database or get table structure",
             schema_description=schema_description,
             allowed_tables=allowed_tables,
             default_database="XcAiDb",
-            alternate_table_hints=XUCHANG_CRAWLER_TABLE_HINTS if is_xuchang else None,
+            alternate_table_hints=dict(alternate_hints) if alternate_hints else None,
         )
 
 
