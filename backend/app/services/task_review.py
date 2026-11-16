@@ -12,6 +12,7 @@ from typing import Literal
 from uuid import uuid4
 
 import structlog
+from app.services.task_review_hooks import notify_review_decision, run_submission_validators
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.utils.path_config import get_data_registry
@@ -140,28 +141,6 @@ def review_lock(review_id):
     with review_path(review_id).with_suffix(".lock").open("a") as stream:
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         yield
-
-
-def is_work_order_review(record: dict) -> bool:
-    """判断审核记录是否属于故障工单审核（subject_id 为工单号或分类为工单审核）。"""
-    subject = str(record.get("subject_id") or "")
-    return bool(subject) and (subject.startswith("FA") or record.get("category") == "工单审核")
-
-
-def _sync_work_order_review(record: dict, decision: dict | None = None) -> None:
-    """把工单审核的 AI 提交/人工决策同步到证据包；失败不阻断审核主流程。"""
-    try:
-        if not is_work_order_review(record):
-            return
-        from app.services.jiangsu_work_order_review import sync_review_record
-
-        sync_review_record(record, decision)
-    except KeyError:
-        # 尚未采集证据包的工单审核（例如未走 jiangsu_fetch_review_evidence）跳过同步。
-        logger.debug("work_order_review_package_missing", subject_id=record.get("subject_id"))
-    except Exception as exc:
-        logger.warning("work_order_review_sync_failed", error=str(exc),
-                       subject_id=record.get("subject_id"))
 
 
 
@@ -477,11 +456,9 @@ def submit_review(payload, source):
             raise ValueError("subject_id 和 event_id 必须匹配本次任务绑定的业务编号")
     from app.scheduled_tasks.models.review_requirements import validate_review_result
     validate_review_result(submission, source.get("result_requirements", []))
-    if is_work_order_review(submission):
-        # 工单审核结论语义：通过的前提是剔除申报一致；申报无剔除而建议剔除时拒绝 approve。
-        from app.services.jiangsu_work_order_review import validate_removal_declaration_consistency
-
-        validate_removal_declaration_consistency(submission)
+    # 项目域提交校验（如江苏工单剔除申报一致性硬校验）经注册表解耦；
+    # 校验失败原样抛出阻断提交，语义与历史内联钩子一致。
+    run_submission_validators(submission)
     from app.utils.path_config import format_agent_path, is_path_within, resolve_agent_path
     for evidence in submission["evidence"]:
         path = resolve_agent_path(evidence["path"])
@@ -515,7 +492,8 @@ def submit_review(payload, source):
             "allow_archived_review_reopen": allow_reopen,
         }
         save_review(record)
-        _sync_work_order_review(record)
+        # 项目域提交后处理（如江苏证据包同步）经注册表解耦。
+        notify_review_decision(record)
         return record
 
 
@@ -558,43 +536,10 @@ def decide_review(review_id, payload, actor):
             "status": "pending", "attempts": 0,
         }
         save_review(record)
-        _sync_work_order_review(record, decision)
-        if is_work_order_review(record):
-            # 审核决策（确认归档/退回）同时写入原审核会话的反馈记录，
-            # 并在结论不一致时排队一次对话反馈确认轮（worker 每分钟派发）。
-            _notify_work_order_review_decision(record, decision, actor)
-        if decision["action"] == "reject":
-            # 智能事件人工退回后自动触发以审核意见为基准的增量 AI 研判；
-            # 钩子内部自行隔离异常，退回动作本身永不因此失败。
-            try:
-                from app.services.jiangsu_smart_event import queue_review_reject_rerun
-
-                queue_review_reject_rerun(record, decision, actor)
-            except Exception as exc:
-                logger.warning("smart_event_review_reject_rerun_hook_failed", error=str(exc))
+        # 项目域决策后处理（证据包同步/会话反馈与一致性确认/智能事件退回重跑）
+        # 经 task_review_hooks 注册表解耦；监听器异常语义见注册表模块 docstring。
+        notify_review_decision(record, decision, actor)
         return record
-
-
-def _notify_work_order_review_decision(record, decision, actor) -> None:
-    """故障工单审核决策的对话反馈：先写会话记录，再按需排队一致性确认。
-
-    两个钩子都尽力而为：失败只告警，绝不影响决策主流程。
-    """
-    session_id = None
-    try:
-        session_id = _append_review_session_record(record, decision, actor)
-    except Exception as exc:
-        logger.warning("work_order_review_session_record_failed", error=str(exc),
-                       review_id=record.get("review_id"))
-    try:
-        from app.services.jiangsu_fault_work_order_review_feedback import (
-            queue_work_order_review_feedback,
-        )
-
-        queue_work_order_review_feedback(record, decision, actor, session_id=session_id)
-    except Exception as exc:
-        logger.warning("work_order_review_feedback_hook_failed", error=str(exc),
-                       review_id=record.get("review_id"))
 
 
 async def _db_review_execution_session_id(execution_id: str) -> str | None:
@@ -642,7 +587,7 @@ async def _db_append_review_session_message(session_id: str, message: dict) -> N
     await SessionRepository().add_message(session_id, message)
 
 
-def _append_review_session_record(record, decision, actor) -> str | None:
+def append_review_session_record(record, decision, actor) -> str | None:
     """把人工审核决策作为一条消息写进原执行会话，「进入对话区」即可看到反馈记录。
 
     返回解析到的会话 ID（供反馈确认队列复用）；会话不存在时返回 None。

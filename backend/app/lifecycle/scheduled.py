@@ -76,7 +76,12 @@ async def start_scheduled_task_service() -> None:
         # 都执行本函数，注册语义不变。
         if context.manifest.project == "jiangsu-ops":
             from app.services.jiangsu_smart_event import persist_scheduled_task_result
+            from app.services.jiangsu_task_review_hooks import register_task_review_hooks
 
+            # 审核生命周期钩子（证据包同步/剔除申报硬校验/会话反馈/退回重跑）
+            # 同样仅在江苏部署注册；web 进程的审核 API 与 worker 的工具调用
+            # 都依赖本注册。
+            register_task_review_hooks()
             register_event_result_handler(persist_scheduled_task_result)
 
         service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))

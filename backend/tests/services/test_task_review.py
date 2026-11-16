@@ -9,8 +9,10 @@ from app.tools.task_management.submit_task_review import SubmitTaskReviewTool
 def registry(tmp_path, monkeypatch):
     monkeypatch.setattr(service, 'get_data_registry', lambda: tmp_path)
     monkeypatch.setattr('app.tools.resource_declarations.get_data_registry', lambda: tmp_path)
-    # 决策对话反馈钩子（写执行会话/反馈队列）在独立模块测试，这里保持决策单测纯净。
-    monkeypatch.setattr(service, '_notify_work_order_review_decision', lambda *args, **kwargs: None)
+    # 项目域钩子（写执行会话/反馈队列/证据包同步/退回重跑）在独立模块测试，
+    # 这里清空注册表保持决策单测纯净。
+    monkeypatch.setattr('app.services.task_review_hooks._decision_listeners', [])
+    monkeypatch.setattr('app.services.task_review_hooks._submission_validators', [])
 
 
 def payload(**changes):
@@ -106,8 +108,12 @@ async def test_review_conversation_resolver_hides_missing_session(monkeypatch):
 @pytest.mark.asyncio
 async def test_conversational_submit_writes_work_order_review_judgment(tmp_path, monkeypatch):
     from config.settings import settings
+    from app.services import task_review_hooks as hooks_mod
+    from app.services.jiangsu_task_review_hooks import _sync_evidence_listener
     from app.services.jiangsu_work_order_review import get_order, save_evidence
 
+    # 本测试断言的就是同步监听器的 judgment 写入行为——注册真实监听器。
+    monkeypatch.setattr(hooks_mod, "_decision_listeners", [_sync_evidence_listener])
     monkeypatch.setattr(settings, 'data_registry_dir', str(tmp_path))
     save_evidence({
         'working_order_code': 'FA260914178938611578927',
@@ -134,8 +140,12 @@ async def test_conversational_submit_writes_work_order_review_judgment(tmp_path,
 async def test_submit_tool_blocks_approve_when_declaration_says_no_removal(tmp_path, monkeypatch):
     """工单申报"无异常数据剔除"而结论建议剔除：approve 被硬校验拒绝，须改 reject 重报。"""
     from config.settings import settings
+    from app.services import task_review_hooks as hooks_mod
+    from app.services.jiangsu_task_review_hooks import _removal_declaration_validator
     from app.services.jiangsu_work_order_review import save_evidence
 
+    # 该契约由江苏提交校验器经注册表提供——本测试注册真实校验器验证阻断语义。
+    monkeypatch.setattr(hooks_mod, "_submission_validators", [_removal_declaration_validator])
     monkeypatch.setattr(settings, 'data_registry_dir', str(tmp_path))
     save_evidence({
         'working_order_code': 'FA260914178938611578927',

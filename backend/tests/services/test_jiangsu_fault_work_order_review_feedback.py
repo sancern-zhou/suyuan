@@ -16,8 +16,17 @@ def registry(tmp_path, monkeypatch):
     monkeypatch.setattr(service, "get_data_registry", lambda: tmp_path)
     monkeypatch.setattr(task_review_service, "get_data_registry", lambda: tmp_path)
     # 写执行会话需要真实 DB；反馈记录与会话追加在各自用例里单独验证。
-    monkeypatch.setattr(task_review_service, "_append_review_session_record",
+    monkeypatch.setattr(task_review_service, "append_review_session_record",
                         lambda record, decision, actor: "scheduled_task_session_1")
+    # 反馈队列经 task_review_hooks 注册表触发——本套件经 decide_review 走
+    # 完整决策路径，注册真实江苏监听器（与 lifecycle 注册点行为一致）。
+    from app.services import task_review_hooks as hooks_mod
+    from app.services import jiangsu_task_review_hooks as jiangsu_hooks
+    monkeypatch.setattr(
+        hooks_mod,
+        "_decision_listeners",
+        [jiangsu_hooks._sync_evidence_listener, jiangsu_hooks._feedback_listener],
+    )
 
 
 def review_payload(tmp_path: Path, **changes):

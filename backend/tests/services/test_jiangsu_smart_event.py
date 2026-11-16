@@ -986,6 +986,15 @@ async def test_feedback_starts_incremental_round_and_replaces_conclusion(tmp_pat
 
 @pytest.mark.asyncio
 async def test_review_reject_auto_queues_incremental_rerun_with_human_baseline(tmp_path, monkeypatch):
+    # 退回重跑钩子经 task_review_hooks 注册表触发；直调 decide_review 的测试
+    # 用 monkeypatch 作用域注册真实监听器（与 lifecycle 注册点行为一致）。
+    from app.services import task_review_hooks as hooks_mod
+    from app.services import jiangsu_task_review_hooks as jiangsu_hooks
+    monkeypatch.setattr(
+        hooks_mod,
+        "_decision_listeners",
+        [jiangsu_hooks._sync_evidence_listener, jiangsu_hooks._feedback_listener, jiangsu_hooks._reject_rerun_listener],
+    )
     scheduled = CapturingScheduledTaskService()
     monkeypatch.setattr("app.scheduled_tasks.get_scheduled_task_service", lambda: scheduled)
     # 退回钩子在 task_review 内部新建 service，走默认数据目录，须指向测试目录。
