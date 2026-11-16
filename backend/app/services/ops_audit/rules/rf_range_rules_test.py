@@ -83,8 +83,15 @@ def test_nox_esa_reaction_temperature_is_not_range_audited():
     assert [issue.rule_id for issue in issues] == ["RF_RANGE_BRAND_PROFILE_UNCOVERED"]
 
 
-def test_nox_xh_reaction_pressure_uses_source_kpa_range():
-    for raw_value, expected_out_of_spec in [("5.825", True), ("20", False), ("13", False), ("34", False)]:
+def test_nox_xh_reaction_pressure_uses_api_inhg_range():
+    """XH 为 API 贴牌机，反应室压力按 In-Hg-A 口径 <10 判定（2026-11-16 档案校正）。"""
+
+    for raw_value, expected_out_of_spec in [
+        ("5.825", False),
+        ("9.700", False),
+        ("10.5", True),
+        ("20 kPa", False),  # 20 kPa ≈ 5.9 In-Hg-A，单位换算后仍在 <10 内
+    ]:
         issues = []
         order = {"WORKINGORDERCODE": "CH2606041780562726996"}
         form = {

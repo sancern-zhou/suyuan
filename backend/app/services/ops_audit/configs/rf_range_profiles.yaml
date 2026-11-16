@@ -57,6 +57,8 @@ co_weekly_check_profiles:
     pollutant_values: ["CO", "一氧化碳"]
     fields:
       # RF_W_GASEOUSCHECK_CO.cshtml:165-170 测量信号（测量电压）
+      # XH 为 API 贴牌机（2026-11-16 复核：多站备注"仪器贴牌先河，参数范围参考API"，
+      # 在网 XH 7 台实测 2829.8~4037.6 mV 全部落在 300-3000 之外、API 区间之内），阈值对齐 API。
       - key: measurement_signal
         label: 测量信号
         field: GYCHECKVALUE
@@ -64,8 +66,8 @@ co_weekly_check_profiles:
           API: {min: 2500, max: 4800, unit: mV}
           FPI: {min: 1, max: 4, unit: V}
           TH: {min: 2000, max: 10000, unit: mV}
-          XH: {min: 300, max: 3000, unit: mV}
-      # :180-186 参比信号（参比电压）
+          XH: {min: 2500, max: 4800, unit: mV}
+      # :180-186 参比信号（参比电压）；XH 贴牌 API（实测 2622.3~3418.3 mV），阈值对齐 API
       - key: reference_signal
         label: 参比信号
         field: PMTCHECKVALUE
@@ -74,15 +76,16 @@ co_weekly_check_profiles:
           FPI: {min: 1, max: 4, unit: V}
           TH: {min: 2000, max: 10000, unit: mV}
           DASIBI: {min: 5000, max: 9000, unit: mV}
-          XH: {min: 300, max: 3000, unit: mV}
+          XH: {min: 2500, max: 4800, unit: mV}
       # :196-200 测量信号（参比信号）；大西比为零气/标气两组信号，单一区间无法表达，暂不建模
+      # XH 实测为比值口径（1.177~1.210，与 API 一致），原 2000-4900 mV 系单位口径错配（2026-11-16）
       - key: measurement_reference_signal
         label: 测量信号(参比)
         field: CBCHECKVALUE
         ranges:
           API: {min: 1.17, max: 1.22}
           FPI: {min: 1.1, max: 1.3}
-          XH: {min: 2000, max: 4900, unit: mV}
+          XH: {min: 1.17, max: 1.22}
       # :207-213 采样压力（样气压力）
       - key: sample_pressure
         label: 采样压力
@@ -106,8 +109,10 @@ co_weekly_check_profiles:
           THERMO: {min: 0.350, max: 1.500, unit: L/min}
           TH: {min: 300, max: 1200, unit: ml/min}
           DASIBI: {min: 0.8, max: 1.2, unit: L/min}
-          XH: {min: 900, max: 1100, unit: ml/min}
+          # XH 贴牌 API（实测 781~830 ml/min 落在 900-1100 之外、API 区间之内），阈值对齐 API（2026-11-16）
+          XH: {min: 720, max: 880, unit: ml/min}
       # :234-238 样品温度
+      # XH 贴牌 API（实测 45.7~47.9℃，47-49 下限过紧致多站压线误报），阈值对齐 API（2026-11-16）
       - key: sample_temperature
         label: 样品温度
         field: FYCHECKVALUE
@@ -116,7 +121,7 @@ co_weekly_check_profiles:
           FPI: {min: 15, max: 55, unit: ℃}
           THERMO: {min: 8, max: 47, unit: ℃}
           DASIBI: {min: 20, max: 45, unit: ℃}
-          XH: {min: 47, max: 49, unit: ℃}
+          XH: {min: 44, max: 52, unit: ℃}
       # :244-250 光室温度（光学室温度）
       - key: optical_temperature
         label: 光室温度
@@ -327,6 +332,7 @@ nox_weekly_check_profiles:
           DASIBI: {min: 260, max: 290, unit: ℃}
           XH: {min: 310, max: 320, unit: ℃}
       # :307-312 反应室压力（测量室内部真空压）；EC 行在源码中被 Razor 注释，不建模
+      # XH 贴牌 API：填报为 In-Hg-A 口径（实测 3.600~9.700 全部 <10），原 13-34 kPa 系单位口径错配（2026-11-16）
       - key: reaction_pressure
         label: 反应室压力
         field: FYSHICHECKVALUE
@@ -334,7 +340,7 @@ nox_weekly_check_profiles:
           API: {max: 10, operator: "<", unit: In-Hg-A}
           FPI: {min: 0, max: 15, unit: psia}
           ESA: {min: 133, max: 433, unit: mV}
-          XH: {min: 13, max: 34, unit: kPa}
+          XH: {max: 10, operator: "<", unit: In-Hg-A}
       # :324-329 采样压力（样气压力/试样压力）
       - key: sample_pressure
         label: 采样压力
@@ -490,10 +496,11 @@ pm_weekly_check_profiles:
     pollutant_values: ["PM10", "PM2.5", "PM25"]
     fields:
       # RF_W_PmCheck.cshtml:60-68 流量；源码对全部品牌统一 15.87～17.54 L/min
+      # 空值/占位不审（2026-11-16 业务确认剔除：全窗口 55% 表单该字段为空，属表单设计/填报习惯，
+      # 逐站出"检查值为空待语义复核"噪音大且无处置价值；仅对已填数值做范围比对）
       - key: main_flow
         label: 流量(Main Flow)
         field: MAINFLOWVALUE
-        semantic_required_when_blank: true
         ranges:
           default: {min: 15.87, max: 17.54, unit: L/min}
       # :69-75 采样管温度；源码统一 ≤50℃，不区分品牌
