@@ -73,7 +73,7 @@ class ToolExecution:
 DEFAULT_CONCURRENCY_SAFE_TOOLS = frozenset({
     "read_file", "grep", "glob", "search_files", "list_directory",
     "get_weather_data", "get_vocs_data", "get_pm25_ionic",
-    "get_pm25_carbon", "get_pm25_elements", "get_guangdong_regular_stations",
+    "get_pm25_carbon", "get_pm25_elements",
     "analyze_image", "list_skills",
     "call_sub_agent",  # 子Agent调用：独立session_id、模式专属记忆、只读数据传递
 })

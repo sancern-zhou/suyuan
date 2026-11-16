@@ -3,7 +3,7 @@
     <p v-if="loading">正在读取审核结果…</p>
     <p v-if="error" role="alert">{{ error }} <button @click="load">刷新</button></p>
     <template v-if="review">
-      <header class="review-header"><div class="review-eyebrow"><span>{{ review.category }}</span><span class="status-pill">{{ (jiangsuReviewStatus(review) || statuses[review.status]) }}</span></div><h2>{{ review.title }}</h2><p>{{ review.summary }}</p></header>
+      <header class="review-header"><div class="review-eyebrow"><span>{{ review.category }}</span><span class="status-pill">{{ (opsAuditReviewStatus(review) || statuses[review.status]) }}</span></div><h2>{{ review.title }}</h2><p>{{ review.summary }}</p></header>
       <p class="review-reference">业务编号：{{ review.subject_id }} <span aria-hidden="true">·</span> {{ review.task_name }}</p>
 
       <!-- 工单审核紧凑卡片按"快速研判"定位裁剪：只保留故障处理反馈、附件图片、AI 结论与人工处理，
@@ -57,7 +57,7 @@
   </section>
 </template>
 <script setup>
-import { jiangsuReviewStatus } from '../management/jiangsuJudgmentPresentation.js'
+import { opsAuditReviewStatus } from '../management/opsAuditJudgmentPresentation.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { fetchReviewEvidenceUrl, getTaskReview, decideTaskReview, downloadReviewEvidence } from '@/services/taskReviewsApi.js'
 const props = defineProps({ reviewId: { type: String, required: true }, compact: { type: Boolean, default: false } })

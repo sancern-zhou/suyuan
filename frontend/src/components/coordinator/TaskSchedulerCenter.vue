@@ -6,7 +6,7 @@
     <div class="center-content">
       <header class="scheduler-header">
         <div>
-          <p class="scheduler-kicker">广东大气环境智能体 · 任务调度</p>
+          <p class="scheduler-kicker">{{ projectConfig.brandName }} · 任务调度</p>
           <h1>任务调度中心</h1>
           <p class="scheduler-description">集中展示故障工单审核等定时任务的审核结果；已归档与已退回的记录保留在列表中，可用状态筛选聚焦待办。</p>
         </div>
@@ -117,8 +117,9 @@
 </template>
 
 <script setup>
-import { jiangsuReviewStatus } from '../management/jiangsuJudgmentPresentation.js'
+import { opsAuditReviewStatus } from '../management/opsAuditJudgmentPresentation.js'
 import { computed, onMounted, ref, watch } from 'vue'
+import { projectConfig } from '@/config/projectConfig.js'
 import { listTaskReviews } from '@/services/taskReviewsApi.js'
 import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 
@@ -140,7 +141,7 @@ const todoTasks = computed(() => reviews.value.map(review => ({
   ...review, taskName: review.task_name, occurredAt: review.updated_at
 })))
 
-const formatTodoStatus = task => jiangsuReviewStatus(task) || ({
+const formatTodoStatus = task => opsAuditReviewStatus(task) || ({
   pending_review: '待人工确认', in_disposal: '待处置', archived: '已归档', rejected: '已退回',
 }[task.status])
 const formatTodoTime = value => {

@@ -271,6 +271,8 @@ backend/docs/skills/*
 !backend/docs/skills/xlsx_authoring.md
 !backend/docs/skills/xlsx_authoring/
 !backend/docs/skills/xlsx_authoring/**
+# 以下 skill 文档本分支已裁撤，但 main 仍在用；白名单保持跨分支规则收敛，
+# 防止 merge main 时文件回归再次静默不入库
 !backend/docs/skills/routine_monitoring_analysis_expert.md
 !backend/docs/skills/weather_analysis_expert.md
 !backend/docs/skills/xuchang_station_daily_source_report.md
@@ -355,9 +357,14 @@ deploy/nginx/templates-local/
 !backend/app/tools/query/guangdong_ops_sql_query/contract.txt
 !backend/app/tools/query/guangdong_ops_sql_query/ods_contract.txt
 !projects/guangdong/docs/
+# 数据源普查参考文档（行数/时间字段口径）
+!projects/guangdong/data-ops/docs/*.txt
+# 站点运维日报渲染的运行时模板
+!projects/guangdong/station_operation_monitor/template.docx
 
 # ZCode 会话产物（计划存档等本地文件）
 .zcode/
+frontend/npm-cache/
 
 # 维护守护进程本地配置与缰绳状态
 deploy/maintenance/maintenance.env
