@@ -335,16 +335,17 @@ class GetJiangxiNoiseTrendsTool(LLMTool):
         compare_date = None
         if args.get("compare_date"):
             compare_date = parse_datetime_param(args.get("compare_date"), "compare_date")
+        else:
+            compare_date = monitor_date - timedelta(days=1)
         data_type = require_enum(
             args.get("review_status", "raw"), REVIEW_STATUS_DATA_TYPE, "review_status"
         )
         body: dict[str, Any] = {
             "stationCode": station_code[0],
             "monitorDate": platform_time(monitor_date),
+            "compareDate": platform_time(compare_date),
             "dataType": data_type,
         }
-        if compare_date is not None:
-            body["compareDate"] = platform_time(compare_date)
         result = await self._get_client().query_platform_api("trend_24h", json_body=body)
         return {"success": True, "data": result.get("data"), "trend": "trend_24h"}
 

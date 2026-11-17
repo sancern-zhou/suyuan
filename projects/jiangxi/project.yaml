@@ -5,9 +5,10 @@ modules:
   - jiangxi-noise
 frontend:
   theme: default
-  brand_name: 江西省噪声智能分析平台
+  brand_name: 江西省噪声智能分析平台  # 同时用于浏览器标题
   features:
     era5HistoricalBackfill: false
+    hide_sidebar_brand: true  # 侧边栏不显示品牌名（标题仍保留）
   agent_modes:
     - query
     - assistant
@@ -60,9 +61,18 @@ frontend:
   agent_platform_layout: environment-grid
 backend:
   gis_tools_enabled: false
+  # 声环境项目不引用共享"数据源地图"与"环境空气质量标准过渡"两段：
+  # 地图是"域 → 工具名"的路由表，过渡段写的是 PM10/PM2.5 限值，
+  # 二者出现在声环境系统提示词里既误导又违反"提示词不写工具选型"。
+  # 取数路由契约完整保留在 execute_postgres_sql_query 工具 schema 与项目提示词中。
+  data_source_map_enabled: false
+  air_quality_standard_transition: false
   mode_prompt_files:
     assistant: projects/jiangxi/prompts/knowledge_qa.md
     query: projects/jiangxi/prompts/query.md
+    expert: projects/jiangxi/prompts/expert.md
+    report: projects/jiangxi/prompts/report.md
+  report_final_review_prompt_file: projects/jiangxi/prompts/report_final_review.md
   tools:
     - get_jiangxi_noise_data
     - get_jiangxi_noise_statistics
@@ -86,7 +96,6 @@ backend:
       - publish_session_file
       - knowledge_qa_workflow
       - knowledge_document_reader
-      - create_report_chart
       - execute_echarts_python
       - execute_python
       - read_file
@@ -106,6 +115,7 @@ backend:
       - search_jiangxi_noise_apis
       - describe_jiangxi_noise_api
       - call_jiangxi_noise_api
+      - execute_postgres_sql_query
     query:
       - list_session_resources
       - publish_session_file
@@ -115,7 +125,6 @@ backend:
       - edit_file
       - list_directory
       - search_files
-      - create_report_chart
       - execute_echarts_python
       - execute_python
       - get_jiangxi_noise_data
@@ -129,10 +138,10 @@ backend:
       - search_jiangxi_noise_apis
       - describe_jiangxi_noise_api
       - call_jiangxi_noise_api
+      - execute_postgres_sql_query
     report:
       - list_session_resources
       - publish_session_file
-      - create_report_chart
       - execute_echarts_python
       - read_file
       - write_file
@@ -151,6 +160,7 @@ backend:
       - search_jiangxi_noise_apis
       - describe_jiangxi_noise_api
       - call_jiangxi_noise_api
+      - execute_postgres_sql_query
     chart:
       - list_session_resources
       - publish_session_file
@@ -161,7 +171,6 @@ backend:
       - list_directory
       - search_files
       - bash
-      - create_report_chart
       - execute_python
       - execute_echarts_python
       - get_jiangxi_noise_data

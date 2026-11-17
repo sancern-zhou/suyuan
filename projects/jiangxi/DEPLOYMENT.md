@@ -36,3 +36,55 @@ grep -R "resources?presentation_type=document" /home/xckj/suyuan/frontend/dist/a
 docker exec suyuan-nginx nginx -s reload
 curl -fsS http://127.0.0.1:5174/ | grep -F '<title>江西省噪声智能分析平台</title>'
 ```
+
+## 复用噪声平台登录态（SSO）
+
+溯源通过「一次性签名票据 + 跳转」复用噪声平台的登录态，用户无需二次登录。
+
+### 溯源侧配置
+
+`backend/.env`（web 与 worker 必须一致）：
+
+```bash
+AUTH_EXTRA_SYS_CODES=NOISE          # 额外接受浏览器带来的噪声平台 SysCode
+AUTH_PLATFORM_SYS_CODES=JCXT,NOISE  # 复核上游 token 时依次尝试
+SSO_SHARED_SECRET=<与噪声平台约定的长随机串>
+SSO_TICKET_TTL_SECONDS=60
+SSO_SESSION_TTL_SECONDS=28800
+SSO_DEFAULT_ROLES=viewer
+```
+
+`SSO_SHARED_SECRET` 为空时 `/api/auth/sso/exchange` 返回 404（整体禁用）。
+票据一次性校验依赖 Redis（`REDIS_*`），Redis 不可用时交换失败（fail closed）。
+
+### 噪声平台侧签发
+
+票据为 `base64url(payload) + "." + base64url(HMAC-SHA256(secret, payload_b64))`，
+`payload` 为 JSON：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `u` | 是（或 `t`） | 用户 ID |
+| `n` | 否 | 用户名，缺省用 `u` |
+| `d` | 否 | 显示名，缺省用 `n` |
+| `r` | 否 | 角色码数组，为空时用 `SSO_DEFAULT_ROLES` |
+| `t` | 否 | 上游访问令牌；存在时溯源会先向认证服务复核身份，以防伪造 |
+| `e` | 是 | 过期时间（Unix 秒），必须 ≤ 当前时间 + `SSO_TICKET_TTL_SECONDS` |
+| `j` | 是 | 唯一票据 ID（如 uuid4），用于防重放 |
+
+签名示例（Python）：
+
+```python
+import base64, hashlib, hmac, json, time, uuid
+
+def sign_ticket(secret: str, *, uid: str, name: str, roles: list[str], ttl: int = 60) -> str:
+    payload = {"u": uid, "n": name, "r": roles, "e": int(time.time()) + ttl, "j": str(uuid.uuid4())}
+    enc = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
+    sig = base64.urlsafe_b64encode(hmac.new(secret.encode(), enc, hashlib.sha256).digest()).rstrip(b"=")
+    return f"{enc.decode()}.{sig.decode()}"
+```
+
+跳转目标：`https://<溯源域名>/sso?ticket=<票据>&redirect=/`（`redirect` 可选，仅接受站内绝对路径）。
+前端在 `/sso` 调用 `POST /api/auth/sso/exchange` 换取本地会话令牌并写入
+`Access-Token`/`Access-Sys-Code`/`Access-User`，随后跳转。
+

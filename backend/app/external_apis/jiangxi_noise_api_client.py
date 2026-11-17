@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
@@ -75,6 +76,14 @@ class JiangxiNoiseDataClient:
 
     TOKEN_ENDPOINT = "/api/noiseproduct/AirCityBaseCommon/GetExternalApiToken"
 
+    # 本地认证服务令牌端点：江西噪声平台为本地内网部署，GetExternalApiToken
+    # 会转发到不可达的外网链路，因此直连本地认证服务换取令牌。
+    LOCAL_TOKEN_ENDPOINT = "/api/auth/token/get"
+
+    # 本地令牌缓存有效期（秒）。认证服务对同一 secretName 返回稳定令牌，
+    # 过期后数据接口返回 401，客户端会自动重新换取。
+    TOKEN_CACHE_SECONDS = 1800.0
+
     API_ENDPOINTS = {
         "station_hour": (
             "/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync"
@@ -144,23 +153,23 @@ class JiangxiNoiseDataClient:
         # 趋势对比
         "year_on_year": (
             "POST",
-            "/api/noiseproduct/airdata/NoiseYearOnYearAnalysisDataService/GetNoiseYearOnYearAnalysisDataAsync",
+            "/api/noiseproduct/airdata/NoiseYearOnYearAnalysisData/GetNoiseYearOnYearAnalysisDataAsync",
         ),
         "period_on_period": (
             "POST",
-            "/api/noiseproduct/airdata/NoiseYearOnYearAnalysisDataService/GetNoisePeriodOnPeriodAnalysisDataAsync",
+            "/api/noiseproduct/airdata/NoiseYearOnYearAnalysisData/GetNoisePeriodOnPeriodAnalysisDataAsync",
         ),
         "trend_24h": (
             "POST",
-            "/api/noiseproduct/airdata/Noise24HourTrendDataService/GetNoise24HourTrendAsync",
+            "/api/noiseproduct/airdata/Noise24HourTrendData/GetNoise24HourTrendAsync",
         ),
         "long_term_trend": (
             "POST",
-            "/api/noiseproduct/airdata/NoiseLongTermTrendDataService/GetNoiseLongTermTrendDataAsync",
+            "/api/noiseproduct/airdata/NoiseLongTermTrendData/GetNoiseLongTermTrendDataAsync",
         ),
         "noise_compare": (
             "POST",
-            "/api/noiseproduct/airdata/NoiseCompareDataService/GetNoiseCompareDataAsync",
+            "/api/noiseproduct/airdata/NoiseCompareData/GetNoiseCompareDataAsync",
         ),
         # 噪声源与事件
         "source_analysis": (
@@ -426,25 +435,35 @@ class JiangxiNoiseDataClient:
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
         auth_token: str = "",
+        auth_base_url: str = "",
+        auth_username: str | None = None,
     ) -> None:
         base_url = base_url.strip().rstrip("/")
         username = username.strip()
         secret_key = secret_key.strip()
+        auth_base_url = auth_base_url.strip().rstrip("/")
+        auth_username = (auth_username or "").strip() if auth_username is not None else ""
         if not base_url:
             raise JiangxiNoiseClientError(
                 "configuration_error",
                 "缺少环境变量 JIANGXI_NOISE_BASE_URL",
             )
-        if not username:
+        if auth_base_url and not auth_username:
             raise JiangxiNoiseClientError(
                 "configuration_error",
-                "缺少环境变量 JIANGXI_NOISE_USERNAME",
+                "缺少环境变量 JIANGXI_NOISE_AUTH_USERNAME",
             )
-        if not secret_key:
-            raise JiangxiNoiseClientError(
-                "configuration_error",
-                "缺少环境变量 JIANGXI_NOISE_SECRET_KEY",
-            )
+        if not (auth_base_url and auth_username):
+            if not username:
+                raise JiangxiNoiseClientError(
+                    "configuration_error",
+                    "缺少环境变量 JIANGXI_NOISE_USERNAME",
+                )
+            if not secret_key:
+                raise JiangxiNoiseClientError(
+                    "configuration_error",
+                    "缺少环境变量 JIANGXI_NOISE_SECRET_KEY",
+                )
         if timeout <= 0:
             raise JiangxiNoiseClientError(
                 "configuration_error",
@@ -461,6 +480,14 @@ class JiangxiNoiseDataClient:
         # token 过期需在平台 Web 重新登录获取并更新环境变量。
         self._auth_token = (auth_token or "").strip()
         self._token: str | None = self._auth_token or None
+        self.auth_base_url = auth_base_url
+        self.auth_username = auth_username
+        self._token_issued_at: float = 0.0
+
+    @property
+    def uses_local_auth(self) -> bool:
+        """是否使用本地认证服务直连模式换取令牌。"""
+        return bool(self.auth_base_url and self.auth_username)
 
     @classmethod
     def from_env(cls) -> JiangxiNoiseDataClient:
@@ -469,6 +496,8 @@ class JiangxiNoiseDataClient:
         username = os.getenv("JIANGXI_NOISE_USERNAME", "")
         secret_key = os.getenv("JIANGXI_NOISE_SECRET_KEY", "")
         auth_token = os.getenv("JIANGXI_NOISE_AUTH_TOKEN", "")
+        auth_base_url = os.getenv("JIANGXI_NOISE_AUTH_BASE_URL", "")
+        auth_username = os.getenv("JIANGXI_NOISE_AUTH_USERNAME", "")
         timeout_value = os.getenv("JIANGXI_NOISE_TIMEOUT_SECONDS", "30")
         try:
             timeout = float(timeout_value)
@@ -483,6 +512,8 @@ class JiangxiNoiseDataClient:
             secret_key=secret_key,
             timeout=timeout,
             auth_token=auth_token,
+            auth_base_url=auth_base_url,
+            auth_username=auth_username or None,
         )
 
     def _create_http_client(self) -> httpx.AsyncClient:
@@ -509,6 +540,9 @@ class JiangxiNoiseDataClient:
         return payload
 
     async def _authenticate(self, client: httpx.AsyncClient) -> None:
+        if self.uses_local_auth:
+            await self._authenticate_local(client)
+            return
         try:
             response = await client.get(
                 self.TOKEN_ENDPOINT,
@@ -547,7 +581,50 @@ class JiangxiNoiseDataClient:
                 "江西噪声平台认证失败",
             )
         self._token = token.strip()
+        self._token_issued_at = time.monotonic()
         logger.info("jiangxi_noise_authenticated")
+
+    async def _authenticate_local(self, client: httpx.AsyncClient) -> None:
+        """直连本地认证服务换取 Bearer 令牌，不经过外网链路。"""
+        try:
+            response = await client.get(
+                f"{self.auth_base_url}{self.LOCAL_TOKEN_ENDPOINT}",
+                headers={"syscode": "NOISE"},
+                params={"secretName": self.auth_username},
+            )
+        except httpx.TimeoutException as exc:
+            raise JiangxiNoiseClientError(
+                "authentication_timeout",
+                "江西噪声平台本地认证服务超时",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise JiangxiNoiseClientError(
+                "authentication_unavailable",
+                "无法连接江西噪声平台本地认证服务",
+            ) from exc
+
+        if response.status_code >= 400:
+            raise JiangxiNoiseClientError(
+                "authentication_failed",
+                f"江西噪声平台本地认证失败（HTTP {response.status_code}）",
+            )
+
+        payload = self._decode_json(response)
+        token = payload.get("result") if payload.get("success") else None
+        if not isinstance(token, str) or not token.strip():
+            raise JiangxiNoiseClientError(
+                "authentication_failed",
+                "江西噪声平台本地认证失败",
+            )
+        self._token = token.strip()
+        self._token_issued_at = time.monotonic()
+        logger.info("jiangxi_noise_local_authenticated")
+
+    def _token_expired(self) -> bool:
+        """本地令牌超过缓存有效期则需要重新换取。"""
+        if self._token_issued_at <= 0:
+            return False
+        return time.monotonic() - self._token_issued_at >= self.TOKEN_CACHE_SECONDS
 
     async def _request_result(
         self,
@@ -559,6 +636,9 @@ class JiangxiNoiseDataClient:
     ) -> Any:
         async with self._create_http_client() as client:
             for attempt in range(2):
+                if self._token and self._token_expired():
+                    self._token = None
+                    logger.info("jiangxi_noise_token_expired")
                 if not self._token:
                     await self._authenticate(client)
 
@@ -762,6 +842,10 @@ class JiangxiNoiseDataClient:
         )
         if isinstance(result, dict) and "items" in result:
             return self._paged_result(result)
+        if isinstance(result, dict) and isinstance(result.get("tableData"), dict):
+            paged = self._paged_result(result["tableData"])
+            paged.update({k: v for k, v in result.items() if k != "tableData"})
+            return paged
         if isinstance(result, list):
             return {"success": True, "data": result, "total_count": len(result)}
         return {"success": True, "data": result}

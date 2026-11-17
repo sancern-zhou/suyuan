@@ -50,12 +50,30 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.frontend.agent_platform_layout == "environment-grid"
     assert context.manifest.backend.fetchers_enabled is False
     assert context.manifest.backend.gis_tools_enabled is False
+    assert context.manifest.backend.data_source_map_enabled is False
+    assert context.manifest.backend.air_quality_standard_transition is False
     assert context.manifest.backend.mode_prompt_files == {
         "assistant": "projects/jiangxi/prompts/knowledge_qa.md",
-        "query": "projects/jiangxi/prompts/query.md"
+        "query": "projects/jiangxi/prompts/query.md",
+        "expert": "projects/jiangxi/prompts/expert.md",
+        "report": "projects/jiangxi/prompts/report.md",
     }
+    assert (
+        context.manifest.backend.report_final_review_prompt_file
+        == "projects/jiangxi/prompts/report_final_review.md"
+    )
     assert context.manifest.backend.tools == [
         "get_jiangxi_noise_data",
+        "get_jiangxi_noise_statistics",
+        "get_jiangxi_noise_trends",
+        "get_jiangxi_noise_events",
+        "get_jiangxi_noise_runtime_status",
+        "get_jiangxi_noise_directory",
+        "get_jiangxi_noise_alarm_analysis",
+        "get_jiangxi_noise_compliance",
+        "search_jiangxi_noise_apis",
+        "describe_jiangxi_noise_api",
+        "call_jiangxi_noise_api",
     ]
     assert context.manifest.backend.agent_mode_tools["assistant"] == [
         "knowledge_qa_workflow",
@@ -200,3 +218,34 @@ def test_missing_dependency_fails_closed(tmp_path: Path):
 def test_unsafe_project_identifier_is_rejected(project_id: str, tmp_path: Path):
     with pytest.raises(ProjectConfigError, match="invalid project identifier"):
         load_project_context(project_id, repo_root=tmp_path)
+
+
+def test_manifest_parse_cache_is_not_mutated_by_callers(tmp_path: Path):
+    (tmp_path / "projects" / "demo").mkdir(parents=True)
+    manifest_path = tmp_path / "projects" / "demo" / "project.yaml"
+    manifest_path.write_text("schema_version: 1\nproject: demo\nmodules: []\n", encoding="utf-8")
+
+    first = load_project_context("demo", repo_root=tmp_path)
+    first.manifest.backend.tools.append("mutated_tool")
+    first.manifest.frontend.brand_name = "mutated"
+
+    second = load_project_context("demo", repo_root=tmp_path)
+
+    assert second.manifest.backend.tools == []
+    assert second.manifest.frontend.brand_name == "风清气智"
+
+
+def test_manifest_parse_cache_picks_up_content_changes(tmp_path: Path):
+    (tmp_path / "projects" / "demo").mkdir(parents=True)
+    manifest_path = tmp_path / "projects" / "demo" / "project.yaml"
+    manifest_path.write_text("schema_version: 1\nproject: demo\nmodules: []\n", encoding="utf-8")
+    load_project_context("demo", repo_root=tmp_path)
+
+    manifest_path.write_text(
+        "schema_version: 1\nproject: demo\nmodules: []\nbackend:\n  tools: [new_tool]\n",
+        encoding="utf-8",
+    )
+
+    reloaded = load_project_context("demo", repo_root=tmp_path)
+
+    assert reloaded.manifest.backend.tools == ["new_tool"]

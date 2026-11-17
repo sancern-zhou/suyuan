@@ -42,6 +42,7 @@ from app.tools.query.query_jiangxi_noise.trends_tool import GetJiangxiNoiseTrend
 pytestmark = pytest.mark.asyncio
 
 TOKEN_PATH = "/api/noiseproduct/AirCityBaseCommon/GetExternalApiToken"
+LOCAL_TOKEN_PATH = "/api/auth/token/get"
 START = "2026-07-01T00:00:00+08:00"
 END = "2026-07-02T00:00:00+08:00"
 
@@ -52,10 +53,12 @@ class FakePlatform:
     def __init__(self, results: dict[str, Any] | None = None) -> None:
         self.results = results or {}
         self.requests: list[tuple[str, httpx.Request]] = []
+        self.token_requests: list[httpx.Request] = []
         self.responses: list[int] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        if request.url.path == TOKEN_PATH:
+        if request.url.path in (TOKEN_PATH, LOCAL_TOKEN_PATH):
+            self.token_requests.append(request)
             return httpx.Response(200, json={"success": True, "result": "token-1"})
         route = self._match_route(request.url.path)
         if route is None:
@@ -87,6 +90,17 @@ def make_client(fake: FakePlatform) -> JiangxiNoiseDataClient:
         username="user",
         secret_key="secret",
         transport=httpx.MockTransport(fake),
+    )
+
+
+def make_local_auth_client(fake: FakePlatform) -> JiangxiNoiseDataClient:
+    return JiangxiNoiseDataClient(
+        base_url="http://platform",
+        username="",
+        secret_key="",
+        transport=httpx.MockTransport(fake),
+        auth_base_url="http://auth",
+        auth_username="ScGuanLy",
     )
 
 
@@ -411,6 +425,22 @@ async def test_trends_24h_body():
     assert body["compareDate"] == "2026-10-13 00:00:00"
 
 
+async def test_trends_24h_defaults_compare_date_to_previous_day():
+    fake = FakePlatform({"trend_24h": {"stationCode": "1737A"}})
+    tool = GetJiangxiNoiseTrendsTool(client=make_client(fake))
+    result = await tool.execute(
+        trend="trend_24h",
+        station_code="1737A",
+        monitor_date="2026-10-20T00:00:00+08:00",
+    )
+    assert result["success"] is True
+    route, request = fake.last()
+    assert route == "trend_24h"
+    body = body_of(request)
+    assert body["monitorDate"] == "2026-10-20 00:00:00"
+    assert body["compareDate"] == "2026-10-19 00:00:00"
+
+
 async def test_trends_compare_requires_codes():
     tool = GetJiangxiNoiseTrendsTool(client=make_client(FakePlatform()))
     result = await tool.execute(
@@ -610,6 +640,55 @@ async def test_client_unknown_route():
     client = make_client(FakePlatform())
     with pytest.raises(Exception):
         await client.query_platform_api("no_such_route")
+
+
+async def test_client_local_auth_uses_secret_name_endpoint():
+    fake = FakePlatform({"station_hour": {"items": [], "totalCount": 0}})
+    client = make_local_auth_client(fake)
+    assert client.uses_local_auth is True
+    result = await client.query_station_hour_data(
+        station_codes=["1737A"],
+        start_time=datetime(2026, 7, 1),
+        end_time=datetime(2026, 7, 2),
+    )
+    assert result["success"] is True
+    assert len(fake.token_requests) == 1
+    token_request = fake.token_requests[0]
+    assert token_request.url.path == LOCAL_TOKEN_PATH
+    assert token_request.url.host == "auth"
+    assert query_of(token_request)["secretName"] == "ScGuanLy"
+    assert token_request.headers["syscode"] == "NOISE"
+    hour_requests = [r for route, r in fake.requests if route == "station_hour"]
+    assert hour_requests
+    assert hour_requests[0].headers["Authorization"] == "Bearer token-1"
+
+
+async def test_client_local_auth_requires_username():
+    with pytest.raises(Exception):
+        JiangxiNoiseDataClient(
+            base_url="http://platform",
+            username="user",
+            secret_key="secret",
+            auth_base_url="http://auth",
+            auth_username="",
+        )
+
+
+async def test_client_unwraps_table_data_payload():
+    fake = FakePlatform(
+        {
+            "source_analysis": {
+                "tableData": {"items": [{"stationCode": "1737A"}], "totalCount": 1},
+                "pieData": [{"name": "交通", "value": 1}],
+            }
+        }
+    )
+    client = make_client(fake)
+    result = await client.query_platform_api("source_analysis")
+    assert result["success"] is True
+    assert result["total_count"] == 1
+    assert result["data"] == [{"stationCode": "1737A"}]
+    assert result["pieData"] == [{"name": "交通", "value": 1}]
 
 
 # ---------------------------------------------------------------------------
