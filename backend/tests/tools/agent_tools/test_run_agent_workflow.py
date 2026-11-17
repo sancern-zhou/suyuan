@@ -946,3 +946,108 @@ async def test_workflow_result_carries_node_digest_in_content(monkeypatch):
     assert "380" in result["result"]
     assert "各节点结论摘要" in result["result"]
     assert "380" in result["summary"]
+
+
+def _project_report_policy_backend():
+    """声明 report 父策略的最小项目 manifest（仿 project_policy_test 的配置）。"""
+    from app.project_config.models import BackendManifest
+
+    return BackendManifest.model_validate({
+        "agent_mode_tools": {
+            "report": ["run_agent_workflow"],
+            "noise_query_monitoring": ["read_file"],
+            "noise_expert_analysis": ["read_file"],
+        },
+        "mode_prompt_files": {
+            "noise_query_monitoring": "projects/sample/nqm.md",
+            "noise_expert_analysis": "projects/sample/nea.md",
+        },
+        "agent_workflow_modes": {
+            "noise_query_monitoring": {
+                "positioning": "监测问数", "scope": "取数与核算", "boundary": "不研判",
+                "outputs": "数据文件与缺口说明", "max_iterations": 6, "timeout_seconds": 120,
+            },
+            "noise_expert_analysis": {
+                "positioning": "研判", "scope": "成因研判", "boundary": "不成稿",
+                "outputs": "结论与证据", "max_iterations": 8, "timeout_seconds": 240,
+            },
+        },
+        "agent_workflow_parents": {
+            "report": {"child_modes": ["noise_query_monitoring", "noise_expert_analysis"]},
+        },
+    })
+
+
+def _patch_project_backend(monkeypatch):
+    from app.agent.workflow import project_policy
+
+    backend = _project_report_policy_backend()
+    monkeypatch.setattr(project_policy, "active_backend", lambda: backend)
+
+
+@pytest.mark.asyncio
+async def test_report_mode_allows_project_child_modes_with_parent_policy(monkeypatch):
+    """项目声明 agent_workflow_parents.report 时，报告 DAG 接受项目子模式节点。
+
+    共享大气清单（REPORT_NODE_ALLOWED_MODES）不再叠加：子模式边界由
+    delegation_error 按项目 child_modes 强制。
+    """
+    calls = []
+
+    async def fake_execute(self, **kwargs):
+        calls.append(kwargs["target_mode"])
+        return {
+            "status": "success",
+            "success": True,
+            "result": kwargs["goal"],
+            "data": {"result_envelope": {"status": "completed", "summary": kwargs["goal"], "evidence": [], "artifacts": []}},
+        }
+
+    _patch_project_backend(monkeypatch)
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="report", session_id="report_session_project")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "report-project",
+            "nodes": [
+                {"task_id": "monitoring", "target_mode": "noise_query_monitoring", "goal": "全省日值统计取数"},
+                {"task_id": "judgment", "target_mode": "noise_expert_analysis", "goal": "超标成因研判",
+                 "dependencies": ["monitoring"]},
+            ],
+        },
+    )
+    assert result["success"] is True, result
+    assert set(calls) == {"noise_query_monitoring", "noise_expert_analysis"}
+
+
+@pytest.mark.asyncio
+async def test_report_policy_rejects_shared_air_and_primary_modes(monkeypatch):
+    """项目 report 父策略下：共享大气子模式与综合主模式仍被 delegation_error 拒绝。"""
+    async def fake_execute(self, **kwargs):
+        raise AssertionError("sub agent must not be invoked")
+
+    _patch_project_backend(monkeypatch)
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="report", session_id="report_session_project")
+
+    air_result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "report-air",
+            "nodes": [{"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判"}],
+        },
+    )
+    assert air_result["success"] is False
+    assert "noise_query_monitoring" in air_result["result"]
+    assert "noise_expert_analysis" in air_result["result"]
+
+    query_result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "report-query",
+            "nodes": [{"task_id": "air", "target_mode": "query", "goal": "取数"}],
+        },
+    )
+    assert query_result["success"] is False
+    assert "不允许作为子 Agent" in query_result["result"]
