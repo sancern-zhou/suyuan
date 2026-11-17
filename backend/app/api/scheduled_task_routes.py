@@ -244,9 +244,19 @@ def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
     )
 
 
-async def _validate_event_task_config(task: ScheduledTask) -> None:
+def _project_manifest() -> "ProjectManifest":
+    """当前部署的项目清单（路由/Agent 工具共享的事件命名空间过滤依据）。"""
+    from app.project_config.loader import load_project_context
+    from config.settings import settings
+
+    return load_project_context(settings.project_id).manifest
+
+
+async def _validate_event_task_config(
+    task: ScheduledTask, manifest: "ProjectManifest | None" = None
+) -> None:
     if task.trigger_type == TriggerType.EVENT and not get_event_definition(
-        task.event_type or ""
+        task.event_type or "", manifest
     ):
         raise HTTPException(
             status_code=400,
@@ -427,7 +437,8 @@ def _accessible_task_ids(user: CurrentUser) -> set[str] | None:
 async def list_event_types(
     _: CurrentUser = Depends(require_current_user),
 ):
-    return get_event_definitions()
+    # 事件目录按部署项目过滤命名空间（如 xuchang.* 不再暴露给其他项目）。
+    return get_event_definitions(_project_manifest())
 
 
 @router.get("/tools")
@@ -556,7 +567,7 @@ async def create_task(
             owner_username=user.username,
             owner_display_name=user.display_name,
         )
-        await _validate_event_task_config(task)
+        await _validate_event_task_config(task, _project_manifest())
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
         _validate_workflow_task(task)
@@ -1086,7 +1097,7 @@ async def update_task(
         if {"model_tier", "result_requirements"} & updates.keys():
             task_data["created_by"] = "user"
         task = ScheduledTask.model_validate(task_data)
-        await _validate_event_task_config(task)
+        await _validate_event_task_config(task, _project_manifest())
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
         _validate_workflow_task(task)

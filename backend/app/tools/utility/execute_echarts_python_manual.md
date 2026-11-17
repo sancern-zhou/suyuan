@@ -11,6 +11,15 @@
 - 正文或正式报告 Word/QMD 所需通用静态图使用 `execute_python`，已支持的专用业务图型必须使用 `create_business_chart`；需要把问数结果写入报告时复用原始数据绘制静态图或复用业务工具图片。
 - 数据清洗、中间计算、文件生成和 matplotlib/seaborn/plotly 绘图使用 `execute_python`。
 
+## 参数体积约束（重要）
+
+工具参数是流式生成的，参数越长、被上游网关中途截断的概率越高；截断后整次调用作废，只能减少参数重来。
+
+- `code` 参数控制在约 1500 字符（脚本 ≤150 行）以内，不要内联大段数据或配置。
+- 数据一律通过 `load_data(file_path)` 从文件读取，禁止把记录数组直接写进代码。
+- 需要复用大段样式/配置时，先写入文件再用 `load_data` 读取，而不是每次调用都重新内联。
+- 参数过长被截断时，工具会返回 `tool_arguments_truncated` 错误：不要原样重发，必须压缩参数后重试。
+
 ## 标准数据访问流程
 
 Data is passed between tools using canonical absolute file paths.

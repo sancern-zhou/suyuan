@@ -28,7 +28,7 @@ class ReactAgentAPI {
     const {
       sessionId = null,
       enhanceWithHistory = true,
-      maxIterations = 120,
+      maxIterations = null,
       assistantMode = null,  // 助手模式
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
@@ -44,6 +44,7 @@ class ReactAgentAPI {
       pageContext = null,
       requestKey = sessionId,
       onAccepted,
+      onRejected,
       onEvent
     } = options
 
@@ -72,12 +73,13 @@ class ReactAgentAPI {
       body,
       onEvent,
       requestKey || sessionId || `request_${Date.now()}`,
-      onAccepted
+      onAccepted,
+      onRejected
     )
   }
 
   // ✅ 新增：内部方法 - 统一的SSE流处理
-  async _streamRequest(url, body, onEvent, requestKey = 'default', onAccepted) {
+  async _streamRequest(url, body, onEvent, requestKey = 'default', onAccepted, onRejected) {
     if (this.controllers.has(requestKey)) {
       this.controllers.get(requestKey).abort()
       this.controllers.delete(requestKey)
@@ -87,6 +89,7 @@ class ReactAgentAPI {
     this.controllers.set(requestKey, controller)
     this.controller = controller
 
+    let accepted = false
     try {
       const response = await authFetch(url, {
         method: 'POST',
@@ -98,6 +101,7 @@ class ReactAgentAPI {
       })
 
       acceptStreamResponse(response, onAccepted)
+      accepted = true
 
       await this._readSseStream(response, onEvent)
     } catch (error) {
@@ -105,6 +109,7 @@ class ReactAgentAPI {
         console.log('Request was aborted')
       } else {
         console.error('Analysis failed:', error)
+        if (!accepted && typeof onRejected === 'function') onRejected(error)
         throw error
       }
     } finally {
@@ -199,13 +204,11 @@ class ReactAgentAPI {
     }
   }
 
-  // 简单查询（非流式）
-  async simpleQuery(query, maxIterations = 10) {
+  // 简单查询（非流式）；maxIterations 为 null 时不传（后端默认无步数上限）
+  async simpleQuery(query, maxIterations = null) {
     const url = `${API_BASE_URL}/agent/query`
-    const body = {
-      query,
-      max_iterations: maxIterations
-    }
+    const body = { query }
+    if (maxIterations !== null) body.max_iterations = maxIterations
 
     try {
       const response = await authFetch(url, {

@@ -8,6 +8,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from uuid import uuid4
 
 import structlog
 
@@ -24,6 +25,7 @@ from .cancellation import AgentRunCancelled, cancellation_registry
 from .mode_capabilities import supports_native_multimodal
 from .ownership import run_ownership_registry
 from .steering import steering_registry
+from .time_budget import TimeBudget
 from ..context.context_diagnostics import ContextDiagnostics
 from ..workflow.mode_workflows import (
     allowed_tools as fixed_workflow_allowed_tools,
@@ -36,9 +38,28 @@ from ..workflow.mode_workflows import (
 
 logger = structlog.get_logger()
 
+# 无进展熔断阈值（硬编码，与 ToolLoopGuard 同风格）：连续 N 轮既无成功工具结果
+# 也无正文输出即判停。无步数上限模式下，它接管原迭代上限的失控保护职能
+# （仅交互路径启用；time_budget 节点有自己的空转检测）。
+NO_PROGRESS_ITERATION_LIMIT = 8
+
+
+def _records_have_progress(records) -> bool:
+    """一轮工具记录中是否存在至少一次成功结果（非 dict 结果视为有产出）。"""
+    for record in records or []:
+        result = record.get("result") if isinstance(record, dict) else None
+        if not isinstance(result, dict):
+            return True
+        if result.get("success") is not False:
+            return True
+    return False
+
 
 class CustomAgentTerminalError(RuntimeError):
-    """A custom scheduled Agent reached a non-retryable terminal failure."""
+    """A scheduled/custom Agent reached a non-retryable terminal failure.
+
+    也用于全模式的工具循环强制终止（同签名连续两次 loop-block）。
+    """
 
 
 @dataclass
@@ -47,7 +68,9 @@ class AgentRuntimeConfig:
     planner: Any
     tool_executor: Any
     context_builder: Any
-    max_iterations: int = 120
+    # None = 无步数上限（对齐 ZCode）：终止只由任务完成/用户取消/熔断护栏决定，
+    # 上下文增长由 context_builder 的阈值压缩接管。显式传值仍作兜底上限。
+    max_iterations: Optional[int] = None
     enhance_with_history: bool = True
     enable_reasoning: bool = False
     is_interruption: bool = False
@@ -68,6 +91,9 @@ class AgentRuntimeConfig:
 
 class AgentRuntime:
     """Runtime implementation with explicit finalization and transcript writes."""
+
+    # 每次运行最多自愈几次截断工具参数；超过即视为上游持续故障，按致命错误结束。
+    MAX_TRUNCATED_TOOL_CALL_RECOVERIES = 3
 
     def __init__(self, config: AgentRuntimeConfig) -> None:
         self.config = config
@@ -102,9 +128,10 @@ class AgentRuntime:
         )
         # 子 Agent 的修复轮复用了会话但会新建 RunState：允许调用方显式传入
         # 固定工作流进度，避免 acquire/normalize 重跑或 allow_completion=False 卡死。
+        runtime_metadata = getattr(self.config, "runtime_metadata", None)
         initial_fixed_progress = (
-            (self.config.runtime_metadata or {}).get("fixed_workflow_progress")
-            if isinstance(self.config.runtime_metadata, dict)
+            runtime_metadata.get("fixed_workflow_progress")
+            if isinstance(runtime_metadata, dict)
             else None
         )
         if isinstance(initial_fixed_progress, dict) and initial_fixed_progress:
@@ -181,6 +208,9 @@ class AgentRuntime:
         initial_messages: Optional[List[Dict[str, Any]]],
     ) -> AsyncGenerator[Dict[str, Any], None]:
         deterministic_error_count = 0
+        # 最近一次瞬时可重试故障（限流/过载/超时）；迭代预算耗尽时用它决定
+        # 终局文案——反复 504 不属于“任务太复杂”，不该问用户“是否继续”。
+        last_transient_error: Optional[Exception] = None
         try:
             if self.config.agent_logger:
                 run_id = self.config.agent_logger.start_new_run(
@@ -204,20 +234,72 @@ class AgentRuntime:
             yield self.events.start(state)
 
             workflow_definition = get_mode_workflow(state.mode)
-            iteration_limit = min(
-                self.config.max_iterations,
-                workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+            # 时间预算模式（自由 agent 工作流节点，runtime_metadata.time_budget 下发）：
+            # 轮次不是工作量单位，取消轮次硬限，墙钟时间 + 空转熔断接管预算；
+            # 预算耗尽原地续跑（同实例、上下文不动），不打断进行中的工具调用。
+            time_budget = TimeBudget.from_runtime_metadata(self.config.runtime_metadata)
+            if time_budget is not None:
+                logger.info(
+                    "time_budget_enabled",
+                    session_id=state.session_id,
+                    soft_seconds=time_budget.spec.soft_seconds,
+                    hard_seconds=time_budget.spec.hard_seconds,
+                )
+            # 无步数上限（None）时循环只由任务完成/取消/熔断护栏终止；固定工作流
+            # 不再用阶段预算之和封顶主循环（阶段推进仍由 observe_tool_results 的
+            # max_attempts 约束）。time_budget 模式天然无步数限制。
+            iteration_limit = (
+                None
+                if time_budget is not None
+                else self.config.max_iterations
             )
-            while state.iteration < iteration_limit and not state.task_completed:
+            no_progress_count = 0
+            while (iteration_limit is None or state.iteration < iteration_limit) and not state.task_completed:
                 self._raise_if_cancelled()
+                if time_budget is not None:
+                    decision = time_budget.check()
+                    if decision.prompt:
+                        # 预算提示以用户消息注入下一轮上下文（续跑/收尾/推进指令）
+                        self.writer.add_user_message(decision.prompt)
+                    if decision.action == "stop":
+                        state.budget_termination = decision.reason
+                        logger.info(
+                            "time_budget_terminated",
+                            session_id=state.session_id,
+                            reason=decision.reason,
+                            iterations=state.iteration,
+                        )
+                        break
                 state.iteration += 1
+                progress_seq_before = state.progress_seq
                 try:
                     async for event in self._apply_steering_inputs(state):
                         yield event
                     async for event in self._run_iteration(state):
                         self._raise_if_cancelled()
                         yield event
+                    if time_budget is not None:
+                        time_budget.on_turn_end(had_tool_call=state.last_turn_tool_calls > 0)
+                    elif not state.task_completed and state.progress_seq == progress_seq_before:
+                        # 交互路径的无进展熔断（time_budget 路径有自己的空转检测）
+                        no_progress_count += 1
+                        if no_progress_count >= NO_PROGRESS_ITERATION_LIMIT:
+                            logger.warning(
+                                "agent_runtime_no_progress_breaker",
+                                iteration=state.iteration,
+                                consecutive_no_progress=no_progress_count,
+                            )
+                            self._ensure_user_message_written(state)
+                            deferred_event = await self._close_steering_event(state)
+                            if deferred_event:
+                                yield deferred_event
+                            async for event in self.finalizer.no_progress(state):
+                                yield event
+                            return
+                    else:
+                        no_progress_count = 0
                     deterministic_error_count = 0
+                    last_transient_error = None
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
                     deferred_event = await self._close_steering_event(state)
@@ -233,7 +315,16 @@ class AgentRuntime:
                         error_type=type(exc).__name__,
                         exc_info=True,
                     )
-                    yield self.events.error(state, exc)
+                    # 上游掐断工具参数流（实测 6.4s 无 finish_reason）时，同负载
+                    # 重投必然复现：把失败往返写进上下文，让模型缩短参数后重来。
+                    # 不先 yield error，避免用户看到一次可自愈的中间态报错。
+                    recovery_event = self._recover_truncated_tool_call(state, exc)
+                    if recovery_event is not None:
+                        yield recovery_event
+                        continue
+                    if self._iteration_error_is_transient(exc):
+                        last_transient_error = exc
+                    yield self._iteration_error_event(state, exc)
                     if self._is_terminal_quota_error(exc):
                         terminal_error = RuntimeError(f"模型额度已耗尽，运行已停止，避免无效重试：{exc}")
                         self._ensure_user_message_written(state)
@@ -243,12 +334,27 @@ class AgentRuntime:
                         async for event in self.finalizer.fatal_error(state, terminal_error):
                             yield event
                         return
-                    if state.mode == "custom" and isinstance(exc, CustomAgentTerminalError):
+                    if isinstance(exc, CustomAgentTerminalError):
+                        # 工具循环等同源终止错误对所有模式均为不可恢复终态
                         self._ensure_user_message_written(state)
                         deferred_event = await self._close_steering_event(state)
                         if deferred_event:
                             yield deferred_event
                         async for event in self.finalizer.fatal_error(state, exc):
+                            yield event
+                        return
+                    if self._is_context_overflow_error(exc):
+                        # 上下文溢出→强制压缩后继续下一轮，不计入熔断计数；
+                        # 压缩无法再缩（如 system prompt 自身超限）才终止。
+                        compacted = await self._force_compact_for_overflow(state)
+                        if compacted:
+                            continue
+                        terminal_error = RuntimeError(f"上下文超限且压缩后无法继续缩减，运行已停止：{exc}")
+                        self._ensure_user_message_written(state)
+                        deferred_event = await self._close_steering_event(state)
+                        if deferred_event:
+                            yield deferred_event
+                        async for event in self.finalizer.fatal_error(state, terminal_error):
                             yield event
                         return
                     if self._is_deterministic_model_error(exc):
@@ -274,14 +380,19 @@ class AgentRuntime:
                 deferred_event = await self._close_steering_event(state)
                 if deferred_event:
                     yield deferred_event
-                if state.mode == "custom":
+                if last_transient_error is not None and state.mode != "custom":
+                    # 迭代预算耗尽的主因是持续网关故障：直接给友好终局提示，
+                    # 而不是“任务较复杂，是否继续？”（继续只会再撞 504）。
+                    async for event in self.finalizer.fatal_error(state, last_transient_error):
+                        yield event
+                elif state.mode == "custom":
                     error = CustomAgentTerminalError(
                         f"custom Agent 在 {state.iteration} 次迭代内未形成成功或失败终态"
                     )
                     async for event in self.finalizer.fatal_error(state, error):
                         yield event
                 else:
-                    async for event in self.finalizer.timeout(state):
+                    async for event in self.finalizer.timeout(state, reason=state.budget_termination):
                         yield event
 
         except Exception as exc:
@@ -328,6 +439,8 @@ class AgentRuntime:
             )
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
+        # 时间预算空转检测输入：本轮工具调用数（各分支覆写）
+        state.last_turn_tool_calls = 0
         context_result, conversation_history = await self._build_context(state)
         attachments = self._effective_attachments(state)
         self._record_visual_context(state, attachments)
@@ -362,6 +475,7 @@ class AgentRuntime:
         action_type = action.get("type", "ERROR")
 
         if streaming_tool_executor.total_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
+            state.last_turn_tool_calls = streaming_tool_executor.total_count
             async for event in self._handle_streamed_tools(state, planner_result, streaming_tool_executor):
                 self._raise_if_cancelled()
                 yield event
@@ -407,6 +521,8 @@ class AgentRuntime:
                 iteration=state.iteration,
                 reason=action.get("reason"),
             )
+            # 上下文管理本身是有效进展，不计入无进展熔断
+            state.progress_seq += 1
             # The compact result is runtime state, not a user response. Returning
             # lets the outer loop issue the next planning request without emitting
             # a completion or persisting the leaked summary.
@@ -414,6 +530,7 @@ class AgentRuntime:
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
+            state.last_turn_tool_calls = 1
             suppressed_observation = (
                 self._fixed_workflow_blocked_observation(state, action)
                 or self._suppressed_housekeeping_observation(state, action)
@@ -432,6 +549,8 @@ class AgentRuntime:
                 tool_events = [self.events.tool_result(state, tool_call_id, observation, False, tool_name)]
             else:
                 observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
+            if _records_have_progress(records):
+                state.progress_seq += 1
             self._capture_multimodal_attachments(state, observation)
             self._capture_drawio_board_context(state, observation)
             self._apply_housekeeping_policy(state, action, observation)
@@ -851,6 +970,11 @@ class AgentRuntime:
             items = await steering_registry.drain(state.session_id, state.run_id)
         if not items:
             return
+
+        # 用户中途输入代表新意图：重置工具连击计数，明确指示下的重试不受罚
+        loop_guard = getattr(self.tool_coordinator, "loop_guard", None)
+        if loop_guard is not None:
+            loop_guard.reset()
 
         self._ensure_user_message_written(state)
         messages: List[str] = []
@@ -1718,6 +1842,8 @@ class AgentRuntime:
             yield completed_result["message"]
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
+        if _records_have_progress(records):
+            state.progress_seq += 1
         self._capture_multimodal_attachments(state, observation)
         self._capture_drawio_board_context(state, observation)
         self._apply_housekeeping_policy(state, action, observation)
@@ -1748,6 +1874,80 @@ class AgentRuntime:
         async for event in self._inject_completed_delegation_results(state, planner_result):
             yield event
 
+    def _recover_truncated_tool_call(
+        self,
+        state: RunState,
+        error: Exception,
+    ) -> Optional[Dict[str, Any]]:
+        """把被上游截断的工具调用写成一次失败往返，换取下一轮不同负载。
+
+        Returns a tool_result event when the error was absorbed (caller should
+        continue the loop), or None when the error must propagate.
+        """
+        from app.services.chat_completions_adapter import ToolCallArgumentsError
+
+        if not isinstance(error, ToolCallArgumentsError) or not error.truncated:
+            return None
+        if state.truncated_tool_call_recoveries >= self.MAX_TRUNCATED_TOOL_CALL_RECOVERIES:
+            logger.error(
+                "agent_runtime_truncated_tool_call_recovery_exhausted",
+                iteration=state.iteration,
+                recoveries=state.truncated_tool_call_recoveries,
+                tool_name=error.tool_name,
+            )
+            return None
+        received_chars = len(str(error.raw or ""))
+        signature = f"{error.tool_name}:{received_chars}"
+        if state.last_truncated_signature == signature:
+            # 回灌过一轮后模型仍生成同样长度的参数并在同一位置被掐断：
+            # 说明上下文变化没有起作用，再重试只会重复 28 分钟空转。
+            logger.error(
+                "agent_runtime_truncated_tool_call_no_progress",
+                iteration=state.iteration,
+                tool_name=error.tool_name,
+                received_chars=received_chars,
+            )
+            return None
+        state.last_truncated_signature = signature
+        state.truncated_tool_call_recoveries += 1
+        tool_use_id = error.tool_call_id or f"truncated_{uuid4().hex[:16]}"
+        tool_name = error.tool_name or "unknown_tool"
+        message = (
+            f"工具 {tool_name} 的参数被上游流式网关截断（仅收到 {received_chars} 个字符，"
+            "未收到 finish_reason），本次调用未执行。请缩短参数后重新调用：单个工具参数控制在 "
+            "1500 字符以内；大数据先用 load_data(file_path) 从文件读取，"
+            "或拆分成多次调用，避免再次被截断。"
+        )
+        logger.warning(
+            "agent_runtime_truncated_tool_call_recovered",
+            iteration=state.iteration,
+            tool_name=error.tool_name,
+            tool_call_id=tool_use_id,
+            received_chars=received_chars,
+            recovery_count=state.truncated_tool_call_recoveries,
+        )
+        result = {
+            "success": False,
+            "error": "tool_arguments_truncated",
+            "received_chars": received_chars,
+            "summary": message,
+        }
+        self._ensure_user_message_written(state)
+        self.writer.add_truncated_tool_call_recovery(
+            tool_use_id=tool_use_id,
+            tool_name=tool_name,
+            error_message=message,
+            received_chars=received_chars,
+        )
+        state.last_observation = result
+        return self.events.tool_result(
+            state,
+            tool_use_id,
+            result,
+            is_error=True,
+            tool_name=tool_name,
+        )
+
     @staticmethod
     def _is_deterministic_model_error(error: Exception) -> bool:
         """统一模型错误策略表判定：鉴权/无效请求/模型不可用均不可自愈。"""
@@ -1757,12 +1957,62 @@ class AgentRuntime:
             STOP_MODEL_UNAVAILABLE,
             resolve_model_failure_policy,
         )
+        from app.services.chat_completions_adapter import ToolCallArgumentsError
+
+        # 模型自己吐出畸形工具参数（非上游截断）：同一负载重投只会复现，
+        # 计满 2 次即熔断。截断型错误由 _recover_truncated_tool_call 先吸收。
+        if isinstance(error, ToolCallArgumentsError):
+            return True
 
         return resolve_model_failure_policy(error).action in {
             STOP_AUTH,
             STOP_INVALID_REQUEST,
             STOP_MODEL_UNAVAILABLE,
         }
+
+    def _iteration_error_event(self, state: RunState, error: Exception) -> Dict[str, Any]:
+        """迭代错误事件；可自动重试的瞬时故障加 silent 标记。
+
+        事件总线在测试/子类中可能只接受 (state, error)，因此按关键字能力降级。
+        """
+        silent = self._iteration_error_is_transient(error)
+        try:
+            return self.events.error(state, error, silent=silent)
+        except TypeError:
+            event = self.events.error(state, error)
+            if silent and isinstance(event.get("data"), dict):
+                event["data"]["silent"] = True
+            return event
+
+    def _iteration_error_is_transient(self, error: Exception) -> bool:
+        """限流/过载/超时：运行时会自动重试，中间态失败不上屏。"""
+        from app.services.llm_failover import is_transient_failure
+
+        return is_transient_failure(error)
+
+    @staticmethod
+    def _is_context_overflow_error(error: Exception) -> bool:
+        from app.agent.workflow.model_failure_policy import (
+            CONTEXT_EXCEEDED,
+            resolve_model_failure_policy,
+        )
+
+        return resolve_model_failure_policy(error).action == CONTEXT_EXCEEDED
+
+    async def _force_compact_for_overflow(self, state: RunState) -> bool:
+        """provider 上下文溢出后的强制压缩：成功缩减返回 True 供循环继续。"""
+        try:
+            return await self.context_builder.force_compact_history(
+                reason="provider_context_overflow"
+            )
+        except Exception as exc:
+            logger.error(
+                "agent_runtime_overflow_compact_failed",
+                session_id=state.session_id,
+                iteration=state.iteration,
+                error=str(exc),
+            )
+            return False
 
     @staticmethod
     def _is_terminal_quota_error(error: Exception) -> bool:
@@ -1780,36 +2030,37 @@ class AgentRuntime:
         action: Dict[str, Any],
         records: List[Dict[str, Any]],
     ) -> None:
-        if state.mode != "custom":
-            return
-        missing = next((
-            record for record in records
-            if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith("工具不存在:")
-        ), None)
-        if missing is not None:
-            # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
-            # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
-            signature = json.dumps(
-                {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-            )
-            if state.last_missing_tool_signature == signature:
-                raise CustomAgentTerminalError(
-                    f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+        if state.mode == "custom":
+            missing = next((
+                record for record in records
+                if isinstance(record.get("result"), dict)
+                and str(record["result"].get("error", "")).startswith("工具不存在:")
+            ), None)
+            if missing is not None:
+                # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
+                # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
+                signature = json.dumps(
+                    {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
                 )
-            state.last_missing_tool_signature = signature
-        unavailable = next((
-            record for record in records
-            if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith("工具不可用:")
-        ), None)
-        if unavailable is not None:
-            raise CustomAgentTerminalError(
-                f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
-            )
+                if state.last_missing_tool_signature == signature:
+                    raise CustomAgentTerminalError(
+                        f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+                    )
+                state.last_missing_tool_signature = signature
+            unavailable = next((
+                record for record in records
+                if isinstance(record.get("result"), dict)
+                and str(record["result"].get("error", "")).startswith("工具不可用:")
+            ), None)
+            if unavailable is not None:
+                raise CustomAgentTerminalError(
+                    f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
+                )
+        # loop-block 终止规则对全部模式生效：block 提示已附带行动指引与上次结果，
+        # 同签名连续两次 block 说明模型无视指引原样重试，强制收尾避免空转。
         blocked = next((
             record for record in records
             if isinstance(record.get("result"), dict)
@@ -1847,6 +2098,15 @@ class AgentRuntime:
 
         self.observation_processor.capture_last_knowledge_sources(state)
         self._ensure_user_message_written(state)
+        if not (answer or "").strip():
+            # 上游零内容块/参数截断时 planner 会产出空 PLAIN_TEXT_REPLY；
+            # 直接 finalize 会把空回答写成“正常完成”（2026-11-13 事故）。
+            logger.warning(
+                "empty_completion_answer",
+                session_id=state.session_id,
+                iteration=state.iteration,
+            )
+            answer = "本次回答未能生成有效内容（上游模型返回空响应），请重新提问或稍后重试。"
         completion_action = dict(planner_result.action or {"type": "PLAIN_TEXT_REPLY"})
         completion_action["type"] = "PLAIN_TEXT_REPLY"
         completion_action["answer"] = answer

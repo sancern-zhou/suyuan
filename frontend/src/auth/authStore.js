@@ -87,6 +87,20 @@ export function createAuthSession({
       }
     },
 
+    adoptSession({ token, sysCode: sessionSysCode, user }) {
+      if (!token || !user?.id) throw new Error('外部登录会话不完整')
+      this.authMode = 'company'
+      this.mockUser = null
+      this.token = token
+      this.user = user
+      this.initialized = true
+      storage.writeSession({
+        token,
+        sysCode: sessionSysCode || sysCode,
+        user
+      })
+      return this.user
+    },
     clear() {
       this.token = ''
       this.user = null
@@ -132,6 +146,7 @@ export const useAuthStore = defineStore('suyuan-auth', {
     authMode: 'company',
     token: '',
     user: null,
+    sysCode: 'SUYUAN',
     loading: false,
     initialized: false
   }),
@@ -146,6 +161,7 @@ export const useAuthStore = defineStore('suyuan-auth', {
       this.authMode = session.authMode
       this.token = session.token
       this.user = session.user
+      this.sysCode = session.sysCode || this.sysCode
       this.loading = session.loading
       this.initialized = session.initialized
     },
@@ -160,6 +176,10 @@ export const useAuthStore = defineStore('suyuan-auth', {
     async login(credentials) {
       const session = getBrowserSession()
       try { return await session.login(credentials) } finally { this._sync(session) }
+    },
+    async adoptSession(payload) {
+      const session = getBrowserSession()
+      try { return session.adoptSession(payload) } finally { this._sync(session) }
     },
     async logout() {
       const session = getBrowserSession()

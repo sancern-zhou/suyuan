@@ -244,11 +244,11 @@
       >
         <div class="shared-report-tabs">
           <span class="shared-report-title">分析报告</span>
-          <a class="shared-report-open" :href="sharedReportView.url" target="_blank" rel="noopener">新窗口打开</a>
+          <a class="shared-report-open" :href="sharedReportUrl" target="_blank" rel="noopener">新窗口打开</a>
         </div>
         <iframe
           class="shared-report-frame"
-          :src="sharedReportView.url"
+          :src="sharedReportUrl"
           sandbox="allow-scripts allow-forms"
           title="分享的报告"
         />
@@ -280,6 +280,7 @@ import SkillsManagementPanel from '@/components/management/SkillsManagementPanel
 import QuickPromptsPanel from '@/components/management/QuickPromptsPanel.vue'
 import FileManagerPanel from '@/components/FileManagerPanel.vue'
 import { useAuthStore } from '@/auth/authStore.js'
+import { browserResourceUrl } from '@/services/resourceUrls.js'
 
 const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   ? defineAsyncComponent(() => import('@/views/AirQualityForecastView.vue'))
@@ -297,6 +298,7 @@ const sharedReportView = ref(null)
 const sharedReportWidth = ref(46)
 const sharedReportDragging = ref(false)
 const sharedReportCollapsed = ref(false)
+const sharedReportUrl = computed(() => browserResourceUrl(sharedReportView.value?.url || ''))
 
 const handleSharedReportOpen = (payload) => {
   sharedReportView.value = payload

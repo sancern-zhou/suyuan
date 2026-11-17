@@ -147,6 +147,24 @@ class ReActAgent:
     REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
 
     @staticmethod
+    def _resolve_report_final_review_prompt() -> str:
+        """Return the report auto-review prompt for the active project.
+
+        项目可声明自己的复核要点（声环境等非大气项目不得继承大气排名与
+        PM2.5 新标准字段）；未声明时沿用共享默认。
+        """
+        from app.agent.prompts.project_prompt import (
+            load_project_report_final_review_prompt,
+        )
+
+        try:
+            override = load_project_report_final_review_prompt()
+        except Exception as exc:
+            logger.warning("report_final_review_prompt_load_failed", error=str(exc))
+            override = None
+        return override or ReActAgent.REPORT_FINAL_REVIEW_PROMPT
+
+    @staticmethod
     def _select_auto_profile(
         manual_mode: Optional[str],
     ) -> Optional[str]:
@@ -302,7 +320,7 @@ class ReActAgent:
 
     def __init__(
         self,
-        max_iterations: int = 120,  # ✅ 默认120次（适应复杂分析任务）
+        max_iterations: Optional[int] = None,  # None = 无步数上限（对齐 ZCode），靠上下文压缩续跑
         max_working_memory: int = 20,
         working_context_limit: int = 50000,
         large_data_threshold: int = 1000,
@@ -315,7 +333,7 @@ class ReActAgent:
         初始化 ReAct Agent
 
         Args:
-            max_iterations: 最大迭代次数
+            max_iterations: 最大迭代次数（None 表示不设步数上限，靠上下文压缩续跑）
             max_working_memory: 工作记忆最大迭代数（默认20，详细记录）
             working_context_limit: 工作记忆拼接的上下文字符上限
             large_data_threshold: 大数据阈值（字符数）
@@ -608,7 +626,10 @@ class ReActAgent:
             except Exception as e:
                 logger.warning("failed_to_create_memory_snapshot", error=str(e))
 
-        iteration_limit = max_iterations or self.max_iterations
+        # None 显式表达"无上限"；仅未传（None）时回退实例默认（通常也是 None=无限）
+        iteration_limit = (
+            max_iterations if max_iterations is not None else self.max_iterations
+        )
 
         logger.info(
             "analysis_started",
@@ -891,20 +912,26 @@ class ReActAgent:
                     elif published_resource_ids:
                         terminal_data["resource_durable"] = True
 
+                if manual_mode == "report":
+                    final_review_prompt = self._resolve_report_final_review_prompt()
+                else:
+                    final_review_prompt = self.REPORT_FINAL_REVIEW_PROMPT
+
                 if self._should_run_report_auto_followup(
                     manual_mode,
                     event,
                     user_query,
                     skip_auto_followup=skip_auto_followup,
+                    final_review_prompt=final_review_prompt,
                 ):
                     logger.info(
                         "report_auto_followup_pending",
                         session_id=actual_session_id,
-                        prompt_preview=self.REPORT_FINAL_REVIEW_PROMPT[:80],
+                        prompt_preview=final_review_prompt[:80],
                     )
                     event_data = event.setdefault("data", {})
                     event_data["auto_followup_pending"] = True
-                    event_data["auto_followup_prompt"] = self.REPORT_FINAL_REVIEW_PROMPT
+                    event_data["auto_followup_prompt"] = final_review_prompt
                     event_data["auto_followup_hook_name"] = "report_final_review"
                     yield event
                     return
@@ -1050,20 +1077,22 @@ class ReActAgent:
         event: Dict[str, Any],
         user_query: str = "",
         skip_auto_followup: bool = False,
+        final_review_prompt: Optional[str] = None,
     ) -> bool:
         """Trigger the report-mode auto follow-up only when the final marker is present."""
+        review_prompt = final_review_prompt or self.REPORT_FINAL_REVIEW_PROMPT
         if manual_mode != "report" or event.get("type") != "complete":
             return False
         if skip_auto_followup:
             logger.info("report_auto_followup_skipped_by_request_flag")
             return False
-        if str(user_query or "").strip() == self.REPORT_FINAL_REVIEW_PROMPT:
+        if str(user_query or "").strip() == review_prompt:
             logger.info("report_auto_followup_skipped_auto_review_round")
             return False
 
         data = event.get("data") or {}
         answer = str(data.get("answer") or data.get("response") or "").strip()
-        if self.REPORT_FINAL_REVIEW_PROMPT in answer:
+        if review_prompt in answer:
             logger.info("report_auto_followup_skipped_self_reference")
             return False
 

@@ -17,7 +17,9 @@ export async function connectScheduledTaskWebSocket({
   if (!response.ok) throw new Error(`WebSocket ticket request failed: ${response.status}`)
   const payload = await response.json()
   if (!payload.ticket) throw new Error('WebSocket ticket response is missing a ticket')
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${protocol}//${location.host}${base}/ws/scheduled-tasks?ticket=${encodeURIComponent(payload.ticket)}`
-  return new WebSocketImpl(url)
+  const pageUrl = location.href || `${location.protocol}//${location.host}/`
+  const url = new URL(`${base}/ws/scheduled-tasks`, pageUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.searchParams.set('ticket', payload.ticket)
+  return new WebSocketImpl(url.href)
 }

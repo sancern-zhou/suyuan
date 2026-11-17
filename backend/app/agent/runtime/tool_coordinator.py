@@ -297,6 +297,9 @@ class ToolCoordinator:
         observation = self._tag_board_tool_result(tool_name, observation)
         self._inject_schema_if_needed(tool_name, observation)
         self._inject_deferred_schema_if_failed(tool_name, observation, state)
+        # 记录真实执行结果（block 拦截的 observation 除外），供 loop guard block 时附带
+        if not (guarded and guarded.get("severity") == "block"):
+            self.loop_guard.record_result(tool_name, tool_args, observation)
         is_error = not observation.get("success", False)
         tool_call_id = action.get("tool_call_id", f"fallback_{tool_name}")
         tool_records.append({

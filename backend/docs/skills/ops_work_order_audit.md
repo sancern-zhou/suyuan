@@ -61,6 +61,8 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 2. 为 true 时只使用本轮 `report_input_path`；每个条目已合并同一异常的事实与说明，不得将 `components` 拆行。
 3. `report_input.items[].display_evidence` 是所有规则统一的报告证据接口；问题描述只从该字段取值，不要解析或复制 `evidence_facts`。
 4. 报告输入已经由后端完成筛选和分组。优先读取 `ops_audit_run_rules` 返回的 `report_context_path`；它是已注册的精简报告上下文。禁止调用 `execute_python`、`read_file`、`list_directory` 重建、筛选或复制报告输入，也不要创建 `report_input_filtered` 等中间文件。
+   - 为什么：`dataset_path`、`audit_result_path`、`semantic_*_path`、`final_issue_list_path` 都是工具内部流转的中间产物，体量可达数万行（数据集动辄 10MB / 20 万行以上），且未做报告口径筛选。`read_file` 只能分页读取，逐页翻这类文件会耗尽迭代预算却永远读不完，直接导致任务无法形成终态；即便读全了，原始明细也不是报告该用的口径。
+   - 怎么做：`ops_audit_run_rules` 返回的 `artifact_readability` 逐个说明了这些路径的用途，只有 `report_input_path` 可直接读取消费。需要核查某条问题为什么命中、某单表单原始值，用 `ops_audit_inspect`（按 mode/工单号/规则 ID 定向取样），而不是读原文件。
 5. 完整读取 [审核报告输出规范](backend/docs/skills/ops_work_order_audit/references/report-format.md)，严格按其中结构和字段约束组织报告。
 4. 只调用一次 `create_report_package` 生成报告包、渲染 HTML/Word 并完成验收；有渲染或资源错误时修复后重新调用。
 

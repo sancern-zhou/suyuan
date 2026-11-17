@@ -169,6 +169,9 @@ def test_knowledge_catalog_record_dispatches_to_knowledge_adapter():
         async def require_write(self, session_id, user):
             return row
 
+        async def require_manage(self, session_id, user):
+            return row
+
         async def delete(self, session_id):
             return True
 

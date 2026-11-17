@@ -70,17 +70,22 @@ async def test_planner_retries_bailian_media_fetch_failure_with_base64(tmp_path)
 
         async def chat_anthropic_streaming(self, **kwargs):
             self.calls.append(kwargs)
-            raise RuntimeError("InvalidParameter: Download multimodal file timed out")
-            yield  # pragma: no cover
-
-        async def chat_anthropic(self, **kwargs):
-            self.calls.append(kwargs)
-            return {
-                "content": [SimpleNamespace(type="text", text="看到了")],
-                "model": kwargs["model"],
-                "usage": {"input_tokens": 1, "output_tokens": 1},
-                "stop_reason": "end_turn",
+            # 首次按 URL 抓图失败；planner 改用内联 base64 后同协议流式重投成功。
+            if len(self.calls) == 1:
+                raise RuntimeError("InvalidParameter: Download multimodal file timed out")
+            yield {
+                "type": "content_block_start",
+                "data": {"index": 0, "block": SimpleNamespace(type="text")},
             }
+            yield {
+                "type": "content_block_delta",
+                "data": {
+                    "index": 0,
+                    "delta": SimpleNamespace(type="text_delta", text="看到了"),
+                },
+            }
+            yield {"type": "content_block_stop", "data": {"index": 0}}
+            yield {"type": "message_stop", "data": {}}
 
     fake_llm = FakeLLMService()
     planner = ReActPlanner(llm_client=fake_llm)

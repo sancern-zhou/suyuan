@@ -130,7 +130,10 @@ async def test_render_report_package_keeps_qmd_as_primary(
     share_html = report_dir / "report.export.html"
     qmd.write_text("# Report", encoding="utf-8")
     html.write_text("<h1>Preview</h1>", encoding="utf-8")
-    docx.write_bytes(b"docx")
+    # report.docx 会被自动探测为同包 rendition；只在被测格式需要时创建，
+    # 避免其它格式的期望列表被无关 docx 污染。
+    if output_format == "docx":
+        docx.write_bytes(b"docx")
     share_html.write_text("<h1>Export</h1>", encoding="utf-8")
 
     renderer = report_package_tool.quarto_report_renderer

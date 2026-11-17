@@ -102,6 +102,20 @@ class RunState:
     # 只记账遥测，不参与预算判定）
     tokens_spent: int = 0
     last_turn_usage: Optional[Dict[str, Any]] = None
+    # 时间预算模式（自由 agent 节点）：本轮工具调用数（空转检测输入）
+    last_turn_tool_calls: int = 0
+    # 时间预算终止原因（extended_timeout / stalled_no_progress）；
+    # 供 finalizer 与 complete 事件透出，coordinator 据此区分预算耗尽与真失败
+    budget_termination: Optional[str] = None
+    # 无进展熔断的进度序号：每轮产生成功工具结果/有效输出即 +1，
+    # 外层循环比对前后值判定"本轮是否有进展"（连续无进展达阈值熔断）
+    progress_seq: int = 0
+    # 上游截断工具参数后的自愈重试次数：每次都会把失败往返写进上下文换取
+    # 不同负载，但必须封顶，否则会退化成无限重试。
+    truncated_tool_call_recoveries: int = 0
+    # 上一次截断失败的指纹（工具名 + 已收字符数）。指纹与上次相同说明模型
+    # 又生成了同等长度的参数、且在同一位置被掐断——继续重试只会空转。
+    last_truncated_signature: Optional[str] = None
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

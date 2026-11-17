@@ -2,7 +2,6 @@ from pathlib import Path
 
 from app.agent.prompts.query_prompt import build_query_prompt
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -46,29 +45,23 @@ def test_query_prompt_keeps_architecture_rules_not_tool_or_ui_details():
     for fragment in removed_fragments:
         assert fragment not in prompt
 
-    assert "业务默认值、区域口径和评价标准以工具 schema、工具返回和问数记忆为准" in prompt
-    assert "知识类问题先查可用资料，不编造" in prompt
+    assert "能力范围由当前项目启用的工具和数据源决定" in prompt
+    assert "不知道或缺少依据时直接说明，不编造数据或结论" in prompt
     assert "最终回复先用一到三句话给出可朗读核心结论" in prompt
-    assert "能力范围仅为广东省环境数据查询" in prompt
 
 
 def test_tool_schema_and_query_memory_own_moved_policy_text():
-    execute_sql_tool = (ROOT / "app/tools/query/execute_sql_query/tool.py").read_text(
-        encoding="utf-8"
-    )
+    sql_tool = (
+        ROOT / "app/tools/query/execute_postgres_sql_query/tool.py"
+    ).read_text(encoding="utf-8")
     city_report_tool = (
         ROOT / "app/tools/query/query_city_standard_report/tool.py"
     ).read_text(encoding="utf-8")
-    query_memory = (ROOT / "backend_data_registry/memory/query/MEMORY.md").read_text(
-        encoding="utf-8"
-    )
 
-    assert "168城市全国排名" in execute_sql_tool
-    assert "city_168_statistics_new_standard/city_168_statistics_old_standard" in execute_sql_tool
+    # 表目录、字段定位与库路由由工具 schema 承载，不再写进问数提示词
+    assert "describe_table" in sql_tool
+    assert "bigdata_system" in sql_tool and "sound_data" in sql_tool
+    assert "跨库 JOIN" in sql_tool
 
     assert "综合指数、达标/超标天数、污染物统计浓度、首要污染物、排名" in city_report_tool
     assert "ns_type=2 表示新国标；ns_type=1 表示旧国标" in city_report_tool
-
-    assert "广东省内城市和区域数据查询优先使用标准统计报表接口工具" in query_memory
-    assert "珠三角、非珠三角、粤东、粤西、粤北、粤东西北" in query_memory
-    assert "未指定城市时，默认查询广东省21个地级市" in query_memory

@@ -4,9 +4,14 @@ import assert from 'node:assert/strict'
 import {
   CONVERSATION_LIST_LAYOUT,
   CONVERSATION_LIST_VIEW,
+  compareConversationRecency,
+  conversationRecency,
   filterConversationHistory,
   filterSidebarConversations,
   groupSidebarConversationsByMode,
+  localConversationFallback,
+  parseConversationTimestamp,
+  parseMessageTimestamp,
   reconcileConversationHistoryStats,
   resolveConversationAgentMode,
   toggleConversationListView
@@ -111,4 +116,74 @@ test('grouping keeps recency order and buckets unknown modes under other', () =>
 
 test('grouping handles empty lists', () => {
   assert.deepEqual(groupSidebarConversationsByMode([], knownModeIds), [])
+})
+
+test('recency is driven by persisted updated_at, not client message timestamps', () => {
+  const older = { session_id: 'a', updated_at: '2026-11-17T08:00:00' }
+  const newer = { session_id: 'b', updated_at: '2026-11-17T09:00:00' }
+  assert.ok(conversationRecency(newer) > conversationRecency(older))
+
+  const sorted = [older, newer].sort(compareConversationRecency)
+  assert.deepEqual(sorted.map(row => row.session_id), ['b', 'a'])
+})
+
+test('running sessions stay pinned above completed ones regardless of recency', () => {
+  const running = { session_id: 'running', updated_at: '2026-11-17T08:00:00', is_running: true }
+  const recent = { session_id: 'recent', updated_at: '2026-11-17T09:00:00' }
+  const sorted = [recent, running].sort(compareConversationRecency)
+  assert.deepEqual(sorted.map(row => row.session_id), ['running', 'recent'])
+})
+
+test('missing or invalid updated_at sorts last instead of pretending to be now', () => {
+  const stale = { session_id: 'stale' }
+  const invalid = { session_id: 'invalid', updated_at: 'not-a-date' }
+  const dated = { session_id: 'dated', updated_at: '2026-11-17T09:00:00' }
+
+  assert.equal(conversationRecency(stale), 0)
+  assert.equal(conversationRecency(invalid), 0)
+  assert.deepEqual(
+    [stale, invalid, dated].sort(compareConversationRecency).map(row => row.session_id),
+    ['dated', 'stale', 'invalid']
+  )
+})
+
+test('naive server timestamps are read as UTC, not browser local time', () => {
+  // 服务端 updated_at 是无时区的 UTC；消息 timestamp 来自 UTC ISO 字符串。
+  // 两者必须落在同一时间轴上，不能因为浏览器时区产生 8 小时偏差。
+  const serverUtc = '2026-11-17T08:00:00'
+  const clientUtc = '2026-11-17T08:00:00.000Z'
+  assert.equal(parseConversationTimestamp(serverUtc), parseConversationTimestamp(clientUtc))
+  assert.equal(
+    parseConversationTimestamp(serverUtc),
+    Date.parse('2026-11-17T08:00:00Z')
+  )
+  assert.equal(
+    parseConversationTimestamp('2026-11-17T16:00:00+08:00'),
+    Date.parse('2026-11-17T08:00:00Z')
+  )
+})
+
+test('local message fallback reads naive CST and matches the server UTC axis', () => {
+  // session_messages.timestamp 存的是无时区本地时间（CST），与 UTC 的
+  // updated_at 相差 8 小时，必须按 +08:00 解析后才能比较。
+  assert.equal(
+    parseMessageTimestamp('2026-11-17T16:53:14'),
+    Date.parse('2026-11-17T08:53:14Z')
+  )
+  // 运行期新消息带 Z，按其自身 UTC 解析。
+  assert.equal(
+    parseMessageTimestamp('2026-11-17T08:53:14.000Z'),
+    Date.parse('2026-11-17T08:53:14Z')
+  )
+  assert.equal(localConversationFallback(null), null)
+  assert.equal(localConversationFallback(''), null)
+  assert.equal(
+    localConversationFallback('2026-11-17T16:53:14'),
+    '2026-11-17T08:53:14.000Z'
+  )
+
+  // 同一个真实时刻的服务端时间与本地消息兜底必须排成平手而不是差 8 小时。
+  const server = { session_id: 'server', updated_at: '2026-11-17T08:53:14' }
+  const local = { session_id: 'local', updated_at: localConversationFallback('2026-11-17T16:53:14') }
+  assert.equal(conversationRecency(server), conversationRecency(local))
 })

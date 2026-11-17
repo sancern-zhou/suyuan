@@ -49,6 +49,12 @@ ROUTER_REGISTRY = [
         description="Authentication support",
         owner="core",
     ),
+    RouterSpec(
+        "app.auth.sso_routes",
+        prefix="/api",
+        description="External SSO session reuse",
+        owner="core",
+    ),
     RouterSpec("app.api.admin", description="Admin interface"),
     RouterSpec("app.api.agent", description="ReAct Agent API"),
     RouterSpec("app.api.agent_memory_routes", description="Agent mode memory view/edit", owner="core"),

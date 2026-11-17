@@ -18,13 +18,33 @@ class AttrDict(dict):
             raise AttributeError(key) from exc
 
 
+class EmptyCompletionError(ValueError):
+    """Raised when a stream completes without any usable content block.
+
+    Upstream gateways can close an SSE stream after emitting only role/empty
+    deltas (observed 2026-11-13: DeepSeek-V4.1-Flash with 23 tools truncated
+    mid tool_call arguments). Treating that as success produced an empty
+    answer; callers must fail over instead.
+    """
+
+
 class ToolCallArgumentsError(ValueError):
     """Raised when Chat Completions returns malformed tool call arguments."""
 
-    def __init__(self, raw: Any, *, tool_name: str = "", tool_call_id: str = "") -> None:
+    def __init__(
+        self,
+        raw: Any,
+        *,
+        tool_name: str = "",
+        tool_call_id: str = "",
+        truncated: bool = False,
+    ) -> None:
         self.raw = raw
         self.tool_name = tool_name
         self.tool_call_id = tool_call_id
+        # 上游未发 finish_reason 就断流（网关截断）与模型自己吐出畸形 JSON
+        # 需要区分：前者同负载重试必然复现，只能靠回灌错误让模型缩短参数。
+        self.truncated = truncated
         # raw 可能是上万字的 DAG 参数全文；报错信息只留前段供定位，
         # 避免畸形 JSON 全文进日志与修复反馈上下文。
         super().__init__(
@@ -272,6 +292,7 @@ def _parse_arguments(
     *,
     tool_name: str = "",
     tool_call_id: str = "",
+    truncated: bool = False,
 ) -> Dict[str, Any]:
     if raw in (None, ""):
         return {}
@@ -287,6 +308,7 @@ def _parse_arguments(
                 raw,
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
+                truncated=truncated,
             ) from exc
         parsed = json.loads(salvaged)
     if not isinstance(parsed, dict):
@@ -294,6 +316,7 @@ def _parse_arguments(
             raw,
             tool_name=tool_name,
             tool_call_id=tool_call_id,
+            truncated=truncated,
         )
     return parsed
 
@@ -330,6 +353,12 @@ def convert_chat_response_to_anthropic(response: Dict[str, Any]) -> Dict[str, An
         )
 
     usage = response.get("usage") or {}
+    if not content_blocks:
+        # 非流式同样可能拿到空正文（思考吃满预算）：不能当成功返回。
+        raise EmptyCompletionError(
+            "Chat Completions response contained no content block "
+            f"(finish_reason={choice.get('finish_reason')!r})"
+        )
     return {
         "content": content_blocks,
         "model": response.get("model", ""),
@@ -442,14 +471,16 @@ class ChatCompletionsStreamAdapter:
             accumulator = self.tool_calls[index]
             if accumulator.emitted:
                 continue
-            try:
-                parsed = _parse_arguments(
-                    accumulator.arguments,
-                    tool_name=accumulator.name,
-                    tool_call_id=accumulator.id,
-                )
-            except ToolCallArgumentsError:
-                continue
+            # 参数残缺（上游流被截断）必须抛错：静默丢弃会让本次调用变成一个
+            # 零内容块的空响应，上层误判为正常结束并给出空回答（2026-11-13）。
+            # 无 finish_reason 即收流 = 网关截断（实测 6.4s 掐流），与模型自
+            # 身畸形 JSON 不同：同负载重试必然复现，必须让上层回灌错误。
+            parsed = _parse_arguments(
+                accumulator.arguments,
+                tool_name=accumulator.name,
+                tool_call_id=accumulator.id,
+                truncated=self.finish_reason is None,
+            )
             events.extend(
                 self._open_block(
                     "tool_use",
@@ -496,20 +527,19 @@ class ChatCompletionsStreamAdapter:
     def finish(self) -> List[Dict[str, Any]]:
         events = self._ensure_message_started()
         events.extend(self._emit_completed_tool_calls())
-        if self.finish_reason == "tool_calls":
-            for accumulator in self.tool_calls.values():
-                if not accumulator.emitted:
-                    _parse_arguments(
-                        accumulator.arguments,
-                        tool_name=accumulator.name,
-                        tool_call_id=accumulator.id,
-                    )
         if self.open_block_index is not None:
             events.append(
                 {"type": "content_block_stop", "data": {"index": self.open_block_index}}
             )
             self.open_block_index = None
             self.open_block_type = None
+        if self.next_index == 0:
+            # 零内容块：上游只发了 role/空 delta 就收流（或参数残缺被丢弃）。
+            # 不能让上层按“正常结束”处理，否则会话以空回答静默收尾。
+            raise EmptyCompletionError(
+                "Chat Completions stream finished without any content block "
+                f"(finish_reason={self.finish_reason!r})"
+            )
         events.append(
             {
                 "type": "message_delta",

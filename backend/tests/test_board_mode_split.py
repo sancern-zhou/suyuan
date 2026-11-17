@@ -90,7 +90,7 @@ def test_board_prompt_is_separate_from_chart_workflows():
     assert "node-1" in prompt
     assert "<mxfile>" in prompt
     assert "ECharts" not in prompt
-    assert "execute_sql_query" not in prompt
+    assert "execute_postgres_sql_query" not in prompt
     assert "空气质量" not in prompt
 
 

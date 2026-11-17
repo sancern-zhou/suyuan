@@ -23,6 +23,20 @@ from app.services.ops_audit.semantic_candidates import build_semantic_candidates
 from app.services.ops_audit.visual_evidence import archive_visual_evidence
 from app.services.ops_work_order_audit_engine import OUTPUT_DIR, audit_dataset
 
+# 产物可读性契约：只有 report_input_path 是给模型消费的成品，其余是工具内部
+# 流转的中间产物。路径旁直接给出用途，避免模型误把数万行的原始产物逐页
+# read_file（2026-11-16 复盘：custom 定时任务 120 轮迭代全部耗在分页读
+# dataset.json，最终未形成终态）。
+_ARTIFACT_READABILITY: dict[str, str] = {
+    "dataset_path": "原始取数中间产物（可达数万行）；仅供 ops_audit_run_rules/ops_audit_inspect 输入，不要 read_file",
+    "audit_result_path": "规则明细中间产物；核查命中原因请用 ops_audit_inspect，不要 read_file",
+    "semantic_candidates_path": "语义复核候选中间产物；仅供复核流程消费，不要 read_file",
+    "semantic_review_tasks_path": "语义复核任务记录中间产物；仅供复核流程消费，不要 read_file",
+    "semantic_review_results_path": "语义复核证据中间产物；结论已并入 report_input，不要 read_file",
+    "final_issue_list_path": "最终问题清单中间产物；正式报告只消费 report_input_path，不要 read_file，需要明细请用 ops_audit_inspect",
+    "report_input_path": "报告唯一数据源；已按可上报/待核验分组，直接消费 items",
+}
+
 
 def list_rule_catalog() -> dict[str, Any]:
     """Return rule catalog metadata for tools and calibration."""
@@ -107,6 +121,11 @@ def run_rule_engine(
         "semantic_review_results_path": str(semantic_review_results_path),
         "final_issue_list_path": str(final_issue_list_path),
         "report_input_path": str(report_input_path),
+        "artifact_readability": dict(_ARTIFACT_READABILITY),
+        "artifact_readability_note": (
+            "仅 report_input_path 可直接读取；其余 *_path 是工具内部中间产物，"
+            "体量大且未筛选，逐页读取会耗尽迭代预算。核查明细用 ops_audit_inspect。"
+        ),
         "report_ready": report_input["report_ready"],
         "human_feedback": human_feedback if human_feedback["required"] else None,
         "pending_review_count": report_input["summary"]["pending_review_count"],

@@ -326,6 +326,10 @@ class StreamingToolExecutor:
 
             execution.mark_completed(result)
 
+            # 记录真实执行结果，供 loop guard block 时附带（拦截路径不经过这里）
+            if self.loop_guard is not None:
+                self.loop_guard.record_result(execution.tool_name, execution.tool_input, result)
+
             logger.info(
                 "streaming_tool_completed",
                 tool_name=execution.tool_name,

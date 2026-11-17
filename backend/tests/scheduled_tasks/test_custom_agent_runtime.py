@@ -1,11 +1,13 @@
+from types import SimpleNamespace
+
+import pytest
+
+from app.agent import tool_adapter
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.tool_registry import AGENT_HIDDEN_TOOL_NAMES
-from app.agent import tool_adapter
 from app.agent.react_agent import create_react_agent
 from app.agent.runtime.agent_runtime import AgentRuntime, CustomAgentTerminalError
 from app.agent.runtime.types import RunState
-import pytest
-from types import SimpleNamespace
 
 
 class FakeTool:
@@ -27,8 +29,13 @@ class FakeRegistry:
         return [{"tool": tool} for tool in self.tools]
 
 
-def test_custom_prompt_is_minimal_and_uses_no_business_role_prompt():
+def test_custom_prompt_is_minimal_and_uses_no_business_role_prompt(monkeypatch):
     from app.agent.prompts.custom_prompt import build_custom_prompt
+    from config.settings import settings
+
+    # 共享平台段落受项目开关控制（声环境项目关闭空气质量过渡段），
+    # 本用例验证的是共享默认装配，固定到默认项目。
+    monkeypatch.setattr(settings, "project_id", "default")
 
     base = build_custom_prompt(["alpha"])
     prompt = build_react_system_prompt("custom", available_tools=["alpha"])
@@ -96,6 +103,33 @@ def test_custom_loop_guard_terminates_on_second_identical_block():
     AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
     with pytest.raises(CustomAgentTerminalError, match="工具循环已终止"):
         AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
+
+
+def test_loop_block_termination_applies_to_all_modes():
+    """同签名连续两次 loop-block 对普通对话模式同样强制终止。"""
+    state = RunState(session_id="s", user_query="q", mode="assistant")
+    action = {"type": "TOOL_CALL", "tool": "alpha", "args": {"value": 1}}
+    records = [{
+        "tool_name": "alpha",
+        "tool_input": {"value": 1},
+        "result": {"loop_guard": True, "severity": "block"},
+    }]
+
+    AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
+    with pytest.raises(CustomAgentTerminalError, match="工具循环已终止"):
+        AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
+
+
+def test_missing_tool_rule_stays_custom_only():
+    """工具不存在/不可用的终止规则仍为 custom 专属，其他模式回传自纠。"""
+    state = RunState(session_id="s", user_query="q", mode="assistant")
+    records = [{
+        "tool_name": "alpha",
+        "tool_input": {},
+        "result": {"success": False, "error": "工具不存在: alpha"},
+    }]
+
+    AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
 
 
 def test_custom_runtime_stops_if_a_selected_tool_becomes_unavailable():
@@ -182,7 +216,7 @@ async def test_ppt_runtime_stops_immediately_when_token_plan_is_exhausted():
         yield
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False, runtime_metadata={})
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(
@@ -226,7 +260,7 @@ async def test_ppt_runtime_breaks_after_two_deterministic_model_failures():
         yield
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False, runtime_metadata={})
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(
@@ -262,7 +296,7 @@ async def test_custom_iteration_limit_emits_fatal_failure_not_continue_prompt():
             yield None
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=1, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=1, is_interruption=False, runtime_metadata={})
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(start=lambda state: {"type": "start"})
@@ -298,7 +332,7 @@ async def test_custom_runtime_breaks_after_two_deterministic_model_failures():
         yield
 
     runtime = object.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=120, is_interruption=False)
+    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=120, is_interruption=False, runtime_metadata={})
     runtime.planner = SimpleNamespace(is_interruption=False)
     runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
     runtime.events = SimpleNamespace(

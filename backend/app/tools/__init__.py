@@ -228,44 +228,9 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_pm25_crustal", error=str(e))
 
-    # ========================================
-    # Super-station Component Query Tools (Phase 2: species/OFP/recovery/trace)
-    # ========================================
-
-    try:
-        from app.tools.query.get_vocs_species.tool import GetVOCsSpeciesTool
-        registry.register(GetVOCsSpeciesTool(), priority=66)
-        logger.info("tool_loaded", tool="get_vocs_species")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_vocs_species", error=str(e))
-
-    try:
-        from app.tools.query.get_vocs_ofp.tool import GetVOCsOFPTool
-        registry.register(GetVOCsOFPTool(), priority=67)
-        logger.info("tool_loaded", tool="get_vocs_ofp")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_vocs_ofp", error=str(e))
-
-    try:
-        from app.tools.query.get_ofp_top10.tool import GetOFPTop10Tool
-        registry.register(GetOFPTop10Tool(), priority=68)
-        logger.info("tool_loaded", tool="get_ofp_top10")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_ofp_top10", error=str(e))
-
-    try:
-        from app.tools.query.get_pm25_recovery.tool import GetPM25RecoveryTool
-        registry.register(GetPM25RecoveryTool(), priority=69)
-        logger.info("tool_loaded", tool="get_pm25_recovery")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_pm25_recovery", error=str(e))
-
-    try:
-        from app.tools.query.get_pm25_trace.tool import GetPM25TraceTool
-        registry.register(GetPM25TraceTool(), priority=71)
-        logger.info("tool_loaded", tool="get_pm25_trace")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_pm25_trace", error=str(e))
+    # 广东超站组分查询二期（species/OFP/recovery/trace）模块本体与注册块
+    # 位于 project/guangdong 的 backend/app/tools/guangdong/component_query/（按项目门控注册）；
+    # 共享 main 上不存在这些模块，不再保留必然 ImportError 的死注册块。
 
     try:
         from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
@@ -289,12 +254,15 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="get_observed_meteorology", error=str(e))
 
-    try:
-        from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
-        registry.register(GetJiningRegularStationsTool(), priority=31)
-        logger.info("tool_loaded", tool="get_jining_regular_stations")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
+    # 济宁国控站清单属数据工作专用工具，不属于任何部署项目的业务链路，
+    # 按项目声明启用（modules 声明 jining-air-quality 且 backend.tools 列出工具名）。
+    if is_project_tool_enabled(context, "jining-air-quality", "get_jining_regular_stations"):
+        try:
+            from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
+            registry.register(GetJiningRegularStationsTool(), priority=31)
+            logger.info("tool_loaded", tool="get_jining_regular_stations")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
 
     if is_project_tool_enabled(context, "legacy", "analyze_city_pollutant_rankings"):
         try:
@@ -487,19 +455,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_xcai_city_history", error=str(e))
 
-    # 通用SQL执行工具
-    try:
-        from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool, ExecuteTenderSQLQueryTool
-        registry.register(ExecuteSQLQueryTool(project_id=context.manifest.project), priority=47)
-        logger.info("tool_loaded", tool="execute_sql_query")
-        registry.register(ExecuteOpsSQLQueryTool(), priority=47)
-        logger.info("tool_loaded", tool="execute_ops_sql_query")
-        registry.register(ExecuteTenderSQLQueryTool(), priority=47)
-        logger.info("tool_loaded", tool="execute_tender_sql_query")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
-
-    # PostgreSQL/KingbaseES 企业排污许可证查询工具
+    # PostgreSQL/KingbaseES 只读 SQL 查询工具（bigdata_system + sound_data 双库）
     try:
         from app.tools.query.execute_postgres_sql_query.tool import ExecutePostgresSQLQueryTool
         registry.register(ExecutePostgresSQLQueryTool(), priority=47)
@@ -509,6 +465,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
 
     # MySQL 采集库长历史数据查询工具（许昌本地站点/城市小时、逐日、PM2.5 年均值）：
     # 模块本体与数据源均属许昌（backend/app/tools/xuchang/），按项目声明启用。
+    # 共享 main 不注册（其他部署无许昌采集库，注册也查不到数据）。
     if is_project_tool_enabled(context, "xuchang-air-quality", "execute_crawler_sql_query"):
         try:
             from app.tools.xuchang.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool

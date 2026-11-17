@@ -16,9 +16,6 @@ def test_assistant_and_office_roles_cannot_be_expanded_by_project_tools(monkeypa
 
     monkeypatch.setattr(settings, "project_id", project)
     forbidden = {
-        "execute_sql_query",
-        "execute_crawler_sql_query",
-        "execute_bigdata_sql_query",
         "execute_postgres_sql_query",
         "query_xcai_city_history",
         "get_weather_data",
@@ -70,13 +67,13 @@ def test_extra_tools_cannot_restore_professional_execution(mode):
 
     runtime = AgentRuntime.__new__(AgentRuntime)
     runtime.config = SimpleNamespace(
-        extra_tool_names=["execute_sql_query", "create_report_package"]
+        extra_tool_names=["execute_postgres_sql_query", "create_report_package"]
     )
     runtime.executor = SimpleNamespace(tool_registry={"submit_result": object()})
     tools = runtime._allowed_tool_names_for_state(
         RunState(session_id="role-test", user_query="test", mode=mode)
     )
-    assert "execute_sql_query" not in tools
+    assert "execute_postgres_sql_query" not in tools
     assert "create_report_package" not in tools
     assert "submit_result" in tools
 

@@ -148,12 +148,14 @@ class InMemorySteeringStore:
 class RedisSteeringStore:
     """Redis-backed store whose Lua operations are atomic across workers."""
 
-    REGISTER_SCRIPT = """-- steering:register
+    REGISTER_SCRIPT = """-- steering:register (single-field HSET only: target Redis is 3.x)
 if ARGV[4] ~= '1' then
   redis.call('DEL', KEYS[1], KEYS[2])
   return 0
 end
-redis.call('HSET', KEYS[1], 'run_id', ARGV[1], 'mode', ARGV[2], 'status', 'accepting')
+redis.call('HSET', KEYS[1], 'run_id', ARGV[1])
+redis.call('HSET', KEYS[1], 'mode', ARGV[2])
+redis.call('HSET', KEYS[1], 'status', 'accepting')
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 redis.call('DEL', KEYS[2])
 return 1
