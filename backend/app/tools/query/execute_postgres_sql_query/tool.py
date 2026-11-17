@@ -39,30 +39,39 @@ WEATHER_SQL_TABLES = [
     "era5_reanalysis_data",
 ]
 
-# 许昌国控站周边路况定时抓取数据（主库）。工具代码与抓取脚本在 xuchang 分支
-# （backend/scripts/xuchang_traffic_collect.py）；其他项目库中无这些表，
-# 查询会得到"未找到白名单表"的明确提示，故直接并入共享白名单。
-XUCHANG_TRAFFIC_SQL_TABLES = [
-    "traffic_snapshot",
-    "traffic_section",
-    "v_station_traffic_hourly",
-]
+# 项目专属业务表（如许昌路况时序 traffic_*、许昌告警事件聚合
+# xuchang_station_alert_episodes）经 projects/<id>/project.yaml 的
+# backend.tool_options.execute_postgres_sql_query.allowed_tables_extra 注入，
+# 共享白名单只保留所有部署共有的表。
 
 # 定时任务结构化结果（主库）。scheduled_task_results 为所有定时任务共用的结果表，
-# 查站点快速污染抬升告警需按 task_id 过滤；xuchang_station_alert_episodes 为
-# 许昌场景一告警事件聚合表，其他项目库中无该表，查询会得到"未找到白名单表"的
-# 明确提示，故直接并入共享白名单（同 traffic 表的处理方式）。
+# 查具体任务结论需按 task_id 过滤（项目专属 task_id 与扩展表见项目配置注记）。
 ALERT_RESULT_SQL_TABLES = [
     "scheduled_task_results",
-    "xuchang_station_alert_episodes",
 ]
 
 ALLOWED_SQL_TABLES = (
     PERMIT_SQL_TABLES
     + WEATHER_SQL_TABLES
-    + XUCHANG_TRAFFIC_SQL_TABLES
     + ALERT_RESULT_SQL_TABLES
 )
+
+
+def _load_postgres_tool_options() -> dict[str, Any]:
+    """读取 backend.tool_options 中的 execute_postgres_sql_query 项目扩展。
+
+    支持 keys：allowed_tables_extra（追加到共享白名单的项目专属业务表）、
+    schema_notes（追加到工具描述末尾的项目口径注记与示例）。
+    """
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        manifest = load_project_context(settings.project_id).manifest
+        return manifest.backend.tool_options.get("execute_postgres_sql_query") or {}
+    except Exception as exc:
+        logger.warning("execute_postgres_tool_options_unavailable", error=str(exc))
+        return {}
 
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 50
@@ -75,101 +84,32 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         from app.agent.context.data_shape import TableTypesCache
 
         self._table_types_cache = TableTypesCache()
-        schema_description = (
-            "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持四类数据："
-            "许昌市企业排污许可证数据（主库）、广东 21 地市气象数据（独立气象库："
-            "NMC 逐小时观测、逐日统计与 ERA5 历史再分析）、许昌国控站周边路况时序（主库，定时抓取）"
-            "和定时任务结果/站点快速告警记录（主库）；"
-            "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
-            f"仅允许白名单业务表：{', '.join(ALLOWED_SQL_TABLES)}；禁止采集运行日志和失败记录。"
-            "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
-            f"使用 PostgreSQL LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
-            "不确定字段时先调用 describe_table，不要查询 information_schema。"
-            "\n\n表说明："
-            "\n- permit_licenses：许可证主表，含企业名称、许可证编号、统一社会信用代码、"
-            "地址、行业、有效期、管理类别、当前状态和详情页链接。"
-            "\n- permit_license_versions：许可证历史/业务版本，以 license_id 关联主表。"
-            "\n- permit_pollution_details：大气/水污染物、排放方式和执行标准，以 license_id 关联主表。"
-            "\n- permit_documents：已下载的许可证正副本及分页文件，以 license_id 关联主表。"
-            "\n- observed_weather_data：广东 21 地市 NMC 城市站逐小时地面观测（定时抓取落库）；"
-            "主键(time, station_id)；站点字段 station_id/station_name（如广州='DwzZf'/'广州'，"
-            "其余站点可用 SELECT DISTINCT station_id, station_name FROM observed_weather_data 查询）；"
-            "气象字段：temperature_2m(°C)、relative_humidity_2m(%)、dew_point_2m(°C)、"
-            "wind_speed_10m(km/h)、wind_direction_10m(°，气象来向)、surface_pressure(hPa)、"
-            "precipitation(mm)、cloud_cover(%)、visibility(m)；"
-            "溯源字段 data_source='NMC'、data_quality='good'/'partial'；NULL 表示该小时缺测。"
-            "\n- observed_weather_daily：气象站逐日统计（由 observed_weather_data 小时数据自动聚合）；"
-            "主键(station_id, obs_date)，obs_date 为日历日 00-24 时（北京时间）口径，与空气质量业务日一致；"
-            "指标：temperature_2m_avg/max/min(°C，max/min 为小时级极值)、relative_humidity_2m_avg(%)、"
-            "dew_point_2m_avg(°C)、surface_pressure_avg(hPa)、wind_speed_10m_avg/max(m/s)、"
-            "wind_direction_10m_vector_avg(°，矢量平均的气象来向)、precipitation_sum(mm，日累计)、"
-            "cloud_cover_avg(%)、visibility_avg(m)；"
-            "valid_hours=参与聚合的小时数，data_quality 'good'=24小时齐全、'partial'=20~23小时"
-            "（均值可能偏倚、降水累计可能少算缺测时段）；有效小时数<20 的日子指标列为 NULL，"
-            "查询日均值时建议附带 data_quality 判断可靠性。"
-            "\n- era5_reanalysis_data：广东 21 地市历史气象再分析（city_weather_history 定时采集，"
-            "Open-Meteo Archive best match，非纯 ERA5 模式，来源以 data_source 为准）；"
-            "主键(time, lat, lon)，坐标为各市代表点按 0.25° 对齐后的网格点；"
-            "气象字段：temperature_2m(°C)、relative_humidity_2m(%)、dew_point_2m(°C)、"
-            "wind_speed_10m(m/s)、wind_direction_10m(°)、wind_gusts_10m(m/s)、"
-            "surface_pressure(hPa)、precipitation(mm)、cloud_cover(%)、shortwave_radiation(W/m²)、"
-            "visibility(m)、boundary_layer_height(m)；"
-            "time 为 UTC；按城市查询优先用 get_weather_data 工具（内部解析代表点），"
-            "本表适合直接 SQL 聚合统计。"
-            "\n注意：permit_* 表在主库，observed_weather_data/observed_weather_daily/era5_reanalysis_data 在独立气象库，"
-            "两库不支持跨库 JOIN，混用会直接报错。"
-            "\n- traffic_snapshot：国控站周边路况快照（定时抓取，6分钟时隙，slot_at 为 UTC 时隙起点）；"
-            "station_code 站点编码（道路级行以 'road:路名' 前缀区分），"
-            "evaluation_status 0未知/1畅通/2缓行/3拥堵/4严重拥堵，road_count 道路数，"
-            "congestion_section_count 拥堵路段数，raw 百度原始响应。"
-            "\n- traffic_section：拥堵路段明细（仅拥堵时存在），以 snapshot_id 关联快照，"
-            "含 road_name、section_desc、status、speed_km_h、congestion_distance_m、"
-            "congestion_trend（较10分钟前：加重/持平/缓解）。"
-            "\n- v_station_traffic_hourly：按 station_code+小时聚合视图（samples 样本数、"
-            "avg_status/max_status、congestion_sections、avg_speed_in_sections），"
-            "可与空气质量小时表按 station_code+小时 join。"
-            "\n注意：路况为查询时刻快照，缺失时隙=未采集（历史不可回补），请结合 samples 判断可信度；"
-            "当前时刻实时路况请用 query_xuchang_traffic_status 工具，不要用本工具冒充实时。"
-            "\n- scheduled_task_results：定时任务结构化结果（主库，所有任务共用，一行一次执行）；"
-            "查站点快速污染抬升告警结论需加 WHERE task_id = 'task_xuchang_station_deviation_alert'；"
-            "关键字段：task_id/task_name、status、started_at/completed_at、city、"
-            "station_id/station_name、pollutant、conclusion（结论文本）、"
-            "broadcast_message（LLM 通报正文）、trigger_type（scheduled 定时/event 事件触发）、"
-            "event_id/event_type（关联告警事件）；findings/image_paths 等列表列为 JSON。"
-            "\n- xuchang_station_alert_episodes：站点快速污染抬升告警事件聚合（主库，一行一个告警过程）；"
-            "字段：station_id/station_name、target_pollutant、alert_type、"
-            "status（active 进行中/closed 已结束）、started_at/last_seen_at/closed_at/closed_reason、"
-            "hour_count、notification_count、peak_station_value（站点峰值浓度）、"
-            "peak_deviation_ratio（峰值偏差比）；event_ids 为 JSON 数组，"
-            "可与 scheduled_task_results.event_id 关联取历次结论与通报。"
-            "\n注意：permit_*/路况/定时任务结果表在主库，气象表（observed_weather_data/"
-            "observed_weather_daily/era5_reanalysis_data）在独立气象库，"
-            "两库不支持跨库 JOIN，混用会直接报错。"
-            "\n\n示例："
-            "\n- 企业查询：SELECT enterprise_name, permit_number, current_status FROM permit_licenses "
-            "WHERE enterprise_name ILIKE '%水泥%' ORDER BY updated_at DESC LIMIT 50"
-            "\n- 大气污染物：SELECT l.enterprise_name, p.air_pollutant_types, p.air_emission_standard "
-            "FROM permit_licenses l JOIN permit_pollution_details p ON p.license_id = l.id "
-            "WHERE l.city_name = '许昌市' LIMIT 50"
-            "\n- 广东小时观测：SELECT time, temperature_2m, relative_humidity_2m, wind_speed_10m, "
-            "wind_direction_10m, precipitation FROM observed_weather_data "
-            "WHERE station_id = 'DwzZf' AND time >= '2026-10-28' ORDER BY time LIMIT 48"
-            "\n- 广东日值气象：SELECT obs_date, temperature_2m_avg, temperature_2m_max, temperature_2m_min, "
-            "relative_humidity_2m_avg, wind_speed_10m_avg, precipitation_sum, data_quality "
-            "FROM observed_weather_daily WHERE station_id = 'DwzZf' AND obs_date >= '2026-10-01' ORDER BY obs_date"
-            "\n- ERA5 历史聚合：SELECT time, temperature_2m, boundary_layer_height, shortwave_radiation "
-            "FROM era5_reanalysis_data WHERE lat = 23.25 AND lon = 113.25 "
-            "AND time >= '2026-10-01' ORDER BY time LIMIT 100"
-            "\n- 路况小时统计：SELECT station_code, hour_ts, samples, avg_status, max_status, "
-            "congestion_sections FROM v_station_traffic_hourly "
-            "WHERE station_code IN ('1003A','1005A') ORDER BY hour_ts DESC LIMIT 100"
-            "\n- 快速告警历史：SELECT started_at, station_name, target_pollutant, status, "
-            "peak_station_value, peak_deviation_ratio FROM xuchang_station_alert_episodes "
-            "ORDER BY started_at DESC LIMIT 50"
-            "\n- 告警结论与通报：SELECT completed_at, station_name, conclusion, broadcast_message "
-            "FROM scheduled_task_results WHERE task_id = 'task_xuchang_station_deviation_alert' "
-            "ORDER BY completed_at DESC LIMIT 20"
+        options = _load_postgres_tool_options()
+        allowed_tables = list(ALLOWED_SQL_TABLES) + list(
+            options.get("allowed_tables_extra") or []
         )
+        project_notes = str(options.get("schema_notes") or "")
+        schema_description = (
+            "PostgreSQL/KingbaseES 只读 SQL 查询工具：企业排污许可证（主库）、气象站小时/日观测"
+            "（独立气象库）、定时任务结构化结果（主库）。"
+            "describe_table 查表结构，或 sql 执行 SELECT/CTE，二者二选一。"
+            f"白名单表：{', '.join(allowed_tables)}。只允许 SELECT（禁写/DDL/注释/多语句），"
+            f"LIMIT 分页最大 {MAX_LIMIT} 条；字段不确定先 describe_table，禁查 information_schema。"
+            "\n\n【表间关系与口径】"
+            "- permit_licenses 主表（企业/许可证编号/状态）；versions/pollution_details/documents 均以 license_id 关联主表。"
+            "- observed_weather_data 逐小时观测（主键 time+station_id，站点清单 SELECT DISTINCT station_id, station_name；NULL=缺测）；"
+            "observed_weather_daily 逐日聚合（obs_date 为 00-24 北京时口径），查询日值建议附带 data_quality/valid_hours 判可靠性（<20 小时的日子指标列为 NULL）。"
+            "- scheduled_task_results 全部定时任务共用的结构化结果表（conclusion 结论 / broadcast_message 通报正文；"
+            "findings、image_paths 为 JSON 列），查具体任务结论按 task_id 过滤。"
+            "- 硬边界：permit_*/任务表在主库，observed_weather_* 在独立气象库，两库不支持跨库 JOIN。"
+            "\n示例："
+            "\n- 企业大气污染物：SELECT l.enterprise_name, p.air_pollutant_types, p.air_emission_standard FROM permit_licenses l JOIN permit_pollution_details p ON p.license_id = l.id "
+            "WHERE l.city_name = N'城市名称' LIMIT 50"
+        )
+        # 项目专属业务表的路由口径与示例经 tool_options.schema_notes 追加（如许昌
+        # 路况时序/站点快速告警 task_id/站点点编码），共享层不写死任何项目地名。
+        if project_notes:
+            schema_description = schema_description + "\n\n【项目扩展口径】" + project_notes
         function_schema = {
             "name": "execute_postgres_sql_query",
             "description": schema_description,
@@ -178,7 +118,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                 "properties": {
                     "describe_table": {
                         "type": "string",
-                        "enum": ALLOWED_SQL_TABLES,
+                        "enum": allowed_tables,
                         "description": "查看白名单业务表的字段及一条样例；与 sql 二选一。",
                     },
                     "sql": {
@@ -205,7 +145,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         )
         self.sql_validator = SQLValidator(
             max_limit=MAX_LIMIT,
-            allowed_tables=ALLOWED_SQL_TABLES,
+            allowed_tables=allowed_tables,
         )
 
     async def execute(
@@ -228,11 +168,11 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         return await self._execute_sql(sql or "", limit, context)
 
     async def _describe_table(self, table_name: str) -> dict[str, Any]:
-        if table_name not in ALLOWED_SQL_TABLES:
+        if table_name not in allowed_tables:
             return {
                 "success": False,
                 "data": None,
-                "summary": f"表 '{table_name}' 不在白名单中。可用表: {', '.join(ALLOWED_SQL_TABLES)}",
+                "summary": f"表 '{table_name}' 不在白名单中。可用表: {', '.join(allowed_tables)}",
             }
 
         try:

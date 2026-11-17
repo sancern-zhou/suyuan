@@ -24,6 +24,7 @@ from .cancellation import AgentRunCancelled, cancellation_registry
 from .mode_capabilities import supports_native_multimodal
 from .ownership import run_ownership_registry
 from .steering import steering_registry
+from .time_budget import TimeBudget
 from ..context.context_diagnostics import ContextDiagnostics
 from ..workflow.mode_workflows import (
     allowed_tools as fixed_workflow_allowed_tools,
@@ -204,12 +205,41 @@ class AgentRuntime:
             yield self.events.start(state)
 
             workflow_definition = get_mode_workflow(state.mode)
-            iteration_limit = min(
-                self.config.max_iterations,
-                workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+            # 时间预算模式（自由 agent 工作流节点，runtime_metadata.time_budget 下发）：
+            # 轮次不是工作量单位，取消轮次硬限，墙钟时间 + 空转熔断接管预算；
+            # 预算耗尽原地续跑（同实例、上下文不动），不打断进行中的工具调用。
+            time_budget = TimeBudget.from_runtime_metadata(self.config.runtime_metadata)
+            if time_budget is not None:
+                logger.info(
+                    "time_budget_enabled",
+                    session_id=state.session_id,
+                    soft_seconds=time_budget.spec.soft_seconds,
+                    hard_seconds=time_budget.spec.hard_seconds,
+                )
+            iteration_limit = (
+                None
+                if time_budget is not None
+                else min(
+                    self.config.max_iterations,
+                    workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+                )
             )
-            while state.iteration < iteration_limit and not state.task_completed:
+            while (iteration_limit is None or state.iteration < iteration_limit) and not state.task_completed:
                 self._raise_if_cancelled()
+                if time_budget is not None:
+                    decision = time_budget.check()
+                    if decision.prompt:
+                        # 预算提示以用户消息注入下一轮上下文（续跑/收尾/推进指令）
+                        self.writer.add_user_message(decision.prompt)
+                    if decision.action == "stop":
+                        state.budget_termination = decision.reason
+                        logger.info(
+                            "time_budget_terminated",
+                            session_id=state.session_id,
+                            reason=decision.reason,
+                            iterations=state.iteration,
+                        )
+                        break
                 state.iteration += 1
                 try:
                     async for event in self._apply_steering_inputs(state):
@@ -217,6 +247,8 @@ class AgentRuntime:
                     async for event in self._run_iteration(state):
                         self._raise_if_cancelled()
                         yield event
+                    if time_budget is not None:
+                        time_budget.on_turn_end(had_tool_call=state.last_turn_tool_calls > 0)
                     deterministic_error_count = 0
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
@@ -281,7 +313,7 @@ class AgentRuntime:
                     async for event in self.finalizer.fatal_error(state, error):
                         yield event
                 else:
-                    async for event in self.finalizer.timeout(state):
+                    async for event in self.finalizer.timeout(state, reason=state.budget_termination):
                         yield event
 
         except Exception as exc:
@@ -328,6 +360,8 @@ class AgentRuntime:
             )
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
+        # 时间预算空转检测输入：本轮工具调用数（各分支覆写）
+        state.last_turn_tool_calls = 0
         context_result, conversation_history = await self._build_context(state)
         attachments = self._effective_attachments(state)
         self._record_visual_context(state, attachments)
@@ -362,6 +396,7 @@ class AgentRuntime:
         action_type = action.get("type", "ERROR")
 
         if streaming_tool_executor.total_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
+            state.last_turn_tool_calls = streaming_tool_executor.total_count
             async for event in self._handle_streamed_tools(state, planner_result, streaming_tool_executor):
                 self._raise_if_cancelled()
                 yield event
@@ -414,6 +449,7 @@ class AgentRuntime:
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
+            state.last_turn_tool_calls = 1
             suppressed_observation = (
                 self._fixed_workflow_blocked_observation(state, action)
                 or self._suppressed_housekeeping_observation(state, action)
@@ -457,6 +493,8 @@ class AgentRuntime:
                     yield event
                 return
             async for event in self.observation_processor.process(state, planner_result, action, observation):
+                yield event
+            async for event in self._inject_completed_delegation_results(state, planner_result):
                 yield event
             return
 
@@ -1489,6 +1527,67 @@ class AgentRuntime:
         }
         yield {"type": "_delegation_absorbed", "absorbed": True}
 
+    async def _inject_completed_delegation_results(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """工具轮次边界收割已完成的后台委派，结果作为观察注入下一轮。
+
+        交付边界（PLAIN_TEXT_REPLY）的 _absorb_background_delegations 负责
+        阻塞等待；这里补齐工具循环内的信号通路——委派一完成，下一轮
+        planner 即可看到结果（等价"完成通知"），模型无需查询
+        manage_assistant_runs 获取进度（2026-11-08 轮询风暴复盘修复）。
+        非阻塞：未完成的委派不动，仍由交付边界等待。
+        """
+        if self.config.runtime_mode != "assistant" or state.task_completed:
+            return
+        from app.social.assistant_runs import (
+            AssistantRunService,
+            apply_inline_or_spill,
+        )
+        from config.settings import settings
+
+        service = AssistantRunService()
+        if service.pending_background_count(state.session_id) <= 0:
+            return
+        results, still_running = await service.collect_completed_runs(state.session_id)
+        if not results:
+            return
+        apply_inline_or_spill(
+            results, int(settings.assistant_delegation_inline_result_chars)
+        )
+        statuses = [str(item.get("status")) for item in results]
+        observation = {
+            "success": all(status == "succeeded" for status in statuses),
+            "delegation_results": results,
+            "summary": (
+                "后台委派已完成 {} 项（{}）{}：结果已注入，无需再用 "
+                "manage_assistant_runs 查询这些 run。".format(
+                    len(results),
+                    "/".join(statuses),
+                    f"；仍有 {still_running} 项在运行" if still_running else "",
+                )
+            ),
+        }
+        self._ensure_user_message_written(state)
+        self.writer.add_iteration(
+            planner_result.thought, {"type": "DELEGATION_RESULT"}, observation
+        )
+        state.last_observation = observation
+        yield {
+            "type": "delegation_status",
+            "data": {
+                "phase": "completed",
+                "runs": [
+                    {key: item.get(key) for key in ("run_id", "kind", "status", "goal", "target_mode")}
+                    for item in results
+                ],
+                "still_running": still_running,
+                "session_id": state.session_id,
+            },
+        }
+
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""
         suppressed = set(state.suppress_tool_names_next_turn)
@@ -1678,6 +1777,8 @@ class AgentRuntime:
             return
 
         async for event in self.observation_processor.process(state, planner_result, action, observation):
+            yield event
+        async for event in self._inject_completed_delegation_results(state, planner_result):
             yield event
 
     @staticmethod

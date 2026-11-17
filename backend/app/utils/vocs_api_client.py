@@ -232,6 +232,7 @@ class VocApiClient:
                 "api_response": None,
             }
 
+        # 构建查询参数（使用最小参数集，避免超时）
         params = {
             "StationCodes": station_code,
             "DetectionitemType": VOC_SPECIES_DETECTION_ITEM_TYPE_GUID,

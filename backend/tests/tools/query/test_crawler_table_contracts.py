@@ -12,7 +12,16 @@ from app.utils.table_contracts import (
     render_table_contracts,
     reset_cache,
 )
-from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+try:
+    from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+except ModuleNotFoundError:
+    # 采集库工具已回归许昌专属（tools/xuchang/）；广东部署不启用，依赖该工具的用例跳过。
+    ExecuteCrawlerSQLQueryTool = None
+
+_requires_crawler_tool = pytest.mark.skipif(
+    ExecuteCrawlerSQLQueryTool is None,
+    reason="采集库 SQL 工具为许昌专属，本部署无该模块",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +88,7 @@ def test_render_contracts_empty_when_missing(tmp_path, monkeypatch):
     assert render_table_contracts() == ""
 
 
+@_requires_crawler_tool
 def test_tool_description_routes_to_describe_table_not_embeds_contracts(tmp_path, monkeypatch):
     """预算策略：描述只留路由与红线，字段契约走 describe_table 按需通道。"""
     _use_tmp_contracts(tmp_path, monkeypatch)
@@ -94,6 +104,7 @@ def test_tool_description_routes_to_describe_table_not_embeds_contracts(tmp_path
     assert "站点字段 StationCode/StationName/" not in description
 
 
+@_requires_crawler_tool
 def test_columns_hint_lists_real_columns(tmp_path, monkeypatch):
     _use_tmp_contracts(tmp_path, monkeypatch)
     tool = ExecuteCrawlerSQLQueryTool()
@@ -123,6 +134,7 @@ def _make_unknown_column_error():
 
 
 @pytest.mark.asyncio
+@_requires_crawler_tool
 async def test_unknown_column_failure_attaches_real_columns(tmp_path, monkeypatch):
     _use_tmp_contracts(tmp_path, monkeypatch)
     tool = ExecuteCrawlerSQLQueryTool()
@@ -143,6 +155,7 @@ async def test_unknown_column_failure_attaches_real_columns(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+@_requires_crawler_tool
 async def test_non_column_failure_keeps_describe_guidance(tmp_path, monkeypatch):
     _use_tmp_contracts(tmp_path, monkeypatch)
     tool = ExecuteCrawlerSQLQueryTool()
@@ -159,6 +172,7 @@ async def test_non_column_failure_keeps_describe_guidance(tmp_path, monkeypatch)
     assert "真实字段" not in result["summary"]
 
 
+@_requires_crawler_tool
 def test_deployment_contract_matches_crawler_whitelist():
     """契约文件必须只收录白名单表，且本部署存在的白名单表不得遗漏。
 
@@ -193,6 +207,7 @@ def test_contract_column_types_available_for_whitelist_tables():
     assert types.get("Aqi") in {"int", "bigint", "float", "double", "decimal"}
 
 
+@_requires_crawler_tool
 def test_externalized_result_includes_exact_data_shape(monkeypatch):
     """外置结果的 data_shape 使用契约精确类型，派生列标注推断。"""
     tool = ExecuteCrawlerSQLQueryTool()
