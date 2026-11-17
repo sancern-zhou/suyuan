@@ -9,7 +9,7 @@ def test_ops_prompt_instructs_graph_guided_fault_diagnosis():
             "ops_audit_fetch_dataset",
             "query_gd_suncere_station_hour_new",
             "query_gd_suncere_station_day_new",
-            "execute_ops_sql_query",
+            "execute_postgres_sql_query",
         ]
     )
 

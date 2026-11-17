@@ -35,7 +35,10 @@ export function useConversationActions(store, { getState = null, preserveCurrent
   ))
 
   const handleSend = async payload => {
-    if (currentConversationPolicy.value.readOnly) return false
+    if (currentConversationPolicy.value.readOnly) {
+      if (typeof payload.onRejected === 'function') payload.onRejected()
+      return false
+    }
     const query = payload.query
     const agentMode = payload.agentMode || store.agentMode
     const directRun = resolveDirectThroughRun(targetState.value, agentMode)
@@ -60,7 +63,8 @@ export function useConversationActions(store, { getState = null, preserveCurrent
       messageAttachments: payload.messageAttachments || [],
       pageContext: payload.pageContext || null,
       preserveCurrentMode,
-      onAccepted: payload.onAccepted
+      onAccepted: payload.onAccepted,
+      onRejected: payload.onRejected
     }
     try {
       await store.analyze(query, options)

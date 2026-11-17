@@ -359,10 +359,10 @@ def test_session_memory_load_history_messages_rebuilds_tool_blocks_from_display_
         {
             "type": "tool_use",
             "role": "assistant",
-            "content": "调用工具: execute_ops_sql_query",
+            "content": "调用工具: execute_postgres_sql_query",
             "data": {
                 "tool_use_id": "toolu_query_1",
-                "tool_name": "execute_ops_sql_query",
+                "tool_name": "execute_postgres_sql_query",
                 "input": {"sql": "SELECT 1"},
             },
             "timestamp": "2026-06-04T00:00:01",
@@ -370,7 +370,7 @@ def test_session_memory_load_history_messages_rebuilds_tool_blocks_from_display_
         {
             "type": "thought",
             "role": "assistant",
-            "content": "准备调用工具: execute_ops_sql_query",
+            "content": "准备调用工具: execute_postgres_sql_query",
             "data": {"thought": "准备调用工具"},
             "timestamp": "2026-06-04T00:00:02",
         },
@@ -380,7 +380,7 @@ def test_session_memory_load_history_messages_rebuilds_tool_blocks_from_display_
             "content": "查询到1条记录",
             "data": {
                 "tool_use_id": "toolu_query_1",
-                "tool_name": "execute_ops_sql_query",
+                "tool_name": "execute_postgres_sql_query",
                 "result": {"summary": "查询到1条记录", "rows": [{"value": 1}]},
                 "is_error": False,
             },
@@ -398,7 +398,7 @@ def test_session_memory_load_history_messages_rebuilds_tool_blocks_from_display_
             {
                 "type": "tool_use",
                 "id": "toolu_query_1",
-                "name": "execute_ops_sql_query",
+                "name": "execute_postgres_sql_query",
                 "input": {"sql": "SELECT 1"},
             }
         ],

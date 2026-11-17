@@ -337,7 +337,7 @@ def test_catalog_matches_project_modes_and_enabled_tools(monkeypatch):
         "get_tool_status",
         lambda name: (
             "enabled"
-            if name in {"read_file", "execute_sql_query", "call_sub_agent"}
+            if name in {"read_file", "execute_postgres_sql_query", "call_sub_agent"}
             else "disabled"
         ),
     )
@@ -346,7 +346,7 @@ def test_catalog_matches_project_modes_and_enabled_tools(monkeypatch):
     )
     catalog = capability_catalog()
     assert "workspace:query" in catalog
-    assert "tool:execute_sql_query" not in catalog
+    assert "tool:execute_postgres_sql_query" not in catalog
     assert "delegate:office" in catalog
     assert "delegate:query" not in catalog and "delegate:expert" not in catalog
     assert "delegate:report" not in catalog

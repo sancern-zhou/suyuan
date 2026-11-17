@@ -7,6 +7,8 @@ from typing import Any
 
 import httpx
 
+from .remote_embedding import build_auth_headers
+
 
 _SILICONFLOW_RERANK_URL = "https://api.siliconflow.cn/v1/rerank"
 
@@ -20,12 +22,16 @@ class RemoteReranker:
         model: str,
         timeout_seconds: float,
         transport: httpx.AsyncBaseTransport | None = None,
+        api_key_header: str = "Authorization",
+        api_key_prefix: str | None = None,
     ) -> None:
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.transport = transport
+        self.api_key_header = api_key_header
+        self.api_key_prefix = api_key_prefix
 
     @classmethod
     def from_env(cls) -> RemoteReranker | None:
@@ -51,6 +57,11 @@ class RemoteReranker:
                 0.1,
                 float(os.getenv("KNOWLEDGE_RERANK_TIMEOUT_SECONDS", "8")),
             ),
+            api_key_header=os.getenv(
+                "KNOWLEDGE_RERANK_API_KEY_HEADER", "Authorization"
+            ).strip()
+            or "Authorization",
+            api_key_prefix=os.environ.get("KNOWLEDGE_RERANK_API_KEY_PREFIX"),
         )
 
     async def rerank(
@@ -84,10 +95,10 @@ class RemoteReranker:
                     "answer the question or identify the requested document."
                 ),
             }
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        headers.update(
+            build_auth_headers(self.api_key, self.api_key_header, self.api_key_prefix)
+        )
         timeout = httpx.Timeout(self.timeout_seconds)
         async with httpx.AsyncClient(
             timeout=timeout,

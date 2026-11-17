@@ -1146,7 +1146,7 @@ class ExecutePythonTool(LLMTool):
             f"--as={self._sandbox_address_space_limit()}",
             "--fsize=104857600",
             "--nofile=256",
-            "--nproc=128",
+            "--nproc=" + str(self._sandbox_process_limit()),
             "--core=0",
             "--",
             bwrap,
@@ -1519,6 +1519,25 @@ class ExecutePythonTool(LLMTool):
             if value:
                 env[name] = value
         return env
+
+    @staticmethod
+    def _sandbox_process_limit() -> int:
+        """Sandbox RLIMIT_NPROC; env-overridable.
+
+        RLIMIT_NPROC 统计的是同一真实 UID 下的全部任务（含线程），不是沙箱
+        自身的进程数。服务账号若已有数千线程（uvicorn/torch 线程池等），
+        128 这种小值会让 bwrap 在 ``unshare`` 阶段直接报
+        ``Creating new namespace failed: Resource temporarily unavailable``。
+        因此默认放宽到 8192，并允许按部署环境用 ``PYTHON_SANDBOX_NPROC``
+        覆盖。
+        """
+        raw = os.getenv("PYTHON_SANDBOX_NPROC", "").strip()
+        if raw:
+            try:
+                return max(64, int(raw))
+            except ValueError:
+                logger.warning("execute_python_sandbox_nproc_invalid", value=raw)
+        return 8192
 
     @staticmethod
     def _sandbox_address_space_limit() -> int:
@@ -3661,6 +3680,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "首次使用前必须先调用 read_file 阅读 "
                 "backend/app/tools/utility/execute_echarts_python_manual.md。"
                 "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
+                "code 参数保持精简（约 ≤1500 字符/≤150 行），数据一律走 load_data 读文件，"
+                "禁止内联大段数据；参数过长会被上游截断并返回 tool_arguments_truncated，须压缩后重试。"
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
@@ -3688,6 +3709,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                         "type": "string",
                         "description": (
                             "要执行的 Python 代码。使用 load_data(file_path) 读取会话数据文件。"
+                            "保持精简（约 ≤1500 字符/≤150 行），禁止内联大段数据；"
                             "必须在 stdout 中逐行 print 纯 JSON ECharts option；"
                             "不要打印 CHART_1:、Markdown、自然语言说明或本地路径作为图表协议。"
                         )

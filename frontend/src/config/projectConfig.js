@@ -32,7 +32,7 @@ export function createProjectConfig(value) {
     project: value.project,
     modules: Object.freeze([...modules]),
     theme: value.frontend.theme,
-    brandName: value.frontend.brandName || '风清气智',
+    brandName: value.frontend.brandName ?? '风清气智',
     assistantName: value.frontend.assistantName || '助手',
     defaultModelTier: value.frontend.defaultModelTier || 'flash',
     features,

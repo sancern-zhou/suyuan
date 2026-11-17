@@ -48,6 +48,7 @@ class ResourceRenderer(str, Enum):
     MARKDOWN = "markdown"
     SPREADSHEET = "spreadsheet"
     PRESENTATION = "presentation"
+    DOCX = "docx"
     IMAGE = "image"
     CHART = "chart"
     BOARD = "board"

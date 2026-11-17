@@ -23,6 +23,9 @@ export function createAuthGuard(authStore) {
         : true
     }
 
+    // 外部平台免登录入口：票据交换后自行写入会话，不能被重定向到登录页。
+    if (to.meta?.public) return true
+
     // 部署级直连：未登录但 URL 携带 access_token 时放行标记了
     // allowDashboardToken 的页面，真实校验在后端
     // （dashboard_api_prefix + dashboard_access_token），

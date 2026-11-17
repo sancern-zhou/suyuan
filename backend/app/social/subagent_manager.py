@@ -383,6 +383,9 @@ class SubagentManager:
                 break
             elif event.get("type") == "error":
                 error_data = event.get("data", {})
+                if isinstance(error_data, dict) and error_data.get("silent"):
+                    # 瞬时故障由运行时自动重试，继续等待终态事件
+                    continue
                 error_msg = error_data.get("error", "Unknown error")
                 raise Exception(f"Subagent error: {error_msg}")
 

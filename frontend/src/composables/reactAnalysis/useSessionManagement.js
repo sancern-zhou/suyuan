@@ -7,7 +7,7 @@ import { onAccountChanged } from '@/auth/accountSession.js'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { preserveCatalogFields } from '@/components/management/sessionHistoryAccess.js'
 import { useConversationActions } from './useConversationActions.js'
-import { filterConversationHistory } from '@/components/conversationListPolicy.js'
+import { compareConversationRecency, filterConversationHistory, localConversationFallback } from '@/components/conversationListPolicy.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
@@ -42,12 +42,14 @@ export function useSessionManagement(store) {
       .filter(session => session.sessionId)
       .map(session => {
         const firstUser = session.messages?.find(m => m.type === 'user')
-        const lastMessage = session.messages?.[session.messages.length - 1]
         const hasError = session.messages?.some(m => m.type === 'error') || !!session.error
         return {
           session_id: session.sessionId,
           query: firstUser?.content || '新对话',
-          updated_at: lastMessage?.timestamp || new Date().toISOString(),
+          // 本地未落库会话用首条消息时间兜底；已落库的会话在合并时保留
+          // 服务端 updated_at，绝不把“当前时刻”当成最近活动时间。
+          // 消息时间可能是库里的本地 CST，统一转成 UTC ISO 再参与比较。
+          updated_at: localConversationFallback(firstUser?.timestamp),
           created_at: session.createdAt,
           has_error: hasError,
           state: session.isAnalyzing ? 'running' : (hasError ? 'error' : 'completed'),
@@ -68,9 +70,14 @@ export function useSessionManagement(store) {
       }))
     }
     for (const session of localSessionHistoryData.value) {
+      const existing = byId.get(session.session_id) || {}
       byId.set(
         session.session_id,
-        preserveCatalogFields(byId.get(session.session_id) || {}, session)
+        preserveCatalogFields(existing, {
+          ...session,
+          // 服务端 updated_at 是持久化真相，本地状态只补标题/运行态。
+          updated_at: existing.updated_at || session.updated_at
+        })
       )
     }
 
@@ -80,10 +87,7 @@ export function useSessionManagement(store) {
         query: session.title, metadata: { ...(byId.get(session.session_id)?.metadata || {}), mode: 'assistant' }
       })
     }
-    return filterConversationHistory(Array.from(byId.values())).sort((a, b) => {
-      if (!!a.is_running !== !!b.is_running) return a.is_running ? -1 : 1
-      return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
-    })
+    return filterConversationHistory(Array.from(byId.values())).sort(compareConversationRecency)
   })
 
   const applySessionCaseState = (sessionId, isCase, metadataOverride = null) => {

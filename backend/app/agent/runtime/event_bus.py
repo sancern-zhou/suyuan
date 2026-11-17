@@ -216,17 +216,22 @@ class RuntimeEventBus:
             data["reason"] = reason
         return {"type": "complete", "stream": "final", "data": data}
 
-    def error(self, state: RunState, error: Exception) -> Dict[str, Any]:
-        return {
-            "type": "error",
-            "stream": "error",
-            "data": {
-                "iteration": state.iteration,
-                "error": str(error),
-                "error_type": type(error).__name__,
-                "timestamp": datetime.now().isoformat(),
-            },
+    def error(self, state: RunState, error: Exception, silent: bool = False) -> Dict[str, Any]:
+        """迭代错误事件。
+
+        `silent=True` 表示这是运行时会自动重试的瞬时故障（限流/过载/超时），
+        事件仍需下发（social/subagent 等调用方以 error 事件判定失败），但前端
+        不应把它渲染成对话区气泡，只保留服务端日志。
+        """
+        data = {
+            "iteration": state.iteration,
+            "error": str(error),
+            "error_type": type(error).__name__,
+            "timestamp": datetime.now().isoformat(),
         }
+        if silent:
+            data["silent"] = True
+        return {"type": "error", "stream": "error", "data": data}
 
     def interrupted(self, state: RunState, reason: str = "用户已暂停本轮分析") -> Dict[str, Any]:
         return {
@@ -240,16 +245,21 @@ class RuntimeEventBus:
             },
         }
 
-    def fatal_error(self, state: RunState, error: Exception) -> Dict[str, Any]:
-        return {
-            "type": "fatal_error",
-            "stream": "error",
-            "data": {
-                "error": str(error),
-                "error_type": type(error).__name__,
-                "timestamp": datetime.now().isoformat(),
-            },
+    def fatal_error(
+        self,
+        state: RunState,
+        error: Exception,
+        user_message: str | None = None,
+    ) -> Dict[str, Any]:
+        data = {
+            "error": str(error),
+            "error_type": type(error).__name__,
+            "timestamp": datetime.now().isoformat(),
         }
+        if user_message:
+            # 技术错误只进日志；`user_message` 是给对话区展示的友好文案。
+            data["user_message"] = user_message
+        return {"type": "fatal_error", "stream": "error", "data": data}
 
     def _extract_file_path(self, value: Any) -> str | None:
         if isinstance(value, str) and value:

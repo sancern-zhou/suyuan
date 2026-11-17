@@ -7,6 +7,7 @@ import structlog
 from typing import Any
 
 from config.settings import settings
+from .tiktoken_offline import bootstrap_tiktoken_cache, encoding_is_cached
 
 logger = structlog.get_logger()
 
@@ -14,6 +15,8 @@ logger = structlog.get_logger()
 try:
     import tiktoken
     TIKTOKEN_AVAILABLE = True
+    # 必须在任何 encoding 初始化前固定缓存目录，否则内网会卡在词表下载。
+    bootstrap_tiktoken_cache()
 except ImportError:
     TIKTOKEN_AVAILABLE = False
     logger.warning("tiktoken_not_available",
@@ -53,6 +56,16 @@ class TokenBudgetManager:
         # Initialize tokenizer
         self.tokenizer = None
         if self.use_tiktoken:
+            if not encoding_is_cached("cl100k_base"):
+                # 词表缺失时 tiktoken 会同步下载且无超时，内网会阻塞数十秒。
+                logger.warning(
+                    "tiktoken_encoding_not_cached",
+                    model=model,
+                    encoding="cl100k_base",
+                    message="Falling back to character-based token estimation",
+                )
+                self.use_tiktoken = False
+                return
             try:
                 # Map model names to tiktoken encodings
                 if "gpt-4" in model.lower() or "gpt-3.5" in model.lower():

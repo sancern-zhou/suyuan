@@ -12,7 +12,7 @@
       <iframe
         ref="frame"
         class="frame"
-        :src="resource.content_url"
+        :src="frameSrc"
         :title="resource.label || '交互报告'"
         sandbox="allow-scripts allow-forms"
         :style="frameStyle"
@@ -23,6 +23,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { isRuntimeHeightEvent, previewFrameHeight } from '@/services/inlineHtmlFrame.js'
+import { browserResourceUrl } from '@/services/resourceUrls.js'
 
 const props = defineProps({ resource: { type: Object, required: true } })
 defineEmits(['preview'])
@@ -30,6 +31,7 @@ defineEmits(['preview'])
 const frame = ref(null)
 const expanded = ref(false)
 const reportedHeight = ref(0)
+const frameSrc = computed(() => browserResourceUrl(props.resource.content_url))
 
 // opaque sandbox origin 下 event.origin 恒为 "null"，校验只能落在
 // event.source（必须确为本卡片的 iframe）与消息形状上。
