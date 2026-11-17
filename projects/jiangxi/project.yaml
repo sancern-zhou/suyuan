@@ -33,13 +33,13 @@ frontend:
         - 专业问答
     query:
       name: 智能问数生图智能体
-      description: 查询噪声数据、生成图表与统计分析
+      description: 查询噪声数据、生成图表、统计核算与达标评价
       welcome:
-        description: 查询江西省噪声监测数据，生成可视化图表，快速完成统计分析和结论整理。
+        description: 查询江西省噪声监测数据，生成可视化图表，快速完成统计核算、昼夜达标评价和结论整理。
         features:
           - 查询江西省噪声站点分钟值、小时值、日均值和城市功能区聚合数据
           - 生成数据图表与可视化展示
-          - 完成统计汇总、对比和排名分析
+          - 完成统计汇总、对比、排名与 GB 3096 昼夜达标评价
           - 将查询结果整理为清晰的表格和结论
         example: '例如："查询南昌本月噪声监测数据，并生成对比图表"'
       tags:
@@ -48,9 +48,9 @@ frontend:
         - 统计分析
     expert:
       welcome:
-        description: 面向复杂的噪声污染问题组织多领域专家协同分析，综合监测数据、声场机理与业务经验形成专业判断。
+        description: 面向复杂噪声污染问题开展专业研判，综合监测数据、声场机理与业务经验，诊断超标成因、影响范围并给出治理建议。
         features:
-          - 协同开展噪声监测、声环境敏感点与声源识别分析
+          - 综合噪声监测、声环境敏感点与声源识别证据开展研判
           - 诊断噪声超标成因、影响范围与关键影响因素
           - 交叉核验多类证据，识别结论的不确定性
           - 输出专业研判结论与针对性治理建议
@@ -94,8 +94,6 @@ backend:
     expert:
       - list_session_resources
       - publish_session_file
-      - knowledge_qa_workflow
-      - knowledge_document_reader
       - execute_echarts_python
       - execute_python
       - read_file
