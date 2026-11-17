@@ -302,7 +302,7 @@ class ReActAgent:
 
     def __init__(
         self,
-        max_iterations: int = 120,  # ✅ 默认120次（适应复杂分析任务）
+        max_iterations: Optional[int] = None,  # None = 无步数上限（对齐 ZCode），靠上下文压缩续跑
         max_working_memory: int = 20,
         working_context_limit: int = 50000,
         large_data_threshold: int = 1000,
@@ -315,7 +315,7 @@ class ReActAgent:
         初始化 ReAct Agent
 
         Args:
-            max_iterations: 最大迭代次数
+            max_iterations: 最大迭代次数（None 表示不设步数上限，靠上下文压缩续跑）
             max_working_memory: 工作记忆最大迭代数（默认20，详细记录）
             working_context_limit: 工作记忆拼接的上下文字符上限
             large_data_threshold: 大数据阈值（字符数）
@@ -608,7 +608,10 @@ class ReActAgent:
             except Exception as e:
                 logger.warning("failed_to_create_memory_snapshot", error=str(e))
 
-        iteration_limit = max_iterations or self.max_iterations
+        # None 显式表达"无上限"；仅未传（None）时回退实例默认（通常也是 None=无限）
+        iteration_limit = (
+            max_iterations if max_iterations is not None else self.max_iterations
+        )
 
         logger.info(
             "analysis_started",

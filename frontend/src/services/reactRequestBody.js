@@ -5,7 +5,8 @@ export function buildAnalyzeRequestBody(query, options = {}) {
   const {
     sessionId = null,
     enhanceWithHistory = true,
-    maxIterations = 120,
+    // null = 不设步数上限（后端靠上下文压缩续跑）；显式传值仍作兜底上限
+    maxIterations = null,
     assistantMode = null,
     agentMode = 'expert',
     knowledgeBaseIds = null,
@@ -30,7 +31,6 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     session_id: sessionId,
     user_id: userIdentifier,
     enhance_with_history: enhanceWithHistory,
-    max_iterations: maxIterations,
     assistant_mode: assistantMode,
     mode: agentMode,
     knowledge_base_ids: knowledgeBaseIds,
@@ -39,6 +39,7 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     previous_paused_run_id: previousPausedRunId
   }
 
+  if (maxIterations !== null) body.max_iterations = maxIterations
   if (boardContext !== null) body.board_context = boardContext
   if (mapContext !== null) body.map_context = mapContext
   if (agentMode === 'assistant' && pageContext) body.page_context = pageContext

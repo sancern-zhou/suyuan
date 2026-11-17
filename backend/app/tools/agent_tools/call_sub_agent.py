@@ -75,25 +75,12 @@ AgentMode = Literal[
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
 
-_DEFAULT_CHILD_MAX_ITERATIONS = {
-    # 计算密集型专家任务（聚合、分箱、相关性）在 15-20 轮内常常收不完，
-    # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
-    "expert_meteorology": 40,
-    "expert_analysis": 40,
-    "expert": 40,
-    # 固定问数工作流由运行时限制为阶段预算之和（acquire 4 + normalize 15 + deliver 1）。
-    "query_monitoring": 20,
-    "query_monitoring_station": 20,
-    "query_monitoring_city": 20,
-    "query_forecast": 20,
-}
-
-
-def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) -> int:
-    default = _DEFAULT_CHILD_MAX_ITERATIONS.get(str(target_mode), 120)
+def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) -> Optional[int]:
+    """子 Agent 迭代预算：默认不设上限（None，对齐 ZCode——靠上下文压缩续跑 +
+    无进展熔断停机）；显式传值按原样生效（≥1，不再钳到 120）。"""
     if requested is None:
-        return default
-    return max(1, min(int(requested), 120))
+        return None
+    return max(1, int(requested))
 
 
 def ensure_structured_delivery_schema(target_mode: str, result_schema):
@@ -282,7 +269,7 @@ class CallSubAgentTool(LLMTool):
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 120,
-                        "description": "本次子 Agent 最大推理轮次；未指定时按专家类型使用较小默认值。",
+                        "description": "本次子 Agent 最大推理轮次；未指定时不设步数上限，靠上下文压缩续跑。",
                     },
                     "workflow_run_id": {
                         "type": "string",

@@ -984,7 +984,53 @@ class SimplifiedContextBuilder:
 
         return "\n\n".join(sections)
 
-    async def _compress_and_persist_history(self, conversation_history: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    async def force_compact_history(self, *, reason: str = "provider_context_overflow") -> bool:
+        """强制压缩会话历史并持久化（供 provider 溢出后的续跑路径调用）。
+
+        Returns:
+            是否实际缩减了历史（False = 已无可压缩空间，调用方应终止运行）。
+        """
+        messages = self.memory.session.get_messages_for_llm()
+        if not messages:
+            return False
+        compacted = await self._compress_and_persist_history(messages, force_reason=reason)
+        if compacted is None:
+            return False
+        return len(compacted) < len(messages)
+
+    def _enforce_compact_floor(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """收敛硬下限：LLM 摘要后仍超阈值时确定性丢弃中段。
+
+        保留首条（压缩产物中的 compact_memory/锚点）+ 最近尾部，逐条收缩
+        直至回到阈值内——防止"摘要本身膨胀→每轮空转压缩"的不收敛循环。
+        """
+        max_allowed = int(self.max_context_tokens * self.compression_threshold)
+
+        def _over(msgs: List[Dict[str, Any]]) -> bool:
+            return self._estimate_messages_tokens(msgs) > max_allowed
+
+        if not messages or len(messages) <= 2 or not _over(messages):
+            return messages
+        keep_tail = len(messages)
+        trimmed = messages
+        while keep_tail > 2 and _over(trimmed):
+            keep_tail -= 1
+            trimmed = [messages[0]] + messages[-(keep_tail - 1):]
+        if trimmed is not messages:
+            logger.warning(
+                "compact_floor_enforced",
+                original_count=len(messages),
+                kept_count=len(trimmed),
+                session_id=self.memory.session_id,
+            )
+        return trimmed
+
+    async def _compress_and_persist_history(
+        self,
+        conversation_history: Optional[List[Dict[str, Any]]],
+        *,
+        force_reason: str = "context_tokens_exceeded",
+    ) -> Optional[List[Dict[str, Any]]]:
         """
         压缩对话历史并持久化到 session
 
@@ -992,6 +1038,7 @@ class SimplifiedContextBuilder:
 
         Args:
             conversation_history: 原始对话历史（LLM消息格式）
+            force_reason: 压缩触发原因（写入持久化记录）
 
         Returns:
             压缩后的对话历史
@@ -1004,14 +1051,16 @@ class SimplifiedContextBuilder:
             compressed_messages = await self.compressor.compress(
                 conversation_history,
                 force=True,
-                force_reason="context_tokens_exceeded"
+                force_reason=force_reason
             )
+            # 收敛硬下限：摘要后仍超阈值则确定性丢弃中段，保证压缩必然收敛
+            compressed_messages = self._enforce_compact_floor(compressed_messages)
 
             # ✅ 关键修复：将压缩后的消息写回 session
             self.memory.session.update_messages(compressed_messages)
             await self._save_llm_compact_state(
                 compressed_messages,
-                reason="context_tokens_exceeded",
+                reason=force_reason,
             )
 
             logger.info(

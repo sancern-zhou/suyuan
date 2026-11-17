@@ -347,10 +347,10 @@ const createEmptyModeState = () => ({
   messages: [],
   currentMessage: '',
 
-  // 分析状态
+  // 分析状态（maxIterations: null = 无步数上限，靠后端上下文压缩续跑）
   isComplete: false,
   iterations: 0,
-  maxIterations: 120,
+  maxIterations: null,
 
   // 增强功能
   showReflexion: false,
@@ -510,9 +510,10 @@ export const useReactStore = defineStore('react', {
       return this.currentState?.iterations || 0
     },
 
-    // ✅ 向后兼容：maxIterations
+    // ✅ 向后兼容：maxIterations（null = 无上限）
     maxIterations() {
-      return this.currentState?.maxIterations || 30
+      const value = this.currentState?.maxIterations
+      return value === 0 || value ? value : null
     },
 
     // ✅ 向后兼容：sessionRound

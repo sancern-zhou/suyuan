@@ -37,6 +37,22 @@ from ..workflow.mode_workflows import (
 
 logger = structlog.get_logger()
 
+# 无进展熔断阈值（硬编码，与 ToolLoopGuard 同风格）：连续 N 轮既无成功工具结果
+# 也无正文输出即判停。无步数上限模式下，它接管原迭代上限的失控保护职能
+# （仅交互路径启用；time_budget 节点有自己的空转检测）。
+NO_PROGRESS_ITERATION_LIMIT = 8
+
+
+def _records_have_progress(records) -> bool:
+    """一轮工具记录中是否存在至少一次成功结果（非 dict 结果视为有产出）。"""
+    for record in records or []:
+        result = record.get("result") if isinstance(record, dict) else None
+        if not isinstance(result, dict):
+            return True
+        if result.get("success") is not False:
+            return True
+    return False
+
 
 class CustomAgentTerminalError(RuntimeError):
     """A scheduled/custom Agent reached a non-retryable terminal failure.
@@ -51,7 +67,9 @@ class AgentRuntimeConfig:
     planner: Any
     tool_executor: Any
     context_builder: Any
-    max_iterations: int = 120
+    # None = 无步数上限（对齐 ZCode）：终止只由任务完成/用户取消/熔断护栏决定，
+    # 上下文增长由 context_builder 的阈值压缩接管。显式传值仍作兜底上限。
+    max_iterations: Optional[int] = None
     enhance_with_history: bool = True
     enable_reasoning: bool = False
     is_interruption: bool = False
@@ -219,14 +237,15 @@ class AgentRuntime:
                     soft_seconds=time_budget.spec.soft_seconds,
                     hard_seconds=time_budget.spec.hard_seconds,
                 )
+            # 无步数上限（None）时循环只由任务完成/取消/熔断护栏终止；固定工作流
+            # 不再用阶段预算之和封顶主循环（阶段推进仍由 observe_tool_results 的
+            # max_attempts 约束）。time_budget 模式天然无步数限制。
             iteration_limit = (
                 None
                 if time_budget is not None
-                else min(
-                    self.config.max_iterations,
-                    workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
-                )
+                else self.config.max_iterations
             )
+            no_progress_count = 0
             while (iteration_limit is None or state.iteration < iteration_limit) and not state.task_completed:
                 self._raise_if_cancelled()
                 if time_budget is not None:
@@ -244,6 +263,7 @@ class AgentRuntime:
                         )
                         break
                 state.iteration += 1
+                progress_seq_before = state.progress_seq
                 try:
                     async for event in self._apply_steering_inputs(state):
                         yield event
@@ -252,6 +272,24 @@ class AgentRuntime:
                         yield event
                     if time_budget is not None:
                         time_budget.on_turn_end(had_tool_call=state.last_turn_tool_calls > 0)
+                    elif not state.task_completed and state.progress_seq == progress_seq_before:
+                        # 交互路径的无进展熔断（time_budget 路径有自己的空转检测）
+                        no_progress_count += 1
+                        if no_progress_count >= NO_PROGRESS_ITERATION_LIMIT:
+                            logger.warning(
+                                "agent_runtime_no_progress_breaker",
+                                iteration=state.iteration,
+                                consecutive_no_progress=no_progress_count,
+                            )
+                            self._ensure_user_message_written(state)
+                            deferred_event = await self._close_steering_event(state)
+                            if deferred_event:
+                                yield deferred_event
+                            async for event in self.finalizer.no_progress(state):
+                                yield event
+                            return
+                    else:
+                        no_progress_count = 0
                     deterministic_error_count = 0
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
@@ -285,6 +323,20 @@ class AgentRuntime:
                         if deferred_event:
                             yield deferred_event
                         async for event in self.finalizer.fatal_error(state, exc):
+                            yield event
+                        return
+                    if self._is_context_overflow_error(exc):
+                        # 上下文溢出→强制压缩后继续下一轮，不计入熔断计数；
+                        # 压缩无法再缩（如 system prompt 自身超限）才终止。
+                        compacted = await self._force_compact_for_overflow(state)
+                        if compacted:
+                            continue
+                        terminal_error = RuntimeError(f"上下文超限且压缩后无法继续缩减，运行已停止：{exc}")
+                        self._ensure_user_message_written(state)
+                        deferred_event = await self._close_steering_event(state)
+                        if deferred_event:
+                            yield deferred_event
+                        async for event in self.finalizer.fatal_error(state, terminal_error):
                             yield event
                         return
                     if self._is_deterministic_model_error(exc):
@@ -446,6 +498,8 @@ class AgentRuntime:
                 iteration=state.iteration,
                 reason=action.get("reason"),
             )
+            # 上下文管理本身是有效进展，不计入无进展熔断
+            state.progress_seq += 1
             # The compact result is runtime state, not a user response. Returning
             # lets the outer loop issue the next planning request without emitting
             # a completion or persisting the leaked summary.
@@ -472,6 +526,8 @@ class AgentRuntime:
                 tool_events = [self.events.tool_result(state, tool_call_id, observation, False, tool_name)]
             else:
                 observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
+            if _records_have_progress(records):
+                state.progress_seq += 1
             self._capture_multimodal_attachments(state, observation)
             self._capture_drawio_board_context(state, observation)
             self._apply_housekeeping_policy(state, action, observation)
@@ -1756,6 +1812,8 @@ class AgentRuntime:
             yield completed_result["message"]
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
+        if _records_have_progress(records):
+            state.progress_seq += 1
         self._capture_multimodal_attachments(state, observation)
         self._capture_drawio_board_context(state, observation)
         self._apply_housekeeping_policy(state, action, observation)
@@ -1801,6 +1859,30 @@ class AgentRuntime:
             STOP_INVALID_REQUEST,
             STOP_MODEL_UNAVAILABLE,
         }
+
+    @staticmethod
+    def _is_context_overflow_error(error: Exception) -> bool:
+        from app.agent.workflow.model_failure_policy import (
+            CONTEXT_EXCEEDED,
+            resolve_model_failure_policy,
+        )
+
+        return resolve_model_failure_policy(error).action == CONTEXT_EXCEEDED
+
+    async def _force_compact_for_overflow(self, state: RunState) -> bool:
+        """provider 上下文溢出后的强制压缩：成功缩减返回 True 供循环继续。"""
+        try:
+            return await self.context_builder.force_compact_history(
+                reason="provider_context_overflow"
+            )
+        except Exception as exc:
+            logger.error(
+                "agent_runtime_overflow_compact_failed",
+                session_id=state.session_id,
+                iteration=state.iteration,
+                error=str(exc),
+            )
+            return False
 
     @staticmethod
     def _is_terminal_quota_error(error: Exception) -> bool:

@@ -406,7 +406,9 @@ def merge_board_execution_context(
 # Request/Response Models
 # ========================================
 
-DEFAULT_MAX_ITERATIONS = 120
+# 默认不设步数上限（None，对齐 ZCode：靠上下文压缩续跑 + 熔断护栏停机）；
+# 调用方仍可显式传 max_iterations 作兜底上限（1..200）。
+DEFAULT_MAX_ITERATIONS = None
 MAX_ITERATIONS_CAP = 200
 
 
@@ -461,7 +463,7 @@ class AgentAnalyzeRequest(BaseModel):
                 "mode": "expert",
                 "user_id": "john_doe",
                 "enhance_with_history": True,
-                "max_iterations": 10,
+                "max_iterations": None,
                 "knowledge_base_ids": ["kb_123", "kb_456"],
             }
         },
@@ -477,7 +479,7 @@ class AgentAnalyzeRequest(BaseModel):
     )
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
-    max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
+    max_iterations: Optional[int] = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数（可选兜底上限；默认不限制，靠上下文压缩续跑）")
     mode: Optional[str] = Field(
         "expert",
         description="Agent模式：assistant - 助手模式，office - 办公模式，ppt - 幻灯片，expert - 专家，query - 问数，knowledge - 知识问答，report - 报告，ops - 运维"
@@ -548,7 +550,7 @@ class AgentAnalyzeRequest(BaseModel):
 class AgentQueryRequest(BaseModel):
     """Agent 简单查询请求（非流式）"""
     query: str = Field(..., description="用户查询")
-    max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
+    max_iterations: Optional[int] = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数（可选兜底上限；默认不限制）")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于保持会话连续性和记忆）")
     user_identifier: Optional[str] = Field(None, description="用户标识（可选，用于跨会话记忆共享）")
     assistant_mode: Optional[str] = Field(
@@ -626,35 +628,32 @@ class AgentQueryResponse(BaseModel):
 # Global Agent Instances
 # ========================================
 
-# 通用Agent实例（使用默认 max_iterations=120）
+# 通用Agent实例（默认无步数上限，靠上下文压缩续跑）
 multi_expert_agent_instance = create_react_agent(
     with_test_tools=False
 )
 
-# 气象专家模式全局实例（使用默认 max_iterations=120）
+# 气象专家模式全局实例（默认无步数上限）
 meteorology_expert_agent_instance = create_react_agent(
     with_test_tools=False,
     max_working_memory=25
 )
 
-# 数据可视化专家模式全局实例（专注图表，减少迭代）
+# 数据可视化专家模式全局实例（默认无步数上限）
 data_viz_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=8,  # ⚠️ 特殊配置：可视化只需8次
     max_working_memory=15
 )
 
 # 幻灯片模式独立实例：隔离 PPT 源码项目、质量闭环与会话工作记忆。
 ppt_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=80,
     max_working_memory=32,
 )
 
 # 画板模式独立实例：共享运行框架，但使用 board 专属 prompt、工具和完成协议。
 board_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=12,
     max_working_memory=20,
 )
 
@@ -720,7 +719,7 @@ async def analyze_stream(
     - `action`: 行动决策（工具调用或完成）
     - `observation`: 工具执行结果
     - `complete`: 任务成功完成
-    - `incomplete`: 达到最大迭代次数
+    - `incomplete`: 运行停止（连续无进展熔断，或显式传入的 max_iterations 兜底上限触发）
     - `error`: 迭代错误
     - `fatal_error`: 致命错误
     """

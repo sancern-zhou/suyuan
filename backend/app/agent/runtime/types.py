@@ -107,6 +107,9 @@ class RunState:
     # 时间预算终止原因（extended_timeout / stalled_no_progress）；
     # 供 finalizer 与 complete 事件透出，coordinator 据此区分预算耗尽与真失败
     budget_termination: Optional[str] = None
+    # 无进展熔断的进度序号：每轮产生成功工具结果/有效输出即 +1，
+    # 外层循环比对前后值判定"本轮是否有进展"（连续无进展达阈值熔断）
+    progress_seq: int = 0
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

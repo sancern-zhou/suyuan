@@ -74,7 +74,13 @@ async def start_scheduled_task_service() -> None:
         from app.scheduled_tasks import init_service, start_service
         from app.scheduled_tasks.project_tasks import sync_project_scheduled_tasks
 
-        service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
+        # 定时任务无人值守：默认无步数上限的交互式语义不适用，保留迭代
+        # 兜底上限防止失控运行（任务编排可显式覆盖）。
+        def _scheduled_agent_factory(**kwargs):
+            kwargs.setdefault("max_iterations", 120)
+            return create_react_agent(**kwargs)
+
+        service = init_service(agent_factory=_scheduled_agent_factory)
 
         register_project_workflow_handlers(context.manifest.project)
 

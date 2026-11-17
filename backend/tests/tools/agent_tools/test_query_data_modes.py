@@ -104,12 +104,13 @@ def test_query_submodes_registered_in_contract():
 
 
 def test_query_submode_default_iteration_budgets():
-    assert _resolve_child_max_iterations("query_monitoring", None) == 20
-    assert _resolve_child_max_iterations("query_monitoring_station", None) == 20
-    assert _resolve_child_max_iterations("query_monitoring_city", None) == 20
-    assert _resolve_child_max_iterations("query_forecast", None) == 20
+    # 无步数上限模式：默认 None（不限，靠上下文压缩续跑）；显式传值原样生效、不再钳到 120
+    assert _resolve_child_max_iterations("query_monitoring", None) is None
+    assert _resolve_child_max_iterations("query_monitoring_station", None) is None
+    assert _resolve_child_max_iterations("query_monitoring_city", None) is None
+    assert _resolve_child_max_iterations("query_forecast", None) is None
     assert _resolve_child_max_iterations("query_monitoring", 50) == 50
-    assert _resolve_child_max_iterations("query_monitoring", 500) == 120
+    assert _resolve_child_max_iterations("query_monitoring", 500) == 500
 
 
 def test_station_and_city_prompts_declare_table_level_boundary():
