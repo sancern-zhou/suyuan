@@ -39,7 +39,10 @@ logger = structlog.get_logger()
 
 
 class CustomAgentTerminalError(RuntimeError):
-    """A custom scheduled Agent reached a non-retryable terminal failure."""
+    """A scheduled/custom Agent reached a non-retryable terminal failure.
+
+    也用于全模式的工具循环强制终止（同签名连续两次 loop-block）。
+    """
 
 
 @dataclass
@@ -275,7 +278,8 @@ class AgentRuntime:
                         async for event in self.finalizer.fatal_error(state, terminal_error):
                             yield event
                         return
-                    if state.mode == "custom" and isinstance(exc, CustomAgentTerminalError):
+                    if isinstance(exc, CustomAgentTerminalError):
+                        # 工具循环等同源终止错误对所有模式均为不可恢复终态
                         self._ensure_user_message_written(state)
                         deferred_event = await self._close_steering_event(state)
                         if deferred_event:
@@ -887,6 +891,11 @@ class AgentRuntime:
             items = await steering_registry.drain(state.session_id, state.run_id)
         if not items:
             return
+
+        # 用户中途输入代表新意图：重置工具连击计数，明确指示下的重试不受罚
+        loop_guard = getattr(self.tool_coordinator, "loop_guard", None)
+        if loop_guard is not None:
+            loop_guard.reset()
 
         self._ensure_user_message_written(state)
         messages: List[str] = []
@@ -1809,36 +1818,37 @@ class AgentRuntime:
         action: Dict[str, Any],
         records: List[Dict[str, Any]],
     ) -> None:
-        if state.mode != "custom":
-            return
-        missing = next((
-            record for record in records
-            if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith("工具不存在:")
-        ), None)
-        if missing is not None:
-            # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
-            # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
-            signature = json.dumps(
-                {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-            )
-            if state.last_missing_tool_signature == signature:
-                raise CustomAgentTerminalError(
-                    f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+        if state.mode == "custom":
+            missing = next((
+                record for record in records
+                if isinstance(record.get("result"), dict)
+                and str(record["result"].get("error", "")).startswith("工具不存在:")
+            ), None)
+            if missing is not None:
+                # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
+                # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
+                signature = json.dumps(
+                    {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
                 )
-            state.last_missing_tool_signature = signature
-        unavailable = next((
-            record for record in records
-            if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith("工具不可用:")
-        ), None)
-        if unavailable is not None:
-            raise CustomAgentTerminalError(
-                f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
-            )
+                if state.last_missing_tool_signature == signature:
+                    raise CustomAgentTerminalError(
+                        f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+                    )
+                state.last_missing_tool_signature = signature
+            unavailable = next((
+                record for record in records
+                if isinstance(record.get("result"), dict)
+                and str(record["result"].get("error", "")).startswith("工具不可用:")
+            ), None)
+            if unavailable is not None:
+                raise CustomAgentTerminalError(
+                    f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
+                )
+        # loop-block 终止规则对全部模式生效：block 提示已附带行动指引与上次结果，
+        # 同签名连续两次 block 说明模型无视指引原样重试，强制收尾避免空转。
         blocked = next((
             record for record in records
             if isinstance(record.get("result"), dict)
