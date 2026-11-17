@@ -36,6 +36,13 @@ REPORT_NODE_ALLOWED_MODES = frozenset({
     "expert_component",
 })
 
+
+def report_parent_policy():
+    """报告父模式的项目策略；项目未声明 agent_workflow_parents.report 时为 None。"""
+    from app.agent.workflow.project_policy import parent_policy
+
+    return parent_policy("report")
+
 _FIXED_QUERY_NODE_MODES = frozenset({
     "query_monitoring",
     "query_monitoring_station",
@@ -846,7 +853,10 @@ class RunAgentWorkflowTool(LLMTool):
                     reason_values={"error": str(boundary_error)[:300]},
                 )
                 return self._failure(boundary_error)
-            if runtime_mode == "report":
+            if runtime_mode == "report" and report_parent_policy() is None:
+                # 项目声明 agent_workflow_parents.report 时，子模式边界由上方
+                # delegation_error 按项目 child_modes 硬限制，不再叠加共享大气清单；
+                # 未声明的项目保持共享层级化问数与领域专家节点约束不变。
                 disallowed_nodes = [
                     str(node.get("task_id") or "<unknown>")
                     for node in [*nodes, *added_nodes]
