@@ -17,6 +17,7 @@ from app.services.ops_audit.issue_linking import (
 from app.services.ops_audit.rf_form_names import rf_form_display_name
 
 EXCLUDED_RULE_IDS = rules_for_review_stage("excluded")
+SEMANTIC_REMARK_RULE_IDS = rules_for_review_stage("semantic_remark")
 
 
 def build_final_issue_list(
@@ -147,6 +148,23 @@ def _apply_semantic_fact_reviews(
     return excluded
 
 
+def _orphan_semantic_review(issue: dict[str, Any]) -> bool:
+    """标记了 needs_semantic_review，但没有任何下游复核管线会消费它。
+
+    语义复核批次只消费 ``semantic_remark`` 阶段规则，异常事实组件走
+    ``_apply_semantic_fact_reviews``。两者都不覆盖的规则一旦打上该标记，
+    就既不会被复核，也不能作为正式问题上报，只能静默消失。
+    2026-11-16 组分站复盘实例：SUP_RANGE_OUT_OF_SPEC 命中 8 单，其中 5 单
+    "超限但已备注"被丢弃，报告与待核验面板双双查无此单。此类项转人工核验。
+    """
+
+    rule_id = str(issue.get("rule_id") or "")
+    if rule_id in SEMANTIC_REMARK_RULE_IDS or is_abnormal_fact_rule(rule_id):
+        return False
+    evidence = _parse_evidence(issue.get("evidence"))
+    return evidence.get("needs_semantic_review") is True
+
+
 def _should_exclude_issue(issue: dict[str, Any]) -> bool:
     rule_id = str(issue.get("rule_id") or "")
     if rule_id in EXCLUDED_RULE_IDS:
@@ -155,7 +173,7 @@ def _should_exclude_issue(issue: dict[str, Any]) -> bool:
         return True
     evidence = _parse_evidence(issue.get("evidence"))
     if evidence.get("needs_semantic_review") is True and not is_abnormal_fact_rule(rule_id):
-        return True
+        return not _orphan_semantic_review(issue)
     reason_rule_id = str(evidence.get("reason_rule_id") or "")
     if reason_rule_id in EXCLUDED_RULE_IDS:
         return True
@@ -218,6 +236,10 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
             item[key] = evidence_data[key]
     _attach_range_decision_evidence(item, evidence_data)
     _attach_evidence_remarks(item, evidence_data)
+    if _orphan_semantic_review(issue):
+        # 无复核管线消费该标记：转人工核验，进 report_input 的待确认面板。
+        item["needs_manual_review"] = True
+        item["review_stage"] = "manual_evidence_review"
     link_metadata = issue_link_metadata(issue, working_order_code=record.get("working_order_code"))
     if link_metadata:
         item.update(link_metadata)

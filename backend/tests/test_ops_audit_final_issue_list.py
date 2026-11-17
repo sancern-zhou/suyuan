@@ -757,3 +757,77 @@ def test_final_issue_list_adds_operation_unit_from_audit_record_to_rule_and_sema
     assert result["issue_count"] == 2
     assert {item["operation_unit"] for item in result["items"]} == {"东城运维组"}
     assert {item["station_name"] for item in result["items"]} == {"东城站"}
+
+def test_orphan_needs_semantic_review_goes_to_manual_review_not_dropped():
+    """无复核管线消费 needs_semantic_review 时必须转人工核验，不得静默丢失。
+
+    2026-11-16 组分站复盘：SUP_RANGE_OUT_OF_SPEC 命中 8 单，其中 5 单
+    "超限但已备注"被 _should_exclude_issue 直接丢弃，报告与待核验面板
+    双双查无此单。守卫该路径：保留在清单内并标记待人工核验。
+    """
+
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-SUP-RANGE",
+                "station_id": "60",
+                "order_type": "SupCheck",
+                "maintenance_type": "Week",
+                "scoring_issues": [
+                    {
+                        "rule_id": "SUP_RANGE_OUT_OF_SPEC",
+                        "severity": "中",
+                        "category": "数值逻辑问题",
+                        "field": "sup_rf_common.Sup_RF_PANsWeekCheck.string24",
+                        "message": "PANs 分析仪周巡检记录：柱前压填写值 15 超出标准范围 17.5~18.5kPa，已备注“设定值为15Kpa”，需人工复核",
+                        "evidence": (
+                            '{"working_order_code":"WO-SUP-RANGE",'
+                            '"ruleitemtag":"Sup_RF_PANsWeekCheck",'
+                            '"with_remark":true,"needs_semantic_review":true}'
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    result = build_final_issue_list(audit)
+
+    assert [item["rule_id"] for item in result["items"]] == ["SUP_RANGE_OUT_OF_SPEC"]
+    item = result["items"][0]
+    assert item["needs_manual_review"] is True
+    assert item["review_stage"] == "manual_evidence_review"
+
+
+def test_consumed_needs_semantic_review_rule_keeps_existing_behaviour():
+    """已有复核管线的规则维持原判定：semantic_remark 阶段仍需复核后才上报。"""
+
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-RF-REMARK",
+                "station_id": "ST-1",
+                "order_type": "Check",
+                "maintenance_type": "Week",
+                "scoring_issues": [
+                    {
+                        "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+                        "severity": "高",
+                        "category": "异常说明问题",
+                        "field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
+                        "message": "RF表单存在异常/漏填/错配，需语义判断备注是否解释充分",
+                        "evidence": (
+                            '{"working_order_code":"WO-RF-REMARK",'
+                            '"reason_rule_id":"RF_RANGE_OUT_OF_SPEC",'
+                            '"needs_semantic_review":true}'
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    result = build_final_issue_list(audit)
+
+    # semantic_remark 阶段且未被语义复核提升 -> 不进正式清单
+    assert result["items"] == []

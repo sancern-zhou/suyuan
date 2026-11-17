@@ -14,6 +14,10 @@ Channels:
 - ``db_recheck``: deterministic re-query triage run by the retrospective stats
   layer (phase 1 step 3).
 
+Besides the monthly retrospective, panel rejections are derived at audit time
+into cross-run exemptions (``exemption_registry``) so the pending queue stops
+re-asking fingerprint-identical questions the user has already rejected.
+
 A ``rule_id`` of ``null`` is meaningful: the signal is not covered by the
 current rule catalog and is a candidate-new-rule hint for the retrospective.
 """
@@ -161,6 +165,9 @@ def normalize_record(
         "item_id": _optional_str(raw.get("item_id")),
         "execution_ref": _optional_str(raw.get("execution_ref")),
         "station_id": _optional_str(raw.get("station_id")),
+        "rf_table": _optional_str(raw.get("rf_table")),
+        "rf_field": _optional_str(raw.get("rf_field")),
+        "brand": _optional_str(raw.get("brand")),
         "original_judgment": _optional_str(raw.get("original_judgment")),
         "reason": reason[:MAX_REASON_LENGTH] or None,
         "feedback_id": _optional_str(raw.get("feedback_id")),
