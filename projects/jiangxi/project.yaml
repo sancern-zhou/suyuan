@@ -72,6 +72,11 @@ backend:
     query: projects/jiangxi/prompts/query.md
     expert: projects/jiangxi/prompts/expert.md
     report: projects/jiangxi/prompts/report.md
+    # 报告 DAG 精简子模式（internal/：不在前端模式列表，仅由 report 父模式经
+    # run_agent_workflow 委派；叶子节点不可再委派）
+    noise_query_monitoring: projects/jiangxi/prompts/internal/noise_query_monitoring.md
+    noise_query_evaluation: projects/jiangxi/prompts/internal/noise_query_evaluation.md
+    noise_expert_analysis: projects/jiangxi/prompts/internal/noise_expert_analysis.md
   report_final_review_prompt_file: projects/jiangxi/prompts/report_final_review.md
   tools:
     - get_jiangxi_noise_data
@@ -137,28 +142,23 @@ backend:
       - describe_jiangxi_noise_api
       - call_jiangxi_noise_api
       - execute_postgres_sql_query
+    # 2026-11-17 对标许昌/广东改为整合者定位：报告主 Agent 不直接执行业务取数
+    # 与研判，取数经问数子节点、研判经研判子节点（run_agent_workflow DAG），
+    # 父负责定义口径、拆解问题、复用节点结果整合、产图、成稿与报告包收口。
     report:
       - list_session_resources
       - publish_session_file
-      - execute_echarts_python
       - read_file
       - write_file
       - edit_file
-      - grep
-      - list_directory
-      - search_files
-      - bash
       - execute_python
+      - execute_echarts_python
       - create_report_package
       - render_report_package
       - validate_report_package
-      - get_jiangxi_noise_data
-      - get_jiangxi_noise_alarm_analysis
-      - get_jiangxi_noise_compliance
-      - search_jiangxi_noise_apis
-      - describe_jiangxi_noise_api
-      - call_jiangxi_noise_api
-      - execute_postgres_sql_query
+      - run_agent_workflow
+      - list_skills
+      - view_skill
     chart:
       - list_session_resources
       - publish_session_file
@@ -172,6 +172,97 @@ backend:
       - execute_python
       - execute_echarts_python
       - get_jiangxi_noise_data
+    # 报告 DAG 历史监测问数子模式：仅监测历史取数与统计核算工具，
+    # 不做研判（研判归 noise_expert_analysis），不产图表不成稿
+    noise_query_monitoring:
+      - list_session_resources
+      - publish_session_file
+      - read_file
+      - write_file
+      - execute_python
+      - get_jiangxi_noise_data
+      - get_jiangxi_noise_statistics
+      - get_jiangxi_noise_trends
+      - get_jiangxi_noise_directory
+      - search_jiangxi_noise_apis
+      - describe_jiangxi_noise_api
+      - call_jiangxi_noise_api
+      - execute_postgres_sql_query
+    # 报告 DAG 运行态与达标问数子模式：事件、告警分析、运行状态与
+    # GB 3096 合规评价取数，只取数与核算，不做研判不成稿
+    noise_query_evaluation:
+      - list_session_resources
+      - publish_session_file
+      - read_file
+      - write_file
+      - execute_python
+      - get_jiangxi_noise_events
+      - get_jiangxi_noise_alarm_analysis
+      - get_jiangxi_noise_compliance
+      - get_jiangxi_noise_runtime_status
+      - get_jiangxi_noise_directory
+      - search_jiangxi_noise_apis
+      - describe_jiangxi_noise_api
+      - call_jiangxi_noise_api
+      - execute_postgres_sql_query
+    # 报告 DAG 声环境研判子模式：优先经 dependencies 复用问数节点 file_path，
+    # 轻量补充取证可用本域工具，不重复取数、不成稿不排版
+    noise_expert_analysis:
+      - list_session_resources
+      - publish_session_file
+      - read_file
+      - write_file
+      - execute_python
+      - get_jiangxi_noise_data
+      - get_jiangxi_noise_statistics
+      - get_jiangxi_noise_compliance
+      - get_jiangxi_noise_alarm_analysis
+      - get_jiangxi_noise_directory
+      - search_jiangxi_noise_apis
+      - describe_jiangxi_noise_api
+      - call_jiangxi_noise_api
+      - execute_postgres_sql_query
+  # 报告 DAG 项目子模式（参照广东 gd_ops_* 做法：按数据域拆分，每个子模式只
+  # 暴露本域工具，父 Agent 无法把跨域任务塞给单个节点；跨域取数列入 data_gaps
+  # 交父委派）。噪声域站点/城市/区县是同一 API 族的参数分支（无链路差异），
+  # 不按层级拆，只按数据域拆问数、按独立问题拆研判。
+  agent_workflow_modes:
+    noise_query_monitoring:
+      positioning: 历史监测问数子 Agent：面向噪声监测历史数据的取数与统计核算
+      scope: 站点秒/分/时/日/月季年、城市小时功能区聚合、区县日值的取数与核算，同比环比、分组聚合、缺测核对、目录解析；可按独立取数批次并行部署多个节点
+      boundary: 只取数与统计核算，不做成因研判（归 noise_expert_analysis），不产报告图表、不成稿
+      outputs: 结构化数据文件（file_path）+ 口径、时间范围和缺口说明（data_gaps）
+      max_iterations: 20
+      timeout_seconds: 420
+    noise_query_evaluation:
+      positioning: 运行态与达标问数子 Agent：面向噪声事件、告警与 GB 3096 合规评价的取数与核算
+      scope: 噪声事件清单、告警分析、站点运行状态、昼夜达标评价（功能区类别、对应限值、评价时段）；可按独立取数批次并行部署多个节点
+      boundary: 只取数与核算，达标判定必须带功能区类别、限值与昼夜口径，不做成因研判、不产报告图表、不成稿
+      outputs: 结构化数据文件（file_path）+ 口径、时间范围和缺口说明（data_gaps）
+      max_iterations: 20
+      timeout_seconds: 420
+    noise_expert_analysis:
+      positioning: 声环境研判子 Agent：面向超标成因、敏感点影响与声源线索解读的专业判断
+      scope: 复用问数节点交付的数据文件开展成因研判、影响范围评估、声源线索解读（置信度只作线索）、治理方向建议，列支持证据、反证与替代解释
+      boundary: 只交结论、证据与不确定性（可附 Markdown 备忘录），不负责报告排版、图表版式与报告包收口，不成稿
+      outputs: 结构化研判结论（findings/evidence/uncertainties）+ data_gaps
+      max_iterations: 24
+      # 对标广东 D6 实测：跨节点数据分析 8-12 分钟，900s 为下限
+      timeout_seconds: 900
+      require_counter_evidence: true
+  # report 父策略：子模式边界由 delegation_error 按本清单硬限制（同时挡住共享
+  # 大气子模式与综合主模式），预算上限收敛在共享默认值以内
+  agent_workflow_parents:
+    report:
+      child_modes:
+      - noise_query_monitoring
+      - noise_query_evaluation
+      - noise_expert_analysis
+      max_concurrency: 3
+      max_nodes: 12
+      max_retries: 3
+      max_extensions: 2
+      timeout_seconds: 1800
 knowledge:
   collections: []
 scheduled_tasks: []

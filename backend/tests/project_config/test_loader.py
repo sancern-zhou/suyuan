@@ -57,6 +57,9 @@ def test_jiangxi_project_disables_data_fetchers():
         "query": "projects/jiangxi/prompts/query.md",
         "expert": "projects/jiangxi/prompts/expert.md",
         "report": "projects/jiangxi/prompts/report.md",
+        "noise_query_monitoring": "projects/jiangxi/prompts/internal/noise_query_monitoring.md",
+        "noise_query_evaluation": "projects/jiangxi/prompts/internal/noise_query_evaluation.md",
+        "noise_expert_analysis": "projects/jiangxi/prompts/internal/noise_expert_analysis.md",
     }
     assert (
         context.manifest.backend.report_final_review_prompt_file
@@ -80,8 +83,21 @@ def test_jiangxi_project_disables_data_fetchers():
         "web_search",
         "publish_session_file",
     ]
-    for mode in ("query", "expert", "report", "chart"):
+    for mode in ("query", "expert", "chart"):
         assert "get_jiangxi_noise_data" in context.manifest.backend.agent_mode_tools[mode]
+    # 2026-11-17 report 收敛为整合者：业务取数下沉到问数子节点，父模式不再持有
+    # 噪声取数工具，只保留核算、图表、报告包与 DAG 委派
+    assert "run_agent_workflow" in context.manifest.backend.agent_mode_tools["report"]
+    assert not set(context.manifest.backend.agent_mode_tools["report"]) & {
+        "get_jiangxi_noise_data",
+        "get_jiangxi_noise_statistics",
+        "get_jiangxi_noise_trends",
+        "get_jiangxi_noise_events",
+        "get_jiangxi_noise_alarm_analysis",
+        "get_jiangxi_noise_compliance",
+        "execute_postgres_sql_query",
+        "search_jiangxi_noise_apis",
+    }
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():

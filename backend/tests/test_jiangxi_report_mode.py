@@ -12,6 +12,10 @@ from config.settings import settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# 编排工具名豁免：2026-11-17 report 转整合者后，编排段与运行时注入的委派契约
+# 必然引用 run_agent_workflow/call_sub_agent（许昌/广东同款），禁止的仍是业务取数工具选型。
+DELEGATION_TOOL_NAMES = {"run_agent_workflow", "call_sub_agent"}
+
 
 def test_jiangxi_report_mode_loads_project_owned_prompt():
     context = load_project_context("jiangxi", repo_root=REPO_ROOT)
@@ -29,7 +33,10 @@ def test_jiangxi_report_prompt_keeps_tool_selection_out_of_system_prompt():
 
     prompt = load_project_mode_prompt("report", context=context)
 
-    leaked = [name for name in get_tools_by_mode("report") if name in prompt]
+    leaked = [
+        name for name in get_tools_by_mode("report")
+        if name in prompt and name not in DELEGATION_TOOL_NAMES
+    ]
     assert leaked == []
 
 
@@ -39,7 +46,10 @@ def test_jiangxi_report_system_prompt_has_no_air_quality_or_tool_names(monkeypat
 
     prompt = build_react_system_prompt("report")
 
-    leaked = [name for name in get_tools_by_mode("report") if name in prompt]
+    leaked = [
+        name for name in get_tools_by_mode("report")
+        if name in prompt and name not in DELEGATION_TOOL_NAMES
+    ]
     assert leaked == []
     assert "## 数据源地图" not in prompt
     for keyword in ("PM2.5", "PM10", "臭氧", "AQI", "空气质量", "源解析"):
