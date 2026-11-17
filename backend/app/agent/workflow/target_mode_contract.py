@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import structlog
 
 logger = structlog.get_logger()
@@ -214,15 +216,22 @@ def describe_target_mode(arg: str) -> str:
     return _format_mode_contract(query, spec)
 
 
-def build_target_mode_contract(compact: bool = True) -> str:
+def build_target_mode_contract(compact: bool = True, modes: Sequence[str] | None = None) -> str:
     """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。
 
     compact=True 注入一行制（定位+边界）。scope/outputs/warning 全文不再进入
     每次请求：子模式自己的系统提示词才是权威能力边界，硬约束（禁用组合、
     任务契约校验）由 delegation_error/prepare_node 在运行时强制，字段级细节
     按需 view_skill 查看。compact=False 保留完整四段文本供非请求场景使用。
+
+    modes 限定只列给定子模式（纯项目父模式的委派契约）：此时不追加共享
+    _ROUTING_RULES——它是大气域路由文本，项目父的取数路由由项目提示词承载，
+    且清单外的共享子模式对纯项目父不可委派（delegation_error 拒绝），
+    不应出现在其上下文里。
     """
     contracts = _active_contracts()
+    if modes is not None:
+        contracts = {name: contracts[name] for name in modes if name in contracts}
     if not compact:
         lines = ["子 Agent（target_mode）能力与工具边界："]
         for mode, spec in contracts.items():
@@ -236,7 +245,8 @@ def build_target_mode_contract(compact: bool = True) -> str:
             if spec.get("warning"):
                 parts.append(f"⚠️ {spec['warning']}")
             lines.append(" ".join(parts))
-        lines.append(_ROUTING_RULES)
+        if modes is None:
+            lines.append(_ROUTING_RULES)
         return "\n".join(lines)
     lines = ["子 Agent（target_mode）定位与边界（详细分工以子模式自身提示词为准）："]
     for mode, spec in contracts.items():
@@ -246,7 +256,8 @@ def build_target_mode_contract(compact: bool = True) -> str:
         if boundary:
             line += f"；边界：{boundary}"
         lines.append(line)
-    lines.append(_ROUTING_RULES)
+    if modes is None:
+        lines.append(_ROUTING_RULES)
     return "\n".join(lines)
 
 

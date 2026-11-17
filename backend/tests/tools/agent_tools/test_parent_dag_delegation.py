@@ -51,6 +51,39 @@ def test_leaf_registries_strip_both_delegation_tools():
     assert delegation_error("expert", ["expert_analysis"]) is None
 
 
+def test_pure_project_parent_contract_lists_only_project_children(monkeypatch):
+    """纯项目父模式（共享父边界无记录）的委派契约只列项目 child_modes：
+
+    清单外共享子模式对它不可委派（delegation_error 拒绝），不得出现在其
+    上下文；共享大气路由规则（_ROUTING_RULES）也不得带入非大气项目父。
+    """
+    from app.project_config.models import BackendManifest
+
+    from app.agent.workflow import project_policy
+
+    backend = BackendManifest.model_validate({
+        "agent_mode_tools": {"report": ["run_agent_workflow"], "noise_query_monitoring": ["read_file"]},
+        "mode_prompt_files": {"noise_query_monitoring": "projects/sample/nqm.md"},
+        "agent_workflow_modes": {"noise_query_monitoring": {
+            "positioning": "监测问数", "scope": "取数", "boundary": "不研判",
+            "outputs": "数据文件", "max_iterations": 6, "timeout_seconds": 120,
+        }},
+        "agent_workflow_parents": {"report": {"child_modes": ["noise_query_monitoring"]}},
+    })
+    monkeypatch.setattr(project_policy, "active_backend", lambda: backend)
+
+    contract = build_delegation_contract("report", ["run_agent_workflow"])
+
+    assert "项目内部工作流" in contract
+    assert "noise_query_monitoring" in contract
+    assert "query_monitoring_station" not in contract
+    assert "expert_meteorology" not in contract
+    assert "静稳" not in contract  # 共享 _ROUTING_RULES 不得进入纯项目父
+
+    # 混合父（assistant 在共享父边界表中）保留共享+项目全量契约
+    assert "query_monitoring_station" in build_delegation_contract("query", ["run_agent_workflow"])
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode,target", [
     ("query", "expert_analysis"), ("query", "report"),
