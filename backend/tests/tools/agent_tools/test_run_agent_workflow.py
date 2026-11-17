@@ -9,6 +9,24 @@ from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
 
 
+def _deployment_declares_report_policy():
+    """当前部署项目是否声明了 report 父策略（报告 DAG 边界以项目清单为准）。"""
+    try:
+        from app.agent.workflow.project_policy import parent_policy
+
+        return parent_policy("report") is not None
+    except Exception:
+        return False
+
+
+# 共享大气清单场景仅在未声明 report 父策略的部署上适用（许昌/广东）；
+# 项目策略部署（如江西）的边界语义由项目清单测试覆盖。
+requires_shared_report_boundary = pytest.mark.skipif(
+    _deployment_declares_report_policy(),
+    reason="当前部署项目声明了 agent_workflow_parents.report：报告 DAG 子模式边界以项目清单为准",
+)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_workflow_cache(tmp_path, monkeypatch):
     """节点成果缓存指向临时目录：测试不读写真实 registry 缓存。"""
@@ -398,7 +416,9 @@ async def test_run_agent_workflow_returns_compact_view_and_persists_full_results
         "_build_sub_agent_tool",
         staticmethod(lambda: FakeSubAgentTool()),
     )
-    context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
+    # expert 父模式承载本测试（compact 视图与落盘机制，与报告边界无关）：
+    # report 父的项目策略部署（如江西）会把大气子模式拒之门外。
+    context = SimpleNamespace(runtime_mode="expert", session_id="expert_session_compact")
     result = await RunAgentWorkflowTool().execute(
         context=context,
         workflow={
@@ -439,7 +459,7 @@ async def test_run_agent_workflow_returns_compact_view_and_persists_full_results
     ]
     assert declared and declared[0]["kind"] == "data"
     full_path = (
-        tmp_path / "sessions" / "agent_session_report_session_x" / "data"
+        tmp_path / "sessions" / "agent_session_expert_session_compact" / "data"
         / "workflow_compact-1_node_results.json"
     )
     full = _json.loads(full_path.read_text(encoding="utf-8"))
@@ -552,6 +572,7 @@ async def test_non_report_mode_allows_expert_nodes(monkeypatch):
 
 
 @pytest.mark.asyncio
+@requires_shared_report_boundary
 async def test_report_mode_allows_whitelisted_modes(monkeypatch):
     calls = []
 
@@ -586,6 +607,7 @@ async def test_report_mode_allows_whitelisted_modes(monkeypatch):
 
 
 @pytest.mark.asyncio
+@requires_shared_report_boundary
 async def test_report_mode_rejects_generic_monitoring_nodes(monkeypatch):
     """报告编排不再使用综合问数兜底：query_monitoring 节点整单拒绝并要求先确认层级。"""
     executed = []
