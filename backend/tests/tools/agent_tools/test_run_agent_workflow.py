@@ -875,3 +875,71 @@ def test_upstream_summaries_are_empty_safe_without_findings():
 
     assert "未取得率值明细" in rendered
     assert '"findings": []' in rendered
+
+
+@pytest.mark.asyncio
+async def test_workflow_result_carries_node_digest_in_content(monkeypatch):
+    """节点结论摘要必须随 result 正文回传。
+
+    历史代价：观察层截断 data 后父 Agent 只看到"工作流执行完成"一句，
+    一次周度风险分析被迫用约 25 次 execute_python 分批挖结果文件。
+    """
+    from app.tools.agent_tools.run_agent_workflow import _render_node_digest
+
+    # 单元层：digest 从 compact 视图提取首个数值 findings
+    node_views = {
+        "data_inspection": {
+            "status": "completed",
+            "result_envelope": {
+                "status": "completed",
+                "summary": "巡检取数完成",
+                "findings": [{"statement": "任务项 2075 个，完成率 96.29%"}],
+            },
+        },
+        "data_rates": {
+            "status": "completed_with_gaps",
+            "result_envelope": {"status": "completed_with_gaps", "summary": "仅完成表结构确认"},
+        },
+    }
+    digest = _render_node_digest(node_views)
+    assert "96.29%" in digest
+    assert "data_inspection [completed]" in digest
+    assert "data_rates [completed_with_gaps]" in digest
+    assert "仅完成表结构确认" in digest
+
+    # 集成层：真实执行路径的 result/summary 都带节点结论
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            return {
+                "status": "success",
+                "success": True,
+                "result": kwargs["goal"],
+                "data": {
+                    "result_envelope": {
+                        "status": "completed",
+                        "summary": "取数完成",
+                        "findings": [{"statement": "工单总量 380 张"}],
+                        "evidence": [],
+                        "uncertainties": [],
+                        "data_gaps": [],
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    result = await RunAgentWorkflowTool().execute(
+        workflow={
+            "workflow_id": "digest-1",
+            "nodes": [
+                {"task_id": "wo", "target_mode": "gd_ops_data_workorder", "goal": "工单取数"},
+            ],
+        },
+    )
+    assert result["success"] is True
+    assert "380" in result["result"]
+    assert "各节点结论摘要" in result["result"]
+    assert "380" in result["summary"]
