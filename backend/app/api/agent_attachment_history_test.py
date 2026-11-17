@@ -35,16 +35,24 @@ def test_append_attachment_text_for_history_returns_query_without_attachments():
 
 
 def test_agent_requests_accept_expanded_iteration_limit():
-    analyze_request = AgentAnalyzeRequest(query="继续复杂分析", max_iterations=120)
+    analyze_request = AgentAnalyzeRequest(
+        query="继续复杂分析", skill_ids=[], context_refs=[], max_iterations=120
+    )
     query_request = AgentQueryRequest(query="继续复杂分析", max_iterations=120)
 
     assert analyze_request.max_iterations == 120
     assert query_request.max_iterations == 120
 
 
+def test_agent_requests_default_to_unlimited_iterations():
+    # 默认不设步数上限（None）：靠上下文压缩续跑 + 熔断护栏停机
+    assert AgentAnalyzeRequest(query="继续复杂分析", skill_ids=[], context_refs=[]).max_iterations is None
+    assert AgentQueryRequest(query="继续复杂分析").max_iterations is None
+
+
 def test_agent_requests_reject_iterations_above_safety_cap():
     with pytest.raises(ValidationError):
-        AgentAnalyzeRequest(query="继续复杂分析", max_iterations=201)
+        AgentAnalyzeRequest(query="继续复杂分析", skill_ids=[], context_refs=[], max_iterations=201)
 
     with pytest.raises(ValidationError):
         AgentQueryRequest(query="继续复杂分析", max_iterations=201)

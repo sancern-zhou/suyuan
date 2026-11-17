@@ -220,7 +220,8 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
     assert "分析空气质量" not in merge_call["context_str"]
     assert "分析气象条件" not in merge_call["context_str"]
     assert all(call["_force_isolated_session"] is True for call in calls)
-    assert all(call["max_iterations"] == 20 for call in calls)
+    # 无步数上限模式：节点未显式配置时不再注入迭代预算
+    assert all(call["max_iterations"] is None for call in calls)
     assert all(
         node["timeout_seconds"] == 900
         for node in result["data"]["node_results"].values()
@@ -257,8 +258,9 @@ async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
 
     assert result["success"] is True, result
     by_mode = {call["target_mode"]: call for call in calls}
-    assert by_mode["expert_meteorology"]["max_iterations"] == 15
-    assert by_mode["expert_analysis"]["max_iterations"] == 20
+    # 迭代预算不再注入默认值（None=不限）；超时下限 900s 仍然生效
+    assert by_mode["expert_meteorology"]["max_iterations"] is None
+    assert by_mode["expert_analysis"]["max_iterations"] is None
     views = result["data"]["node_results"]
     assert views["weather"]["target_mode"] == "expert_meteorology"
     assert views["weather"]["timeout_seconds"] == 900
@@ -714,8 +716,9 @@ async def test_run_agent_workflow_query_nodes_get_at_least_eight_iterations(monk
 
     assert result["success"] is True, result
     by_goal = {call["goal"]: call for call in calls}
-    assert by_goal["城市取数"]["max_iterations"] == 8
-    assert by_goal["气象取数"]["max_iterations"] == 20
+    # 显式写的 4 原样保留（不再抬到 8）；未配置的为 None（不再注入 20）
+    assert by_goal["城市取数"]["max_iterations"] == 4
+    assert by_goal["气象取数"]["max_iterations"] is None
 
 
 @pytest.mark.asyncio
