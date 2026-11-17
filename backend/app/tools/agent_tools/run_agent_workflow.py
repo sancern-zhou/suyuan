@@ -344,6 +344,69 @@ _PARENT_NODE_SUMMARY_CHARS = 2000
 _PARENT_NODE_FINDINGS_CHARS = 4000
 _PARENT_NODE_EVIDENCE_ITEMS = 20
 
+# 工作流返回正文里的节点摘要预算：观察层截断前必须完整可见。
+_NODE_DIGEST_PER_NODE_CHARS = 220
+_NODE_DIGEST_MAX_TOTAL_CHARS = 2600
+_NODE_DIGEST_SUMMARY_CHARS = 900
+
+
+def _node_first_finding_text(envelope: Mapping[str, Any]) -> str:
+    """取节点 compact 视图里第一条含数值的 findings 文本。"""
+    findings = envelope.get("findings") or []
+    if not isinstance(findings, (list, tuple)):
+        return ""
+    for item in findings:
+        if isinstance(item, Mapping):
+            statement = str(item.get("statement") or "").strip()
+            if statement:
+                return statement
+            rendered = json.dumps(item, ensure_ascii=False, default=str)
+            if rendered.strip("{}[]"):
+                return rendered
+        elif str(item or "").strip():
+            return str(item)
+    return ""
+
+
+def _render_node_digest(node_views: Mapping[str, Any]) -> str:
+    """构造父 Agent 直读的节点结论摘要（每节点一行，含首个数值结论）。
+
+    上游节点算出的数值必须随工具结果正文回传：观察层会把 data 截断，
+    正文是父 Agent 无需挖文件就能看到的部分。
+    """
+    lines: list[str] = []
+    used = 0
+    for task_id, view in (node_views or {}).items():
+        if not isinstance(view, Mapping):
+            continue
+        envelope = view.get("result_envelope") if isinstance(view.get("result_envelope"), Mapping) else {}
+        status = view.get("status") or envelope.get("status") or "unknown"
+        text = _node_first_finding_text(envelope) or str(envelope.get("summary") or "").strip()
+        text = text[:_NODE_DIGEST_PER_NODE_CHARS]
+        line = f"- {task_id} [{status}]: {text}" if text else f"- {task_id} [{status}]"
+        if lines and used + len(line) > _NODE_DIGEST_MAX_TOTAL_CHARS:
+            lines.append(f"- （其余 {len(node_views) - len(lines)} 个节点结论见 data.node_results / full_results.path）")
+            break
+        lines.append(line)
+        used += len(line) + 1
+    if not lines:
+        return ""
+    return "## 各节点结论摘要\n" + "\n".join(lines)
+
+
+def _node_digest_one_line(node_views: Mapping[str, Any], *, per_node_chars: int = 70) -> str:
+    """summary 字段用的单行节点结论（各节点首个数值短语，分号连接）。"""
+    parts: list[str] = []
+    for task_id, view in (node_views or {}).items():
+        if not isinstance(view, Mapping):
+            continue
+        envelope = view.get("result_envelope") if isinstance(view.get("result_envelope"), Mapping) else {}
+        text = _node_first_finding_text(envelope) or str(envelope.get("summary") or "").strip()
+        if text:
+            parts.append(f"{task_id}:{text[:per_node_chars]}")
+    return "; ".join(parts)
+
+
 _FENCED_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*[\s\S]*?```", re.IGNORECASE)
 _SAFE_WORKFLOW_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
@@ -353,8 +416,15 @@ def _cap_plain_text(value: Any, limit: int) -> str:
 
 
 def _compact_findings(structured_result: Mapping[str, Any]) -> list:
-    """返回 findings（关键数值结论），超预算时截断并注明完整版位置。"""
+    """返回 findings（关键数值结论），超预算时截断并注明完整版位置。
+
+    findings 有两种交付形状：list（逐条结论）与 dict（按主题分键，如
+    工单域的 order_type_distribution/station_ranking_top20）。dict 形状
+    曾被整段丢弃，父视图与上游下发都拿不到数值。
+    """
     findings = structured_result.get("findings")
+    if isinstance(findings, Mapping):
+        findings = [findings]
     if not isinstance(findings, list):
         return []
     kept: list = []
@@ -397,6 +467,11 @@ def compact_parent_node_result(
         data.get("structured_result")
         if isinstance(data.get("structured_result"), Mapping)
         else {}
+    )
+    # findings 取数源：优先 structured_result，缺失时回退信封顶层——
+    # 数据节点（如工单域）会把 findings 直接交在信封上。
+    findings_source = (
+        structured if structured.get("findings") is not None else envelope
     )
     metadata = (
         node_result.get("metadata")
@@ -458,7 +533,7 @@ def compact_parent_node_result(
         "result_envelope": {
             "status": envelope.get("status"),
             "summary": _cap_plain_text(summary_source, _PARENT_NODE_SUMMARY_CHARS),
-            "findings": _compact_findings(structured),
+            "findings": _compact_findings(findings_source),
             "evidence": evidence_view,
             "uncertainties": [
                 str(item) for item in (envelope.get("uncertainties") or [])[:10]
@@ -1068,6 +1143,22 @@ class RunAgentWorkflowTool(LLMTool):
                     if snapshot["status"] == "partial"
                     else "工作流未完成"
                 )
+            # 节点摘要随 result 正文回传：观察层会把工具结果截断到几 KB，
+            # data.node_results（含 findings 数值）常被截掉，父 Agent 只剩一句
+            # "工作流执行完成"，被迫用 execute_python 分批挖结果文件——历史上
+            # 一次周度风险分析因此多付约 25 次工具调用。摘要直接进正文，
+            # 父 Agent 免挖即得各节点结论。
+            node_digest = _render_node_digest(node_views)
+            if node_digest:
+                result_message = result_message + "\n\n" + node_digest
+            summary_message = (
+                "工作流执行完成" if succeeded
+                else "工作流部分完成，存在证据缺口" if snapshot["status"] == "partial"
+                else "工作流执行失败或被取消"
+            )
+            summary_one_line = _node_digest_one_line(node_views)
+            if summary_one_line:
+                summary_message = f"{summary_message}；节点结论：{summary_one_line}"
             return {
                 "status": "success" if succeeded else snapshot["status"],
                 # A usable partial delivery is a valid tool observation; do not
@@ -1080,7 +1171,7 @@ class RunAgentWorkflowTool(LLMTool):
                     "generator": "run_agent_workflow",
                     "workflow_id": snapshot["workflow_id"],
                 },
-                "summary": "工作流执行完成" if succeeded else "工作流部分完成，存在证据缺口" if snapshot["status"] == "partial" else "工作流执行失败或被取消",
+                "summary": summary_message[:_NODE_DIGEST_SUMMARY_CHARS],
                 "resources": resources,
             }
         except (TypeError, ValueError, KeyError) as exc:
