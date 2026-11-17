@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
 import ReactAnalysisView from '@/views/ReactAnalysisView.vue'
 import FetchersView from '@/views/FetchersView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
@@ -64,7 +64,9 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: import.meta.env.BASE_URL === './'
+    ? createWebHashHistory()
+    : createWebHistory(import.meta.env.BASE_URL),
   routes: filterProjectRoutes(routes, projectConfig.hasModule)
 })
 
