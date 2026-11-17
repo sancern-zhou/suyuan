@@ -845,6 +845,74 @@ backend:
     - query_gd_suncere_station_day_new
     - query_city_standard_report
     - query_city_standard_yoy_report
+  # deferred tools opt-in（共享层 eac48eb1 机制，对标江苏 jiangsu_query 2026-11-16
+  # 落地）：值 = 模式 always_on 工具（全 schema 常驻），其余模式白名单工具以薄存根
+  # 常驻（描述/路由在，参数契约经运行时注入的 tool_search 按需取回，调用即升级回
+  # 全 schema；≤600 字符小工具自动豁免存根）。
+  # 选型依据 2026-11-16 生产调用审计（本机会话库 2026-10-23 上线，gd_query
+  # 6 会话全量）：仅 10/35 白名单工具被调用过，execute_guangdong_mart_sql
+  # 5/6 会话 156 次为绝对主力；query_gd_suncere_ 报表包五件、气象 get_weather_data、
+  # 组分九件、create_business_chart/create_report_package/station_operation_daily
+  # 等全部零调用。schema 体积量化（35 工具实测）：全量常驻 49,712 → 存根+
+  # tool_search 30,464 字符，净省 19,248（-38.7%）；常驻 schema 每轮 planner
+  # 请求随上下文计费，节省按轮数放大，代价按用到存根工具的会话数封顶。
+  # ask_user_question 由共享 DEFERRED_NEVER_STUB_TOOL_NAMES 兜底，无需列出。
+  agent_mode_deferred_tools:
+    gd_query:
+      # 生产主力（审计 2+/6 会话使用）：存根只省参数契约，反付每会话检索往返。
+      - execute_guangdong_mart_sql
+      - guangdong_query_metrics
+      - execute_python
+      - execute_echarts_python
+      - read_file
+      - guangdong_station_catalog
+      - read_session_resource
+      # 交付边界小工具：本就在 ≤600 豁免线内，显式列出防描述日后增长越过豁免线
+      # （江苏同款处理）。
+      - write_file
+      - publish_session_file
+    ops:
+      # 选型依据 2026-11-16 生产调用审计（交互 5 会话 + 定时 6 会话，口径合并）：
+      # 高频主力集中在 mart_sql（65+36 次）/execute_ops_sql_query（11+38 次）/
+      # ops_audit 三件/station_catalog/execute_python/read_file；call_sub_agent
+      # 6,540 字符零调用、create_business_chart 3,255 与 create_report_package
+      # 2,123 零/1 次、query_gd_suncere_ 两件与 reconcile_checklist/
+      # retrospective_stats/station_operation_daily 零调用。
+      # 量化（25 工具实测）：全量 40,601 → 存根+tool_search 25,663 字符，
+      # 净省 14,938（-36.8%）。定时任务（工单/告警审核）用的工具全部在 always_on，
+      # 不付检索往返。
+      # 生产主力（交互+定时双口径 ≥2 会话使用）。
+      - execute_guangdong_mart_sql
+      - execute_ops_sql_query
+      - execute_python
+      - read_file
+      - guangdong_station_catalog
+      - ops_audit_fetch_dataset
+      - ops_audit_run_rules
+      - ops_audit_inspect
+      - list_skills
+      - view_skill
+      - read_session_resource
+      # 2026-11-16 实测补入：历史 ops 会话里该工具 0 调用（都走 mart_sql 直查），
+      # 但它是语义层唯一口径入口、提示词引导的首选取数路径，实测对话第 1 轮
+      # 模型即主动检索它的契约（tool_search 往返）。存根反而抑制最自然的取数
+      # 路径，故常驻（1,925 字符，净省仍约 13K）。
+      - guangdong_query_metrics
+      # 交付边界小工具：≤600 豁免线内，显式列出防描述日后增长越过豁免线。
+      - write_file
+      - publish_session_file
+  # 未 opt-in 的项目模式及理由（2026-11-16 审计）：
+  # - station_fault_diagnosis：会话库零会话（诊断走定时 custom 模式），无生产
+  #   调用数据支撑 always_on 选型，待该模式有真实使用后再按审计落地；
+  # - operations_analysis：主力 4 工具（run_agent_workflow/execute_python/
+  #   create_report_package/read_file）占全部调用量，可存根面仅剩委派与交付
+  #   小工具，净省约 3K 字符而委派通道反付每会话检索往返，投入产出比不足；
+  # - gd_ops_data_* 九个子模式：主力 7 工具必须 always_on，可存根面仅
+  #   list_session_resources（933 字符），净省不足 1K，且子模式跑在委派路径
+  #   上延迟敏感。
+  # 共享模式名（query/expert/report/assistant/office）受共享守门测试
+  # test_resolver_defaults_off_for_all_modes 约束，项目分支直接声明会打破该
+  # 测试；如需 opt-in 须先在 main 更新该测试（按清单感知项目声明）再合并。
 knowledge:
   collections: []
   # 运行时把该绑定名解析为启用图谱的知识库 id；station_fault_diagnosis 依赖。
