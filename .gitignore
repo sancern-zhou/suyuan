@@ -206,6 +206,7 @@ backend/app/agent/executors/quick_trace_executor.py
 !projects/guangdong/prompts/operations_analysis.md
 !projects/guangdong/prompts/internal/gd_ops_regular_analysis.md
 !projects/guangdong/prompts/internal/gd_ops_risk_analysis.md
+!projects/jiangxi/prompts/internal/noise_expert_analysis.md
 *_summary.md
 *_report.md
 *_solution.md
