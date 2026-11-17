@@ -1,4 +1,17 @@
 import { AGENT_MODE_IDS } from '../../config/agentModes.js'
+import { projectConfig } from '../../config/projectConfig.js'
+
+// 前端合法智能体模式 id = 共享静态目录 ∪ 项目清单声明。清单可声明共享目录没有
+// 的项目专属模式（如 gd_query/station_fault_diagnosis/operations_analysis），
+// 这些模式经 agentModeOverrides 提供完整展示定义（见 agentModes.getAgentMode）。
+// 选择门控、任务工作台映射、会话恢复等一律以本并集为准，不能只查静态目录。
+export const resolveKnownAgentModeIds = (config = projectConfig) => Object.freeze([
+  ...new Set([...AGENT_MODE_IDS, ...(Array.isArray(config?.agentModeIds) ? config.agentModeIds : [])])
+])
+
+export const KNOWN_AGENT_MODE_IDS = resolveKnownAgentModeIds()
+
+export const isKnownAgentMode = mode => KNOWN_AGENT_MODE_IDS.includes(mode)
 
 export const getRunningAgentSessionId = (mode, state) => {
   const activeSessionId = state.activeSessionByMode?.[mode]
@@ -23,11 +36,11 @@ export const resolveTaskWorkspaceMode = (task, currentMode) => {
   const taskMode = typeof task?.execution_mode === 'string'
     ? task.execution_mode.trim()
     : ''
-  return AGENT_MODE_IDS.includes(taskMode) ? taskMode : currentMode
+  return isKnownAgentMode(taskMode) ? taskMode : currentMode
 }
 
 export const resolveAgentSelection = (mode, state) => {
-  if (!AGENT_MODE_IDS.includes(mode)) {
+  if (!isKnownAgentMode(mode)) {
     return { mode, action: 'invalid' }
   }
 

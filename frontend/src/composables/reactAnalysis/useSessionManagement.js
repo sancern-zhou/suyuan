@@ -8,8 +8,8 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { preserveCatalogFields } from '@/components/management/sessionHistoryAccess.js'
 import { useConversationActions } from './useConversationActions.js'
 import { filterConversationHistory } from '@/components/conversationListPolicy.js'
-import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
+import { KNOWN_AGENT_MODE_IDS } from '@/components/agentPlatform/workspacePolicy.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import {
@@ -176,7 +176,7 @@ export function useSessionManagement(store) {
   const startNewWebConversation = async () => {
     if (!await confirmResourcePreviewLeave()) return false
     restoreRequestToken += 1
-    const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
+    const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, KNOWN_AGENT_MODE_IDS)
     if (store.currentMode !== defaultAgentMode) {
       store.switchMode(defaultAgentMode)
     }

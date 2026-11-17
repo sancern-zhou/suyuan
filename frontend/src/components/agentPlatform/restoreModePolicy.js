@@ -1,4 +1,4 @@
-import { AGENT_MODE_IDS } from '../../config/agentModes.js'
+import { isKnownAgentMode } from './workspacePolicy.js'
 
 const modeFromSessionId = sessionId => {
   if (!sessionId || typeof sessionId !== 'string') return null
@@ -16,7 +16,7 @@ export const resolveRestoredAgentMode = (sessionData, sessionId, currentMode) =>
   ]
 
   return candidates
-    .find(mode => AGENT_MODE_IDS.includes(mode)) || 'assistant'
+    .find(mode => isKnownAgentMode(mode)) || 'assistant'
 }
 
 /**

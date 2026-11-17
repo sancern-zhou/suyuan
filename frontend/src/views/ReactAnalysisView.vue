@@ -163,11 +163,11 @@ import {
 } from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
-import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
 import {
   getRunningAgentSessionId,
   isAgentModeRunning,
+  KNOWN_AGENT_MODE_IDS,
   resolveAgentSelection,
   resolveTaskWorkspaceMode
 } from '@/components/agentPlatform/workspacePolicy.js'
@@ -191,7 +191,7 @@ import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/Knowle
 const route = useRoute()
 const store = useReactStore()
 const floating = useAssistantFloatingStore()
-const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
+const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, KNOWN_AGENT_MODE_IDS)
 // 问数入口按项目启用情况选择模式：江苏使用 jiangsu_query，其他项目使用共享 query 模式。
 const queryAgentMode = projectConfig.agentModeIds.includes('jiangsu_query') ? 'jiangsu_query' : 'query'
 const kbStore = useKnowledgeBaseStore()
@@ -363,7 +363,7 @@ const currentModeIsAnalyzing = computed(() => store.currentState.isAnalyzing)
 const currentModeCurrentMessage = computed(() => store.currentState.currentMessage)
 const currentModePendingSteeringInputs = computed(() => store.currentState.pendingSteeringInputs || [])
 const runningAgentModes = computed(() => (
-  AGENT_MODE_IDS.filter(mode => isAgentModeRunning(mode, store))
+  KNOWN_AGENT_MODE_IDS.filter(mode => isAgentModeRunning(mode, store))
 ))
 
 const inputDisabled = computed(() => {

@@ -303,7 +303,8 @@ import {
   toggleConversationListView,
   writeSidebarConversationLayout
 } from './conversationListPolicy.js'
-import { AGENT_MODE_IDS, getAgentMode } from '@/config/agentModes.js'
+import { getAgentMode } from '@/config/agentModes.js'
+import { KNOWN_AGENT_MODE_IDS } from './agentPlatform/workspacePolicy.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
 import AppDownloadQrcodeDialog from '@/components/AppDownloadQrcodeDialog.vue'
 
@@ -501,7 +502,7 @@ const sidebarSessionGroups = computed(() => {
   ) {
     return [{ key: 'all', header: null, sessions: list }]
   }
-  return groupSidebarConversationsByMode(list, AGENT_MODE_IDS).map(group => ({
+  return groupSidebarConversationsByMode(list, KNOWN_AGENT_MODE_IDS).map(group => ({
     key: group.mode,
     header: agentModeHeader(group.mode),
     sessions: group.sessions
