@@ -47,8 +47,16 @@ async function refresh() {
         emit('sessions', (sessions.sessions || []).map(row => row.session_id === id ? { ...row, unread_count: 0 } : row))
       }
       void resources.loadCatalog(id).catch(() => {})
-    } else if (lastReadSequence < 0) {
-      lastRevision = undefined
+    } else {
+      if (lastReadSequence < 0) lastRevision = undefined
+      // unchanged 快照仍可能带着未读（新消息在被轮询合并过、read 被
+      // 可见性/激活守卫拦下），按会话行补报已读，避免角标滞留。
+      const row = (sessions.sessions || []).find(item => item.session_id === id)
+      if (row && (Number(row.unread_count) || 0) > 0 && (row.last_sequence ?? -1) >= 0) {
+        await readAssistantConversation(id, row.last_sequence)
+        lastReadSequence = row.last_sequence
+        emit('sessions', (sessions.sessions || []).map(item => item.session_id === id ? { ...item, unread_count: 0 } : item))
+      }
     }
   } catch { lastRevision = undefined }
   finally { running = false }

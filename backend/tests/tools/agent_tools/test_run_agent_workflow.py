@@ -797,3 +797,81 @@ def test_compact_node_view_surfaces_published_charts_and_artifact_paths(tmp_path
         "label": "清远10月AQI时序图",
         "path": str(chart_png),
     }]
+
+
+def test_upstream_summaries_carry_findings_values():
+    """下游节点必须能引用上游算出的数值。
+
+    历史事故：数据节点的 findings 在传递时被整段丢弃，只剩 summary 一句概述，
+    风险核验节点据此判"只有资源清单、没有指标数值"，交出 verified_facts=0。
+    """
+    from app.tools.agent_tools.run_agent_workflow import format_upstream_summaries
+
+    dependency_results = {
+        "data_inspection": {
+            "status": "success",
+            "data": {
+                "result_envelope": {
+                    "status": "completed",
+                    "summary": "巡检取数完成",
+                    "findings": [
+                        {"statement": "任务项 2075 个，完成率 96.29%，超期 77 项"},
+                    ],
+                    "evidence": [],
+                    "uncertainties": [],
+                    "data_gaps": [],
+                },
+            },
+        },
+    }
+
+    rendered = format_upstream_summaries(dependency_results)
+
+    assert "96.29%" in rendered
+    assert "2075" in rendered
+
+
+def test_upstream_summaries_reads_findings_from_structured_result():
+    """submit_result 提交后 findings 归位到 data.structured_result；两种形状都要认。"""
+    from app.tools.agent_tools.run_agent_workflow import format_upstream_summaries
+
+    dependency_results = {
+        "data_workorder": {
+            "status": "success",
+            "data": {
+                "result_envelope": {"status": "completed", "summary": "工单取数完成"},
+                "structured_result": {
+                    "findings": [{"statement": "本周故障单 21 单，重复故障率 38.1%"}],
+                },
+            },
+        },
+    }
+
+    rendered = format_upstream_summaries(dependency_results)
+
+    assert "38.1%" in rendered
+
+
+def test_upstream_summaries_are_empty_safe_without_findings():
+    """无 findings 时不得凭空造值：上游没给就是空列表。"""
+    from app.tools.agent_tools.run_agent_workflow import format_upstream_summaries
+
+    dependency_results = {
+        "data_rates": {
+            "status": "success",
+            "data": {
+                "result_envelope": {
+                    "status": "completed_with_gaps",
+                    "summary": "仅完成表结构确认",
+                    "evidence": [],
+                    "uncertainties": [],
+                    "data_gaps": ["未取得率值明细"],
+                },
+            },
+        },
+    }
+
+    rendered = format_upstream_summaries(dependency_results)
+
+    assert "未取得率值明细" in rendered
+    assert '"findings": []' in rendered
