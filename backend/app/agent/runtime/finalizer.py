@@ -63,7 +63,10 @@ class Finalizer:
         for index in range(0, len(text), size):
             yield text[index:index + size]
 
-    async def timeout(self, state: RunState) -> AsyncGenerator[dict, None]:
+    async def timeout(self, state: RunState, reason: Optional[str] = None) -> AsyncGenerator[dict, None]:
+        # reason 取自时间预算终态（extended_timeout / stalled_no_progress）；
+        # 缺省维持历史语义 max_iterations_reached（轮次预算模式）。
+        reason = reason or "max_iterations_reached"
         state.response_text = "分析任务较复杂，在限定步骤内未完成，是否继续？"
         state.task_completed = False
         if not state.assistant_message_written:
@@ -72,11 +75,11 @@ class Finalizer:
         if self.agent_logger:
             self.agent_logger.end_run(
                 status="timeout",
-                metadata={"iterations": state.iteration, "reason": "max_iterations_reached"},
+                metadata={"iterations": state.iteration, "reason": reason},
             )
         async for event in self._stream_response(state):
             yield event
-        yield self.events.complete(state, status="incomplete", reason="max_iterations_reached")
+        yield self.events.complete(state, status="incomplete", reason=reason)
 
     async def fatal_error(self, state: RunState, error: Exception) -> AsyncGenerator[dict, None]:
         if self.agent_logger:

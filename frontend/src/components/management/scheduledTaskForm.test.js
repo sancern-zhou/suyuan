@@ -6,7 +6,7 @@ import {
   applyTriggerDefaults,
   buildExecutionModeOptions,
   buildTaskPayload,
-  selectableWeixinUsers
+  selectableSocialUsers
 } from './scheduledTaskForm.js'
 
 
@@ -83,32 +83,32 @@ test('non-custom payload omits tools and changing mode clears stale selection', 
 })
 
 
-test('filters active bound WeChat users', () => {
+test('filters active App recipients and drops retired channels', () => {
   const users = [
     {
       id: 'a',
       name: 'A',
       status: 'active',
-      channel: 'weixin:auto',
-      social_user_id: 'weixin:auto:bot:a'
+      channel: 'app',
+      social_user_id: 'app:android:a'
     },
     {
       id: 'b',
       name: 'B',
       status: 'disabled',
-      channel: 'weixin:auto',
-      social_user_id: 'weixin:auto:bot:b'
+      channel: 'app',
+      social_user_id: 'app:android:b'
     },
     {
       id: 'c',
       name: 'C',
       status: 'active',
-      channel: 'qq',
-      social_user_id: 'qq:bot:c'
+      channel: 'weixin:auto',
+      social_user_id: 'weixin:auto:bot:c'
     }
   ]
 
-  assert.deepEqual(selectableWeixinUsers(users).map(user => user.id), ['a'])
+  assert.deepEqual(selectableSocialUsers(users).map(user => user.id), ['a'])
 })
 
 

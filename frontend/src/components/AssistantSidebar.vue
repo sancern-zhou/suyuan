@@ -604,15 +604,6 @@ const allModules = [
     requiredModule: 'shared-conversations'
   },
   {
-    id: 'social-platform',
-    name: '社交管理',
-    abbr: '社交',
-    desc: '管理QQ、微信等社交机器人',
-    badge: '管理',
-    isAction: true,
-    requiredModule: 'legacy'
-  },
-  {
     id: 'file-manager',
     name: '文件管理',
     abbr: '文件',
@@ -646,8 +637,7 @@ const SETTINGS_MODULE_IDS = Object.freeze([
   'scheduled-tasks',
   'tools-management',
   'file-manager',
-  'fetchers',
-  'social-platform'
+  'fetchers'
 ])
 
 const settingsModules = computed(() => {
@@ -757,13 +747,6 @@ const moduleIcons = {
       <path d="m19 4 2 2" />
     </svg>
   `,
-  'social-platform': `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 9.5a4 4 0 1 1 8 0v3a4 4 0 0 1-8 0v-3Z" />
-      <path d="M15 11h1.5a3.5 3.5 0 0 1 0 7H14" />
-      <path d="M7 11H5.5a3.5 3.5 0 0 0 0 7H10" />
-    </svg>
-  `,
   'platform-guide': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" />
@@ -778,7 +761,7 @@ const getModuleIcon = (moduleId) => moduleIcons[moduleId] || moduleIcons['tools-
 const handleModuleSelect = (moduleId) => {
   const module = modules.find(m => m.id === moduleId)
 
-  // 所有管理功能：触发事件（包括工具管理、知识库管理、社交账号管理等）
+  // 所有管理功能：触发事件（包括工具管理、知识库管理等）
   emit('action', moduleId)
 }
 

@@ -3,6 +3,18 @@
 from typing import List, Optional
 
 
+def _project_fragment(segment_id: str) -> Optional[str]:
+    """Load the active project's supplementary prompt fragment (if declared).
+
+    项目专属路由口径（中台视图、地名规则）经 backend.prompt_fragment_files
+    声明的片段文件注入，共享 builder 不写死任何项目内容；配置错误按
+    ProjectConfigError 直接抛出（fail-fast，与 mode_prompt_files 同语义）。
+    """
+    from app.agent.prompts.project_prompt import load_project_prompt_fragment
+
+    return load_project_prompt_fragment(segment_id)
+
+
 def _common_part(
     role_line: str,
     memory_context: Optional[str],
@@ -88,6 +100,9 @@ def build_query_monitoring_station_prompt(
         "- 城市口径数据与全国对比优先由 query_monitoring_city 承接；气象取数（query_forecast）与污染成因研判（expert_meteorology/expert_analysis）不承接。",
         "- 收到越界委派时，在交付说明中注明越界部分并交回父 Agent 处理。",
     ])
+    fragment = _project_fragment("query_monitoring_station")
+    if fragment:
+        prompt_parts.extend(["", "## 项目补充口径", "", fragment])
     return "\n".join(prompt_parts)
 
 
@@ -112,6 +127,9 @@ def build_query_monitoring_city_prompt(
         "- 气象取数（query_forecast）与污染成因研判（expert_meteorology/expert_analysis）不承接。",
         "- 收到越界委派时，在交付说明中注明越界部分并交回父 Agent 处理。",
     ])
+    fragment = _project_fragment("query_monitoring_city")
+    if fragment:
+        prompt_parts.extend(["", "## 项目补充口径", "", fragment])
     return "\n".join(prompt_parts)
 
 

@@ -156,10 +156,11 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
-        **({"xuchang_town_five_minute_fetcher": XuchangTownFiveMinuteFetcher}
-           if XuchangTownFiveMinuteFetcher is not None else {}),
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
+    if XuchangTownFiveMinuteFetcher is not None:
+        # 仅 xuchang 分支工作树提供该模块；main 工作树跳过注册。
+        factories["xuchang_town_five_minute_fetcher"] = XuchangTownFiveMinuteFetcher
     from app.services.station_operation_monitor.runtime import config_path
     if config_path().is_file():
         from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher

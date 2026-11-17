@@ -80,6 +80,12 @@ class RunState:
     board_quality_repair_count: int = 0
     suppress_tool_names_next_turn: set[str] = field(default_factory=set)
     suppress_tool_names_current_turn: set[str] = field(default_factory=set)
+    # deferred tools（tool_search 按需注入 schema）：本模式的存根化候选集
+    # （空集=模式未 opt-in，机制完全不介入）与本运行内新调用工具的增量集
+    # （调用即升级）。跨轮次持久经会话历史派生（collect_called_deferred_tools），
+    # 组装时取并集——历史是发现状态的唯一持久来源。
+    deferred_tool_names: frozenset = field(default_factory=frozenset)
+    discovered_tools: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
     last_loop_block_signature: Optional[str] = None
     last_missing_tool_signature: Optional[str] = None
@@ -96,6 +102,11 @@ class RunState:
     # 只记账遥测，不参与预算判定）
     tokens_spent: int = 0
     last_turn_usage: Optional[Dict[str, Any]] = None
+    # 时间预算模式（自由 agent 节点）：本轮工具调用数（空转检测输入）
+    last_turn_tool_calls: int = 0
+    # 时间预算终止原因（extended_timeout / stalled_no_progress）；
+    # 供 finalizer 与 complete 事件透出，coordinator 据此区分预算耗尽与真失败
+    budget_termination: Optional[str] = None
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

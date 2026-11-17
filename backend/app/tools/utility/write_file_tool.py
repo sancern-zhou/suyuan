@@ -25,6 +25,7 @@ WriteFile 工具 - 完整对标 Claude Code 官方实现
 - Claude Code: src/tools/FileWriteTool/FileWriteTool.ts
 - Claude Code: src/tools/FileWriteTool/utils.ts
 """
+import asyncio
 import difflib
 import platform
 from pathlib import Path
@@ -38,6 +39,7 @@ from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS, memory_capacity_
 from app.utils.path_config import (
     BACKEND_ROOT,
     TEMP_ROOT,
+    get_data_registry,
     is_agent_protected_write_path,
     is_path_within,
     resolve_agent_path,
@@ -254,6 +256,8 @@ format:
         )
 
         self.allowed_project_dir = BACKEND_ROOT
+        # 供 adapter 以 kwargs 注入 ExecutionContext（源码修复授权）。
+        self.wants_context = True
         self.read_state = get_file_read_state()
         # 额外允许的路径列表（用于临时文件）
         self.allowed_extra_paths = [TEMP_ROOT]
@@ -264,6 +268,7 @@ format:
         content: str,
         encoding: str = "utf-8",
         create_dirs: bool = True,
+        context: Any = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -295,11 +300,36 @@ format:
             # ============================================================
             # 1. 路径安全检查
             # ============================================================
-            resolved_path = self._resolve_path(path)
+            allow_protected = False
+            if context is not None:
+                try:
+                    from app.tools.runtime_monitor.repair_auth import (
+                        ensure_source_repair_authorized,
+                    )
+
+                    probe = resolve_agent_path(path)
+                    if is_agent_protected_write_path(probe):
+                        allow_protected, note, _snap = await ensure_source_repair_authorized(
+                            context, probe
+                        )
+                        if not allow_protected:
+                            logger.warning(
+                                "write_file_source_repair_denied",
+                                requested_path=path,
+                                reason=note,
+                            )
+                except Exception as exc:  # noqa: BLE001 - 授权检查失败按拒绝处理
+                    logger.warning("write_file_repair_auth_error", error=str(exc))
+            resolved_path = self._resolve_path(path, allow_protected=allow_protected)
             if not resolved_path:
                 return {
                     "success": False,
-                    "error": f"文件路径无效或超出工作目录范围: {path}",
+                    "error": (
+                        f"文件路径无效或超出工作目录范围: {path}。"
+                        "相对路径以仓库根为基准解析，写入范围仅限 backend/ 与临时目录；"
+                        "需要发布到文件面板的产物请写进数据注册表目录 "
+                        f"{get_data_registry()}。"
+                    ),
                     "summary": f"写入失败：路径不合法",
                     "error_code": 1
                 }
@@ -492,7 +522,9 @@ format:
                 f"{'创建' if is_new_file else '覆写'}成功：{resolved_path.name}，"
                 f"{line_count} 行，{file_size} 字节"
             )
-            preview_refresh = refresh_preview_for_managed_document_path(resolved_path)
+            preview_refresh = await asyncio.to_thread(
+                refresh_preview_for_managed_document_path, resolved_path
+            )
             if preview_refresh:
                 result_data.update(preview_refresh)
                 refresh_state = (
@@ -582,7 +614,7 @@ format:
 
         return {"valid": True}
 
-    def _resolve_path(self, path: str) -> Optional[Path]:
+    def _resolve_path(self, path: str, allow_protected: bool = False) -> Optional[Path]:
         """
         解析文件路径，确保在工作目录或允许的额外路径范围内
         """
@@ -600,8 +632,9 @@ format:
                 )
                 return None
 
-            # 安全检查：禁止写入敏感文件与源码/配置/部署区（防止注入持久化 RCE）
-            if is_agent_protected_write_path(file_path):
+            # 安全检查：禁止写入敏感文件与源码/配置/部署区（防止注入持久化 RCE）；
+            # 源码修复任务经 repair_auth（白名单+git快照）受控例外放行。
+            if is_agent_protected_write_path(file_path) and not allow_protected:
                 logger.warning(
                     "write_file_protected_path",
                     requested_path=path,

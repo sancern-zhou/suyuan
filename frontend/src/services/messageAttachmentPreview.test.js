@@ -48,6 +48,26 @@ test('loads a missing catalog entry once and rejects internal source resources',
   assert.equal(loads, 1)
 })
 
+test('resolves agent product resources (report/output) for inline card panel preview', async () => {
+  const reportResource = { ...attachment, resource_id: 'report-html', role: 'report' }
+  const outputResource = { ...attachment, resource_id: 'artifact-html', role: 'output' }
+  const state = { resources: [reportResource, outputResource] }
+  const store = {
+    activeSessionId: 'session-1',
+    sessionState: () => state,
+    loadCatalog: async () => { throw new Error('catalog should already be loaded') }
+  }
+
+  assert.equal(
+    await resolveMessageAttachmentResource(store, 'session-1', { resource_id: 'report-html' }),
+    reportResource
+  )
+  assert.equal(
+    await resolveMessageAttachmentResource(store, 'session-1', { resource_id: 'artifact-html' }),
+    outputResource
+  )
+})
+
 test('recognizes unified image resources without relying on message attachment type', () => {
   assert.equal(isImageAttachmentResource({ renderer: 'image' }), true)
   assert.equal(isImageAttachmentResource({ media_type: 'image/png' }), true)

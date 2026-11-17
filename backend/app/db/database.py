@@ -90,58 +90,6 @@ async def _ensure_uploaded_files_schema(conn) -> None:
         logger.warning("uploaded_files_session_id_column_migration_failed", error=str(exc))
 
 
-async def _ensure_social_binding_schema(conn) -> None:
-    """Apply compatibility fixes for social binding tables."""
-    if conn.dialect.name != "postgresql":
-        return
-
-    statements = (
-        """
-        ALTER TABLE social_users
-            ADD COLUMN IF NOT EXISTS platform_user_id VARCHAR(255),
-            ADD COLUMN IF NOT EXISTS platform_username VARCHAR(255),
-            ADD COLUMN IF NOT EXISTS platform_display_name VARCHAR(255),
-            ADD COLUMN IF NOT EXISTS account_id VARCHAR(255),
-            ADD COLUMN IF NOT EXISTS ilink_user_id VARCHAR(255)
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS weixin_scan_tasks (
-            id VARCHAR(36) PRIMARY KEY,
-            account_id VARCHAR(255) NOT NULL UNIQUE,
-            owner_user_id VARCHAR(255) NOT NULL,
-            owner_username VARCHAR(255) NOT NULL,
-            owner_display_name VARCHAR(255) NOT NULL,
-            status VARCHAR(30) NOT NULL DEFAULT 'created',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP NOT NULL
-        )
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_weixin_scan_tasks_owner_status
-            ON weixin_scan_tasks(owner_user_id, status)
-        """,
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_platform_user
-            ON social_users(platform_user_id)
-            WHERE status = 'active' AND platform_user_id IS NOT NULL
-        """,
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_ilink_user
-            ON social_users(ilink_user_id)
-            WHERE status = 'active' AND ilink_user_id IS NOT NULL
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_social_users_active_account
-            ON social_users(account_id, status)
-        """,
-    )
-    for statement in statements:
-        await conn.execute(text(statement))
-
-    logger.info("social_binding_schema_ensured", dialect=conn.dialect.name)
-
-
 async def _ensure_session_resources_schema(conn) -> None:
     """Create the grouped resource delivery schema for a clean database."""
     if conn.dialect.name != "postgresql":
@@ -317,7 +265,14 @@ async def init_db():
     import app.db.models.agent_route_decision_db  # noqa: F401
     import app.db.report_package_model  # noqa: F401
     import app.db.models.scheduled_task_result_db  # noqa: F401
-    import app.db.models.xuchang_station_alert_episode_db  # noqa: F401
+    import app.db.models.spawn_task_db  # noqa: F401
+    # 许昌站点偏离告警 episode 表：项目专属模型，按部署项目条件建表，
+    # 避免其他项目库首次启动带上许昌业务表（消费方 episode_storage_db 为惰性 import）。
+    from app.project_config.loader import load_project_context
+    from config.settings import settings as _settings
+
+    if load_project_context(_settings.project_id).manifest.project == "xuchang":
+        import app.db.models.xuchang_station_alert_episode_db  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the
     # required `sessions` tables on their first startup as well.
@@ -339,7 +294,6 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(session_models.Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
-        await _ensure_social_binding_schema(conn)
         await _ensure_session_resources_schema(conn)
         await _ensure_coordinator_quick_prompts_schema(conn)
     logger.info("database_initialized")

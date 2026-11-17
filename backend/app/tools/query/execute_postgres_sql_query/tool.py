@@ -37,30 +37,39 @@ WEATHER_SQL_TABLES = [
     "observed_weather_daily",
 ]
 
-# 许昌国控站周边路况定时抓取数据（主库）。工具代码与抓取脚本在 xuchang 分支
-# （backend/scripts/xuchang_traffic_collect.py）；其他项目库中无这些表，
-# 查询会得到"未找到白名单表"的明确提示，故直接并入共享白名单。
-XUCHANG_TRAFFIC_SQL_TABLES = [
-    "traffic_snapshot",
-    "traffic_section",
-    "v_station_traffic_hourly",
-]
+# 项目专属业务表（如许昌路况时序 traffic_*、许昌告警事件聚合
+# xuchang_station_alert_episodes）经 projects/<id>/project.yaml 的
+# backend.tool_options.execute_postgres_sql_query.allowed_tables_extra 注入，
+# 共享白名单只保留所有部署共有的表。
 
 # 定时任务结构化结果（主库）。scheduled_task_results 为所有定时任务共用的结果表，
-# 查站点快速污染抬升告警需按 task_id 过滤；xuchang_station_alert_episodes 为
-# 许昌场景一告警事件聚合表，其他项目库中无该表，查询会得到"未找到白名单表"的
-# 明确提示，故直接并入共享白名单（同 traffic 表的处理方式）。
+# 查具体任务结论需按 task_id 过滤（项目专属 task_id 与扩展表见项目配置注记）。
 ALERT_RESULT_SQL_TABLES = [
     "scheduled_task_results",
-    "xuchang_station_alert_episodes",
 ]
 
 ALLOWED_SQL_TABLES = (
     PERMIT_SQL_TABLES
     + WEATHER_SQL_TABLES
-    + XUCHANG_TRAFFIC_SQL_TABLES
     + ALERT_RESULT_SQL_TABLES
 )
+
+
+def _load_postgres_tool_options() -> dict[str, Any]:
+    """读取 backend.tool_options 中的 execute_postgres_sql_query 项目扩展。
+
+    支持 keys：allowed_tables_extra（追加到共享白名单的项目专属业务表）、
+    schema_notes（追加到工具描述末尾的项目口径注记与示例）。
+    """
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        manifest = load_project_context(settings.project_id).manifest
+        return manifest.backend.tool_options.get("execute_postgres_sql_query") or {}
+    except Exception as exc:
+        logger.warning("execute_postgres_tool_options_unavailable", error=str(exc))
+        return {}
 
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 50
@@ -73,27 +82,32 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         from app.agent.context.data_shape import TableTypesCache
 
         self._table_types_cache = TableTypesCache()
+        options = _load_postgres_tool_options()
+        allowed_tables = list(ALLOWED_SQL_TABLES) + list(
+            options.get("allowed_tables_extra") or []
+        )
+        project_notes = str(options.get("schema_notes") or "")
         schema_description = (
             "PostgreSQL/KingbaseES 只读 SQL 查询工具：企业排污许可证（主库）、气象站小时/日观测"
-            "（独立气象库）、许昌国控站周边路况时序（主库）、定时任务结果与站点快速告警（主库）。"
+            "（独立气象库）、定时任务结构化结果（主库）。"
             "describe_table 查表结构，或 sql 执行 SELECT/CTE，二者二选一。"
-            f"白名单表：{', '.join(ALLOWED_SQL_TABLES)}。只允许 SELECT（禁写/DDL/注释/多语句），"
+            f"白名单表：{', '.join(allowed_tables)}。只允许 SELECT（禁写/DDL/注释/多语句），"
             f"LIMIT 分页最大 {MAX_LIMIT} 条；字段不确定先 describe_table，禁查 information_schema。"
             "\n\n【表间关系与口径】"
             "- permit_licenses 主表（企业/许可证编号/状态）；versions/pollution_details/documents 均以 license_id 关联主表。"
-            "- observed_weather_data 逐小时观测（主键 time+station_id；许昌站 ZzMTA，站点清单 SELECT DISTINCT station_id, station_name；NULL=缺测）；"
+            "- observed_weather_data 逐小时观测（主键 time+station_id，站点清单 SELECT DISTINCT station_id, station_name；NULL=缺测）；"
             "observed_weather_daily 逐日聚合（obs_date 为 00-24 北京时口径），查询日值建议附带 data_quality/valid_hours 判可靠性（<20 小时的日子指标列为 NULL）。"
-            "- traffic_snapshot 路况快照（6 分钟时隙，slot_at 为 UTC；evaluation_status 0未知~4严重拥堵）；traffic_section 以 snapshot_id 关联；"
-            "v_station_traffic_hourly 按 station_code+小时聚合，可与空气质量小时数据 join；缺失时隙=未采集不可回补，实时路况用 query_xuchang_traffic_status。"
-            "- scheduled_task_results 全部定时任务共用，查站点快速抬升告警结论必须加 task_id = 'task_xuchang_station_deviation_alert'"
-            "（conclusion 结论 / broadcast_message 通报正文；findings、image_paths 为 JSON 列）；xuchang_station_alert_episodes 一行一个告警过程，event_ids 可关联 scheduled_task_results.event_id 取历次结论。"
-            "- 硬边界：permit_*/路况/任务表在主库，observed_weather_* 在独立气象库，两库不支持跨库 JOIN。"
+            "- scheduled_task_results 全部定时任务共用的结构化结果表（conclusion 结论 / broadcast_message 通报正文；"
+            "findings、image_paths 为 JSON 列），查具体任务结论按 task_id 过滤。"
+            "- 硬边界：permit_*/任务表在主库，observed_weather_* 在独立气象库，两库不支持跨库 JOIN。"
             "\n示例："
             "\n- 企业大气污染物：SELECT l.enterprise_name, p.air_pollutant_types, p.air_emission_standard FROM permit_licenses l JOIN permit_pollution_details p ON p.license_id = l.id "
-            "WHERE l.city_name = '许昌市' LIMIT 50"
-            "\n- 告警结论与通报：SELECT completed_at, station_name, conclusion, broadcast_message FROM scheduled_task_results "
-            "WHERE task_id = 'task_xuchang_station_deviation_alert' ORDER BY completed_at DESC LIMIT 20"
+            "WHERE l.city_name = N'城市名称' LIMIT 50"
         )
+        # 项目专属业务表的路由口径与示例经 tool_options.schema_notes 追加（如许昌
+        # 路况时序/站点快速告警 task_id/站点点编码），共享层不写死任何项目地名。
+        if project_notes:
+            schema_description = schema_description + "\n\n【项目扩展口径】" + project_notes
         function_schema = {
             "name": "execute_postgres_sql_query",
             "description": schema_description,
@@ -102,7 +116,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                 "properties": {
                     "describe_table": {
                         "type": "string",
-                        "enum": ALLOWED_SQL_TABLES,
+                        "enum": allowed_tables,
                         "description": "查看白名单业务表的字段及一条样例；与 sql 二选一。",
                     },
                     "sql": {
@@ -129,7 +143,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         )
         self.sql_validator = SQLValidator(
             max_limit=MAX_LIMIT,
-            allowed_tables=ALLOWED_SQL_TABLES,
+            allowed_tables=allowed_tables,
         )
 
     async def execute(
@@ -152,11 +166,11 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         return await self._execute_sql(sql or "", limit, context)
 
     async def _describe_table(self, table_name: str) -> dict[str, Any]:
-        if table_name not in ALLOWED_SQL_TABLES:
+        if table_name not in allowed_tables:
             return {
                 "success": False,
                 "data": None,
-                "summary": f"表 '{table_name}' 不在白名单中。可用表: {', '.join(ALLOWED_SQL_TABLES)}",
+                "summary": f"表 '{table_name}' 不在白名单中。可用表: {', '.join(allowed_tables)}",
             }
 
         try:

@@ -1,8 +1,14 @@
-"""查询上一时段后台运行异常工具（只读，仅定时任务上下文可用）。
+"""查询上一时段后台运行异常工具（只读）。
 
-与定时任务"运行监控"任务配套：Agent 先调用本工具拿结构化异常数据，
-分析后自行决定是否调用 broadcast_social_users 推送结论。无异常时 Agent
-应直接结束、不打扰用户。
+两个合法入口：
+1. 定时任务上下文——与"运行监控"任务配套：Agent 先调用本工具拿结构化
+   异常数据，分析后自行决定是否调用 broadcast_social_users 推送结论，
+   无异常时直接结束、不打扰用户；
+2. 交互会话（assistant 模式）——运维白名单用户（settings 配置
+   RUNTIME_MONITOR_QUERY_USERS）在对话中质询运行状况，默认回看 12 小时。
+
+自愈工具（retry_scheduled_task/trigger_fetcher）不随此放宽：无人值守的
+自动动作必须保留定时任务门禁与硬缰绳。
 """
 
 from __future__ import annotations
@@ -23,10 +29,12 @@ class QueryRuntimeAnomaliesTool(LLMTool):
         function_schema = {
             "name": "query_runtime_anomalies",
             "description": (
-                "查询后台自本监控任务上次成功执行以来的异常与告警情况，"
+                "查询后台运行异常与告警情况，"
                 "包括：定时任务失败/超时、Agent 会话错误、数据抓取（Fetcher）失败、"
                 "LLM 限流与供应商失败计数、百度路况配额余量。"
-                "返回结构化数据与 has_anomalies 总体标记；仅运行监控定时任务可调用。"
+                "返回结构化数据与 has_anomalies 总体标记。"
+                "运行监控定时任务可调用（窗口=上次成功以来）；"
+                "运维白名单用户可在助手对话中查询（默认回看 12 小时）。"
             ),
             "parameters": {
                 "type": "object",
@@ -59,16 +67,41 @@ class QueryRuntimeAnomaliesTool(LLMTool):
         **kwargs,
     ) -> Dict[str, Any]:
         scheduled_context = getattr(context, "scheduled_task_context", None)
-        if not isinstance(scheduled_context, dict) or not scheduled_context.get("task_id"):
-            return {
-                "status": "failed",
-                "success": False,
-                "data": {"has_anomalies": False},
-                "summary": "当前不是定时任务执行上下文，不能查询运行异常",
-            }
+        is_scheduled_run = isinstance(scheduled_context, dict) and bool(
+            scheduled_context.get("task_id")
+        )
+        if not is_scheduled_run:
+            # 交互会话路径：仅白名单用户可质询（运维在助手对话中查询运行异常）。
+            # 白名单为空时整体关闭交互路径，行为与旧版一致。
+            # 身份源（任一命中即通过）：assistant 会话的服务端认证身份
+            # runtime_metadata.authenticated_account.username（user_identifier
+            # 在 assistant 模式是 web:<sha256> 记忆 ID，不含业务工号），
+            # 以及 user_identifier 本体/冒号尾段（兼容 app:android:xxx 形态）。
+            from config.settings import settings
 
-        task_id = str(scheduled_context["task_id"])
-        execution_id = scheduled_context.get("execution_id")
+            allowed = settings.runtime_monitor_query_users_set
+            identities = []
+            user_identifier = str(getattr(context, "user_identifier", "") or "")
+            if user_identifier:
+                identities.append(user_identifier)
+                identities.append(user_identifier.rsplit(":", 1)[-1])
+            account = (getattr(context, "runtime_metadata", None) or {}).get(
+                "authenticated_account"
+            )
+            if isinstance(account, dict):
+                username = str(account.get("username") or "").strip()
+                if username:
+                    identities.append(username)
+            if not allowed or not (set(identities) & allowed):
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "data": {"has_anomalies": False},
+                    "summary": "当前不是定时任务执行上下文，且当前用户不在运行监控查询白名单，不能查询运行异常",
+                }
+
+        task_id = str(scheduled_context.get("task_id")) if is_scheduled_run else "task_runtime_monitor"
+        execution_id = scheduled_context.get("execution_id") if is_scheduled_run else None
         try:
             from app.scheduled_tasks.service import get_scheduled_task_service
 
@@ -77,6 +110,9 @@ class QueryRuntimeAnomaliesTool(LLMTool):
 
             from app.tools.runtime_monitor import collector
 
+            if not is_scheduled_run and not window_minutes:
+                # 交互质询没有"上次成功执行"锚点，默认回看 12 小时。
+                window_minutes = 720
             window = await collector.resolve_window(
                 execution_storage,
                 task_id=task_id,

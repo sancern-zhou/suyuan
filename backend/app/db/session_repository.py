@@ -1148,6 +1148,25 @@ class SessionRepository:
                 data["result"] = result_data
                 msg_dict["data"] = data
 
+        # ✅ 轻量 final 行回填交付所有权（run/资源组关联），供前端把资源组
+        # 归属到产生它的回复；缺了则恢复会话不渲染成果卡与内嵌 HTML 报告。
+        if row.msg_type == "final":
+            ownership: Dict[str, Any] = {}
+            for key in ("run_id", "resource_ids", "resource_group_ids", "resource_run_ids"):
+                value = getattr(row, f"ownership_{key}", None)
+                # 驱动/JSON 处理器可能已解码（裸值），也可能仍返回 JSON 文本；
+                # 仅在文本形似 JSON 时解析，失败保留原值（如裸 run_id 字符串）。
+                if isinstance(value, str) and value[:1] in ("{", "[", '"'):
+                    try:
+                        value = json.loads(value)
+                    except (TypeError, ValueError):
+                        pass
+                if value not in (None, "", []):
+                    ownership[key] = value
+            if ownership:
+                data = msg_dict.get("data") if isinstance(msg_dict.get("data"), dict) else {}
+                msg_dict["data"] = {**data, **ownership}
+
         return msg_dict
 
     async def get_messages_before(
@@ -1214,6 +1233,37 @@ class SessionRepository:
                             ),
                             else_=None,
                         ).label("human_feedback"),
+                        # 终态消息的所有权投影（run_id/资源关联）：轻量行不带完整
+                        # data，但前端 replyOutcomes 依赖这些字段把资源组关联到
+                        # 产生它的回复（缺了则恢复会话不渲染成果卡/内嵌 HTML）。
+                        case(
+                            (
+                                SessionMessageDB.msg_type == "final",
+                                SessionMessageDB.data["run_id"],
+                            ),
+                            else_=None,
+                        ).label("ownership_run_id"),
+                        case(
+                            (
+                                SessionMessageDB.msg_type == "final",
+                                SessionMessageDB.data["resource_ids"],
+                            ),
+                            else_=None,
+                        ).label("ownership_resource_ids"),
+                        case(
+                            (
+                                SessionMessageDB.msg_type == "final",
+                                SessionMessageDB.data["resource_group_ids"],
+                            ),
+                            else_=None,
+                        ).label("ownership_resource_group_ids"),
+                        case(
+                            (
+                                SessionMessageDB.msg_type == "final",
+                                SessionMessageDB.data["resource_run_ids"],
+                            ),
+                            else_=None,
+                        ).label("ownership_resource_run_ids"),
                     )
                     .where(SessionMessageDB.session_id == session_id)
                 )

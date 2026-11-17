@@ -23,12 +23,38 @@ from app.lifecycle.loop_watchdog import start_loop_watchdog
 from app.lifecycle.nacos import start_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import start_scheduled_task_service
-from app.lifecycle.social import start_social_platform_service
 from app.lifecycle.social_worker_api import start_social_worker_api_service
 from app.lifecycle.tools import initialize_tools_and_agents
 from config.settings import settings
 
 logger = structlog.get_logger()
+
+
+async def ensure_subagent_manager_only() -> None:
+    """只初始化 SubagentManager 单例（对话社交渠道已退役，不再有渠道层）。
+
+    Web/App 助手会话的 spawn 长任务派发依赖该单例；归属按服务端认证身份，
+    完成回投走 task_store 状态 + best-effort App 推送，不依赖任何聊天渠道。
+    """
+    from app.agent.react_agent import create_react_agent
+    from app.social.message_bus import MessageBus
+    from app.social.message_bus_singleton import get_message_bus, set_message_bus
+    from app.social.subagent_manager import SubagentManager
+    from app.social.subagent_singleton import get_subagent_manager, set_subagent_manager
+    from app.social.task_status_store import TaskStatusStore
+
+    if get_subagent_manager() is not None:
+        return
+    message_bus = get_message_bus() or MessageBus()
+    set_message_bus(message_bus)
+    set_subagent_manager(
+        SubagentManager(
+            agent=create_react_agent(),
+            task_store=TaskStatusStore(),
+            message_bus=message_bus,
+        )
+    )
+    logger.info("subagent_manager_initialized", reason="manager_only")
 
 
 async def run_startup(app: FastAPI) -> None:
@@ -57,12 +83,24 @@ async def run_startup(app: FastAPI) -> None:
 
     await initialize_tools_and_agents()
 
+    if app_role == "web":
+        # Web 进程独占 SSE agent run 的取消状态键，且部署为单实例：启动瞬间
+        # 进程内不可能有存活 run，非终态状态全部是上次硬杀/重启留下的孤儿。
+        # 不回收则 REGISTER 拒绝新 run、暂停屏障等满超时，会话被锁死到 TTL。
+        try:
+            from app.agent.runtime.cancellation import cancellation_registry
+
+            recovered = await cancellation_registry.recover_stale_states()
+            if recovered:
+                logger.info("cancellation_stale_states_recovered", recovered=recovered)
+        except Exception as e:
+            logger.warning("cancellation_stale_state_recovery_skipped", error=str(e))
+
     if starts_background_services(app_role):
         database_ready = await init_database_and_fetchers()
         await start_scheduled_task_service()
 
         if database_ready:
-            await start_social_platform_service(app)
             if app_role == "worker":
                 await start_social_worker_api_service(app)
             await start_knowledge_base_services()
@@ -75,6 +113,15 @@ async def run_startup(app: FastAPI) -> None:
                 services=["social_platform", "social_worker_api", "knowledge_base"],
             )
     else:
+        # web 进程也需要 spawn 后台任务能力（Web/App 助手会话的长任务派发
+        # 不依赖微信/QQ 渠道）。仅初始化 SubagentManager 单例，不启渠道与
+        # 心跳；已知边界：任务状态为进程内 JSON 存储，多 web worker 部署
+        # （如 xuchang --workers 3）存在跨进程可见性与并发写问题，勿在该
+        # 场景启用 Web spawn。
+        try:
+            await ensure_subagent_manager_only()
+        except Exception as e:
+            logger.warning("web_subagent_manager_init_failed", error=str(e))
         database_ready = await init_database()
         if database_ready:
             from app.api.knowledge_graph_routes import start_graph_build_recovery

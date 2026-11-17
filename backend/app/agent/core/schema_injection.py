@@ -11,6 +11,81 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+def format_schema_text(tool_name: str, schema: Dict[str, Any]) -> str:
+    """把 OpenAI 风格 schema 格式化为可读文本（模块级函数，供复用）。
+
+    SchemaInjector._format_schema 的委托目标；deferred tools 的失败兜底
+    （存根工具盲调失败时附完整 schema）同用本格式。
+    """
+    lines = [
+        f"\n## 📋 工具Schema: {tool_name}\n",
+        f"**描述**: {schema.get('description', '无描述')}\n",
+        "**参数**:\n"
+    ]
+
+    properties = schema.get('properties', {})
+    required = schema.get('required', [])
+
+    for param_name, param_info in properties.items():
+        param_type = param_info.get('type', 'unknown')
+        param_desc = param_info.get('description', '')
+        is_required = param_name in required
+
+        # 构建参数描述
+        param_line = f"- `{param_name}` ({param_type}"
+
+        # 添加enum约束
+        if 'enum' in param_info:
+            enum_values = param_info['enum']
+            param_line += f", enum: {enum_values}"
+
+        # 添加数值约束
+        if 'minimum' in param_info or 'maximum' in param_info:
+            min_val = param_info.get('minimum')
+            max_val = param_info.get('maximum')
+            range_str = f"{min_val}-{max_val}" if min_val and max_val else f">={min_val}" if min_val else f"<={max_val}"
+            param_line += f", range: {range_str}"
+
+        param_line += ")"
+
+        # 标记必需参数
+        if is_required:
+            param_line += " **[必需]**"
+
+        param_line += f": {param_desc}"
+        lines.append(param_line)
+
+        # 添加默认值
+        if 'default' in param_info:
+            default_val = param_info['default']
+            lines.append(f"  - 默认值: `{default_val}`")
+
+    lines.append("\n**示例调用**:")
+    lines.append(f"```json")
+    lines.append(f"{{")
+    lines.append(f"  \"tool\": \"{tool_name}\",")
+
+    # 构造示例
+    example_args = []
+    for param_name in required[:3]:  # 最多3个必需参数
+        param_info = properties.get(param_name, {})
+        param_type = param_info.get('type', 'string')
+        example_val = '"示例值"' if param_type == 'string' else '示例值'
+        example_args.append(f'    "{param_name}": {example_val}')
+
+    if example_args:
+        lines.append(f"  \"args\": {{")
+        lines.append(",\n".join(example_args))
+        lines.append(f"  }}")
+    else:
+        lines.append(f"  \"args\": {{}}")
+
+    lines.append(f"}}")
+    lines.append(f"```\n")
+
+    return "\n".join(lines)
+
+
 class SchemaInjector:
     """
     Schema注入器
@@ -146,73 +221,7 @@ class SchemaInjector:
         Returns:
             格式化的schema文本
         """
-        lines = [
-            f"\n## 📋 工具Schema: {tool_name}\n",
-            f"**描述**: {schema.get('description', '无描述')}\n",
-            "**参数**:\n"
-        ]
-
-        properties = schema.get('properties', {})
-        required = schema.get('required', [])
-
-        for param_name, param_info in properties.items():
-            param_type = param_info.get('type', 'unknown')
-            param_desc = param_info.get('description', '')
-            is_required = param_name in required
-
-            # 构建参数描述
-            param_line = f"- `{param_name}` ({param_type}"
-
-            # 添加enum约束
-            if 'enum' in param_info:
-                enum_values = param_info['enum']
-                param_line += f", enum: {enum_values}"
-
-            # 添加数值约束
-            if 'minimum' in param_info or 'maximum' in param_info:
-                min_val = param_info.get('minimum')
-                max_val = param_info.get('maximum')
-                range_str = f"{min_val}-{max_val}" if min_val and max_val else f">={min_val}" if min_val else f"<={max_val}"
-                param_line += f", range: {range_str}"
-
-            param_line += ")"
-
-            # 标记必需参数
-            if is_required:
-                param_line += " **[必需]**"
-
-            param_line += f": {param_desc}"
-            lines.append(param_line)
-
-            # 添加默认值
-            if 'default' in param_info:
-                default_val = param_info['default']
-                lines.append(f"  - 默认值: `{default_val}`")
-
-        lines.append("\n**示例调用**:")
-        lines.append(f"```json")
-        lines.append(f"{{")
-        lines.append(f"  \"tool\": \"{tool_name}\",")
-
-        # 构造示例
-        example_args = []
-        for param_name in required[:3]:  # 最多3个必需参数
-            param_info = properties.get(param_name, {})
-            param_type = param_info.get('type', 'string')
-            example_val = '"示例值"' if param_type == 'string' else '示例值'
-            example_args.append(f'    "{param_name}": {example_val}')
-
-        if example_args:
-            lines.append(f"  \"args\": {{")
-            lines.append(",\n".join(example_args))
-            lines.append(f"  }}")
-        else:
-            lines.append(f"  \"args\": {{}}")
-
-        lines.append(f"}}")
-        lines.append(f"```\n")
-
-        return "\n".join(lines)
+        return format_schema_text(tool_name, schema)
 
     def reset(self) -> None:
         """重置所有状态（用于新会话）"""

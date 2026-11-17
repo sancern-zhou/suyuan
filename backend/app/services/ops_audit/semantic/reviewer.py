@@ -1458,6 +1458,12 @@ def _review_filename_attachment_tasks_batch(
             [],
             json.dumps(parsed, ensure_ascii=False, default=str),
         )
+        # 确认缺失的照片类型必须进入最终问题清单：该规则不在
+        # GENERIC_REMARK_REVIEW_RULE_IDS 中，通用晋升逻辑会静默丢弃
+        # confirmed_issue 结论（2026-11-16 复盘：7 单确认缺失未上报）。
+        _limit_supported_rule_ids(
+            results[code], "ATTACHMENT_STATION_MAINTAIN_PHOTO_SEMANTIC_MISSING"
+        )
     return results
 
 

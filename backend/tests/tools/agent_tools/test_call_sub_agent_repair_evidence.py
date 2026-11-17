@@ -59,3 +59,42 @@ def test_summarize_child_evidence_reads_file_path_from_metadata():
     digest = _tool()._summarize_child_evidence(events)
 
     assert "/tmp/out.csv" in digest
+
+
+def test_summarize_child_evidence_carries_execute_python_stdout():
+    """execute_python 的数值在 stdout：只回 summary 等于没给证据。
+
+    历史事故：子 Agent 已算出 96.29% 等数值，补交提示里只有"执行成功"一句，
+    模型据此报 verified_facts=0 交出空结论。
+    """
+    events = [{
+        "type": "tool_result",
+        "data": {
+            "tool_name": "execute_python",
+            "result": {
+                "success": True,
+                "summary": "✅ 执行成功（exit=0）",
+                "stdout": "完成率 96.29%；超期 77 项；重复故障率 38.1%",
+            },
+        },
+    }]
+
+    digest = _tool()._summarize_child_evidence(events)
+
+    assert "96.29%" in digest
+    assert "38.1%" in digest
+
+
+def test_summarize_child_evidence_skips_stdout_for_other_tools():
+    """只有 execute_python 的数值在 stdout；其他工具不放大证据体积。"""
+    events = [{
+        "type": "tool_result",
+        "data": {
+            "tool_name": "get_weather_data",
+            "result": {"success": True, "summary": "7208 行", "stdout": "noise"},
+        },
+    }]
+
+    digest = _tool()._summarize_child_evidence(events)
+
+    assert "noise" not in digest

@@ -1,4 +1,6 @@
 from pathlib import Path
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.agent.session.models import Session
@@ -18,7 +20,7 @@ class FakeSessionMapper:
         self.get_all_calls = 0
 
     async def get_or_create_session(self, social_user_id, mode):
-        assert mode == "social"
+        assert mode == "channel"
         return self.session_id
 
     async def get_all_social_user_ids(self):
@@ -34,27 +36,40 @@ class FakeMessageBus:
         self.messages.append(message)
 
 
+class FakePushService:
+    def __init__(self):
+        self.pushed = []
+
+    async def send_broadcast(self, *, social_user_id, message):
+        self.pushed.append((social_user_id, message))
+        return {"success": True}
+
+
 @pytest.mark.asyncio
-async def test_broadcast_refreshes_message_bus_initialized_after_service(monkeypatch):
-    bus = FakeMessageBus()
+async def test_broadcast_resolves_push_service_at_broadcast_time(monkeypatch):
+    # 对话渠道退役后投递走统一推送；推送服务在每次广播时按当前注入解析，
+    # 而不是在服务构造时缓存旧的 message_bus。
     mapper = FakeSessionMapper()
-    monkeypatch.setattr(
-        "app.social.broadcast_service.get_message_bus",
-        lambda: None,
-    )
     service = SocialBroadcastService(session_mapper=mapper)
+    push = FakePushService()
     monkeypatch.setattr(
-        "app.social.broadcast_service.get_message_bus",
-        lambda: bus,
+        "app.social.broadcast_service.get_unified_push_service",
+        lambda: push,
+    )
+    monkeypatch.setattr(
+        "app.social.broadcast_service.persist_broadcast_context",
+        AsyncMock(return_value=True),
+        raising=False,
     )
 
     result = await service.broadcast(
         message="告警摘要",
-        target_user_ids=["weixin:bot:one"],
+        target_user_ids=["app:android:one"],
+        persist_context=True,
     )
 
     assert result["success"] is True
-    assert len(bus.messages) == 1
+    assert push.pushed == [("app:android:one", "告警摘要")]
 
 
 @pytest.mark.asyncio
@@ -145,7 +160,7 @@ async def test_broadcast_uses_dedicated_session_and_read_state(monkeypatch):
     saved = []
 
     async def fake_load(session_id, *, mode):
-        assert mode == "social"
+        assert mode == "channel"
         return sessions.get(session_id)
 
     async def fake_append(session, *, mode):
@@ -200,8 +215,9 @@ async def test_explicit_empty_targets_never_broadcast_to_all_users():
 async def test_targeted_broadcast_persists_context_for_each_success(
     monkeypatch,
 ):
+    # 对话渠道退役：投递只面向 App 账号（inbox 持久化 + 统一推送）。
     mapper = FakeSessionMapper()
-    bus = FakeMessageBus()
+    push = FakePushService()
     persisted = []
 
     async def fake_persist(**kwargs):
@@ -213,11 +229,15 @@ async def test_targeted_broadcast_persists_context_for_each_success(
         fake_persist,
         raising=False,
     )
-    service = SocialBroadcastService(message_bus=bus, session_mapper=mapper)
+    monkeypatch.setattr(
+        "app.social.broadcast_service.get_unified_push_service",
+        lambda: push,
+    )
+    service = SocialBroadcastService(session_mapper=mapper)
 
     result = await service.broadcast(
         message="告警摘要",
-        target_user_ids=["weixin:bot:one", "weixin:bot:two"],
+        target_user_ids=["app:android:one", "app:android:two"],
         persist_context=True,
         context_metadata={
             "task_id": "task-1",
@@ -228,6 +248,9 @@ async def test_targeted_broadcast_persists_context_for_each_success(
     )
 
     assert result["success"] is True
-    assert len(bus.messages) == 2
-    assert persisted == ["weixin:bot:one", "weixin:bot:two"]
+    assert persisted == ["app:android:one", "app:android:two"]
+    assert sorted(push.pushed) == [
+        ("app:android:one", "告警摘要"),
+        ("app:android:two", "告警摘要"),
+    ]
     assert all(row["context_persisted"] for row in result["delivery_results"])

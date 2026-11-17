@@ -121,6 +121,20 @@ class WorkflowParentManifest(StrictModel):
     _valid_child_modes = field_validator("child_modes")(unique)
 
 
+class FixedQueryWorkflowToolsDeclaration(StrictModel):
+    """固定问数工作流的项目声明（backend.fixed_query_workflow_tools）。
+
+    id 已存在于共享目录：tools 并集合并进该工作流（title/scope_line 忽略）。
+    id 未注册：按 tools+title 注册新的问数工作流（scope_line/contract_tables
+    可选，注入 acquire 阶段描述与表契约块）。项目专属工具元组只允许出现在
+    projects/<id>/project.yaml，共享层不写死任何项目的工具路由。
+    """
+    tools: list[str] = Field(default_factory=list)
+    title: str | None = None
+    scope_line: str | None = None
+    contract_tables: list[str] = Field(default_factory=list)
+
+
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
     disabled_tools: list[str] = Field(default_factory=list)
@@ -135,14 +149,38 @@ class BackendManifest(StrictModel):
     # 项目受众契约文件（相对仓库根）：平台提示词的"用户面向与表达约定"段落
     # 按项目提供。未声明时使用共享中性默认——共享层不得写死任何项目地名。
     audience_contract_file: str | None = None
+    # 项目提示词片段文件（相对仓库根），key=共享 builder 的片段锚点 id（如
+    # query_monitoring_station/query_monitoring_city）：共享 prompt builder 在
+    # 固定锚点追加"项目补充口径"段落。未声明的锚点不追加——共享层不得写死
+    # 任何项目地名/中台视图。
+    prompt_fragment_files: dict[str, str] = Field(default_factory=dict)
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
     # Project-scoped tools appended to a shared mode whitelist.  Unlike
     # ``agent_mode_tools`` (full replacement), these are unioned on top of the
     # shared list so projects can enable their own tools per mode without
     # re-declaring the shared baseline.
     agent_mode_extra_tools: dict[str, list[str]] = Field(default_factory=dict)
+    # Deferred tools opt-in per mode: key presence enables the tool_search
+    # on-demand schema mechanism for that mode; the value lists tools whose
+    # full schemas stay resident ("always_on").  Project declarations take
+    # precedence over the shared DEFERRED_TOOL_MODES table.
+    agent_mode_deferred_tools: dict[str, list[str]] = Field(default_factory=dict)
     agent_workflow_modes: dict[str, WorkflowModeManifest] = Field(default_factory=dict)
     agent_workflow_parents: dict[str, WorkflowParentManifest] = Field(default_factory=dict)
+    # Per-tool project options for shared tools (e.g. execute_sql_query
+    # allowed_tables/exclude_tables/schema_description/alternate_table_hints,
+    # query_xcai_city_history blocked-city rules).  Shared tool code reads these
+    # instead of hardcoding project names; absent config keeps the shared
+    # default behavior.
+    tool_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # 固定问数工作流的项目声明：id 已注册时 tools 并集合并，未注册时按声明
+    # 注册新工作流。项目专属工具元组只允许出现在 projects/<id>/project.yaml。
+    fixed_query_workflow_tools: dict[str, FixedQueryWorkflowToolsDeclaration] = Field(
+        default_factory=dict
+    )
+    # target_mode 子代理契约的项目声明：已有契约按字段覆盖，新 mode id 直接
+    # 注册（如广东组分问数/组分专家）。共享契约不写死任何项目子模式。
+    target_mode_contracts: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     _valid_workflow_modes = field_validator("agent_workflow_modes")(valid_identifier_map)
     _valid_workflow_parents = field_validator("agent_workflow_parents")(valid_identifier_map)
@@ -170,6 +208,7 @@ class BackendManifest(StrictModel):
     _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
     _unique_agent_mode_extra_tools = field_validator("agent_mode_extra_tools")(unique_string_lists)
+    _unique_agent_mode_deferred_tools = field_validator("agent_mode_deferred_tools")(unique_string_lists)
 
     @model_validator(mode="after")
     def validate_weather_history_worker(self):

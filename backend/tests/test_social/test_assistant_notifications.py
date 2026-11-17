@@ -283,3 +283,124 @@ async def test_queue_failure_does_not_rewrite_execution_status(system, monkeypat
     service.task_storage = SimpleNamespace(update_run_stats=lambda *args, **kwargs: None)
     assert (await service._execute_scheduled_task(system.task)).status == ExecutionStatus.SUCCESS
     notifier.enqueue_execution.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_monitor_report_routes_to_owner_inbox_without_synthesis(system, monkeypatch):
+    from hashlib import sha256
+
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "monitor_report_owner", "alice")
+    monkeypatch.setattr(settings, "assistant_schedule_reply_synthesis", True)
+    synthesis = AsyncMock(return_value="不应出现的合成文本")
+    monkeypatch.setattr(system.service, "_synthesize_reply", synthesis)
+    registered = []
+
+    async def register_identity(**kwargs):
+        registered.append(kwargs)
+        return SimpleNamespace(session_id=kwargs["session_id"])
+
+    system.service.catalog.register_identity = register_identity
+
+    key = await system.service.enqueue_monitor_report(
+        project="p", content="抓取器 X 连续失败 5 次", report_key="evt-1"
+    )
+    assert key == "monitor:evt-1"
+    # 确定性会话注册进目录：归属 alice 的 WEB 助手会话
+    assert registered[0]["owner_user_id"] == "alice"
+    assert registered[0]["mode"] == "assistant"
+    session_id = f"monitor-report-p-{sha256(b'alice').hexdigest()[:16]}"
+    assert registered[0]["session_id"] == session_id
+    # 同一 report_key 幂等入队
+    assert (
+        await system.service.enqueue_monitor_report(project="p", content="dup", report_key="evt-1")
+        == key
+    )
+    async with system.factory() as session:
+        row = (
+            await session.execute(select(Notice).where(Notice.message_id == key))
+        ).scalar_one()
+        assert row.data["kind"] == "monitor_report"
+        assert row.owner_user_id == "alice"
+        assert row.recipient == web_assistant_recipient("alice")
+    # 投递成功且跳过合成轮：monitor_report 正文原样进会话
+    assert await system.service.deliver(key) == "inbox_saved"
+    synthesis.assert_not_awaited()
+    async with system.factory() as session:
+        rows = (
+            await session.execute(
+                select(SessionMessageDB)
+                .where(SessionMessageDB.session_id == session_id)
+                .order_by(SessionMessageDB.id)
+            )
+        ).scalars().all()
+    assert [row.content for row in rows] == ["抓取器 X 连续失败 5 次"]
+
+
+@pytest.mark.asyncio
+async def test_monitor_report_refuses_without_owner(system, monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "monitor_report_owner", "")
+    assert await system.service.enqueue_monitor_report(project="p", content="通报") is None
+    monkeypatch.setattr(settings, "monitor_report_owner", "system")
+    assert await system.service.enqueue_monitor_report(project="p", content="通报") is None
+
+
+@pytest.mark.asyncio
+async def test_scheduled_reply_synthesis_turn_is_iteration_bounded(system, monkeypatch):
+    from app.social import web_assistant as web_module
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "assistant_schedule_reply_synthesis", True)
+    monkeypatch.setattr(web_module, "web_assistant_context", lambda user: {"user_identifier": "web:x"})
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        async def analyze(self, prompt, **kwargs):
+            captured["analyze"] = kwargs
+            yield {"type": "agent_finish", "data": {"answer": "整理后的汇报"}}
+
+    monkeypatch.setattr(
+        "app.agent.react_agent.create_react_agent",
+        lambda **kwargs: FakeAgent(**kwargs),
+    )
+    key = await system.service.enqueue_execution("p", system.task, system.execution)
+    assert await system.service.deliver(key) == "inbox_saved"
+    assert captured["init"].get("max_iterations") == 6
+    assert captured["analyze"].get("max_iterations") == 6
+    rows = await messages(system)
+    assert rows[-1].content.startswith("整理后的汇报")
+
+
+@pytest.mark.asyncio
+async def test_scheduled_reply_synthesis_can_choose_silence(system, monkeypatch):
+    """助手核对后认为无需打扰：不写会话、不计未读，但通知行保留可审计。"""
+    from app.social import web_assistant as web_module
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "assistant_schedule_reply_synthesis", True)
+    monkeypatch.setattr(web_module, "web_assistant_context", lambda user: {"user_identifier": "web:x"})
+
+    class SilentAgent:
+        async def analyze(self, prompt, **kwargs):
+            assert "NO_NOTIFY" in prompt  # 静默规则在提示词里
+            yield {"type": "agent_finish", "data": {"answer": "NO_NOTIFY"}}
+
+    monkeypatch.setattr("app.agent.react_agent.create_react_agent", lambda **kwargs: SilentAgent())
+    key = await system.service.enqueue_execution("p", system.task, system.execution)
+    assert await system.service.deliver(key) == "silent"
+    # 不写会话、不计未读
+    assert await messages(system) == []
+    assert (await system.service.list("p", "alice"))["unread_count"] == 0
+    # 静默可审计：通知行保留原文与 silent 状态，重投不再触发
+    async with system.factory() as session:
+        row = (await session.execute(select(Notice).where(Notice.message_id == key))).scalar_one()
+        assert row.state == "silent"
+        assert row.read_at is not None
+        assert "Findings ready" in row.content
+    assert await system.service.deliver(key) == "silent"

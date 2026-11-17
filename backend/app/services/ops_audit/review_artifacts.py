@@ -284,6 +284,12 @@ def _panel_ledger_record(
     decision = feedback["decision"]
     if decision == "pending":
         return None
+    decision_evidence = item.get("decision_evidence")
+    brand = (
+        decision_evidence.get("brand")
+        if isinstance(decision_evidence, dict)
+        else None
+    )
     return {
         "channel": feedback_ledger.PANEL_CHANNEL,
         "outcome": (
@@ -297,6 +303,9 @@ def _panel_ledger_record(
         "item_id": feedback["item_id"],
         "execution_ref": execution_ref,
         "station_id": item.get("station_id"),
+        "rf_table": item.get("rf_table"),
+        "rf_field": item.get("rf_field"),
+        "brand": brand or None,
         "original_judgment": _original_panel_judgment(item),
         "reason": feedback["comment"] or None,
         "feedback_id": feedback_id,

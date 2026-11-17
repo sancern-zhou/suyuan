@@ -7,7 +7,7 @@ const readComponent = name => readFile(new URL(`./${name}`, import.meta.url), 'u
 test('agent platform renders accessible cards and emits mode selection', async () => {
   const source = await readComponent('AgentPlatform.vue')
 
-  assert.match(source, /v-for="agent in agents"/)
+  assert.match(source, /v-for="agent in platformAgents"/)
   assert.match(source, /class="agent-grid"/)
   assert.match(source, /<button/)
   assert.match(source, /emit\('select', agent\.id\)/)
@@ -20,7 +20,7 @@ test('agent platform presents the real agent catalog as a portal grid', async ()
 
   assert.match(source, /class="terrain-lines"/)
   assert.match(source, /平台运行中/)
-  assert.match(source, /\{\{ agents\.length \}\}/)
+  assert.match(source, /\{\{ platformAgents\.length \}\}/)
   assert.match(source, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
   assert.match(source, /--lake-900: #07293b/)
   assert.match(source, /--teal-500: #14a0ae/)

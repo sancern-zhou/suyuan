@@ -86,7 +86,8 @@ class SpawnTool(LLMTool):
             description="创建后台子Agent执行长时间任务（不阻塞主对话）",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.0.0"
+            version="1.1.0",
+            requires_context=True,
         )
 
         # SubagentManager will be injected via singleton
@@ -100,8 +101,29 @@ class SpawnTool(LLMTool):
             self._manager = get_subagent_manager()
         return self._manager
 
+    @staticmethod
+    def _web_identity(context) -> Dict[str, str] | None:
+        """Web/App 助手会话身份（社交消息总线上下文缺失时的回退路径）。
+
+        返回 {"owner", "user_identifier"}；无服务端认证身份时返回 None
+        （不允许匿名后台任务）。
+        """
+        account = (getattr(context, "runtime_metadata", None) or {}).get(
+            "authenticated_account"
+        )
+        owner = (
+            str(account.get("username") or "").strip()
+            if isinstance(account, dict)
+            else ""
+        )
+        if not owner:
+            return None
+        user_identifier = str(getattr(context, "user_identifier", "") or "")
+        return {"owner": owner, "user_identifier": user_identifier}
+
     async def execute(
         self,
+        context=None,
         task: str = None,
         label: str = None,
         timeout: int = 3600,
@@ -155,13 +177,23 @@ class SpawnTool(LLMTool):
         chat_id = get_current_chat_id()
         channel = get_current_channel()
         bot_account = get_current_bot_account() or "default"
+        owner_user_identifier = None
 
         if not chat_id or not channel:
-            return {
-                "status": "failed",
-                "success": False,
-                "error": "无法获取当前会话信息（chat_id或channel为空）"
-            }
+            # 社交渠道上下文缺失：Web/App 助手会话回退路径。
+            # 身份取服务端认证身份（authenticated_account.username），绝不信任
+            # 客户端透传；主会话记忆身份（user_identifier）透传给子 Agent 继承。
+            web = self._web_identity(context) if context is not None else None
+            if web is None:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "error": "无法获取当前会话身份（非社交渠道且无服务端认证身份）",
+                }
+            channel = "web"
+            chat_id = web["owner"]
+            bot_account = "assistant"
+            owner_user_identifier = web["user_identifier"] or None
 
         # Build social_user_id. In current Weixin integration chat_id == sender_id.
         # Keep bot_account aligned with AgentBridge/ScheduleTask user isolation.
@@ -177,7 +209,8 @@ class SpawnTool(LLMTool):
                 origin_sender_id=chat_id,  # For weixin, chat_id = sender_id
                 label=label,
                 timeout=timeout,
-                manual_mode=manual_mode
+                manual_mode=manual_mode,
+                owner_user_identifier=owner_user_identifier,
             )
 
             if not result.get("success"):
@@ -191,6 +224,14 @@ class SpawnTool(LLMTool):
             task_id = result["task_id"]
             task_label = result.get("label", "后台任务")
 
+            if channel == "web":
+                notify_hint = (
+                    "任务在后台执行；完成后可随时用任务ID查询结果"
+                    "（wait_task 工具或直接问我「后台任务 xxx 完成了吗」）。"
+                )
+            else:
+                notify_hint = "任务将在后台执行，完成后会主动通知您。"
+
             summary = f"""已创建后台任务「{task_label}」
 
 任务ID: {task_id}
@@ -198,7 +239,7 @@ class SpawnTool(LLMTool):
 模式: {manual_mode}
 超时: {timeout}秒
 
-任务将在后台执行，完成后会主动通知您。
+{notify_hint}
 您可以继续提问，不会影响任务执行。"""
 
             return {

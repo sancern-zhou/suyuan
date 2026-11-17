@@ -24,6 +24,7 @@ from .cancellation import AgentRunCancelled, cancellation_registry
 from .mode_capabilities import supports_native_multimodal
 from .ownership import run_ownership_registry
 from .steering import steering_registry
+from .time_budget import TimeBudget
 from ..context.context_diagnostics import ContextDiagnostics
 from ..workflow.mode_workflows import (
     allowed_tools as fixed_workflow_allowed_tools,
@@ -38,7 +39,10 @@ logger = structlog.get_logger()
 
 
 class CustomAgentTerminalError(RuntimeError):
-    """A custom scheduled Agent reached a non-retryable terminal failure."""
+    """A scheduled/custom Agent reached a non-retryable terminal failure.
+
+    也用于全模式的工具循环强制终止（同签名连续两次 loop-block）。
+    """
 
 
 @dataclass
@@ -109,6 +113,7 @@ class AgentRuntime:
         )
         if isinstance(initial_fixed_progress, dict) and initial_fixed_progress:
             state.fixed_workflow_progress = dict(initial_fixed_progress)
+        state.deferred_tool_names = self._setup_deferred_tools(state)
         self.executor.resource_run_id = state.run_id
 
         if self.config.cancel_event is not None:
@@ -134,6 +139,45 @@ class AgentRuntime:
             data.setdefault("session_id", state.session_id)
             data.setdefault("run_id", state.run_id)
         return event
+
+    def _setup_deferred_tools(self, state: RunState) -> frozenset:
+        """deferred tools 启用装配：注入 tool_search 动态工具并返回存根化集合。
+
+        未 opt-in 的模式返回空集（零行为变化）。tool_search 按运行模式构造
+        （mode 烘焙进实例），走 submit_result 同款 executor 注册表动态注入 +
+        _allowed_tool_names_for_state 补名 + _run_planner_stream 回填路径，
+        不进全局注册表，非 opt-in 模式不产生任何泄漏。
+        """
+        from app.agent.prompts.tool_registry import (
+            compute_deferred_tool_names,
+            resolve_deferred_tool_config,
+        )
+
+        try:
+            config = resolve_deferred_tool_config(state.mode)
+        except Exception:  # noqa: BLE001 — 配置解析异常退回现状行为
+            logger.warning("deferred_tools_resolve_failed", mode=state.mode)
+            return frozenset()
+        if config is None:
+            return frozenset()
+        deferred_names = compute_deferred_tool_names(state.mode, config)
+        registry = getattr(self.executor, "tool_registry", None)
+        if not deferred_names or not isinstance(registry, dict):
+            return frozenset()
+        from app.tools.agent_tools.tool_search_tool import ToolSearchTool
+
+        registry["tool_search"] = ToolSearchTool(mode=state.mode)
+        # 失败兜底（tool_coordinator）经 executor.runtime_metadata 读取运行模式。
+        metadata = getattr(self.executor, "runtime_metadata", None)
+        if isinstance(metadata, dict):
+            metadata["mode"] = state.mode
+        logger.info(
+            "deferred_tools_enabled",
+            mode=state.mode,
+            deferred_count=len(deferred_names),
+            always_on=sorted(config.always_on),
+        )
+        return deferred_names
 
     async def _run(
         self,
@@ -164,12 +208,41 @@ class AgentRuntime:
             yield self.events.start(state)
 
             workflow_definition = get_mode_workflow(state.mode)
-            iteration_limit = min(
-                self.config.max_iterations,
-                workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+            # 时间预算模式（自由 agent 工作流节点，runtime_metadata.time_budget 下发）：
+            # 轮次不是工作量单位，取消轮次硬限，墙钟时间 + 空转熔断接管预算；
+            # 预算耗尽原地续跑（同实例、上下文不动），不打断进行中的工具调用。
+            time_budget = TimeBudget.from_runtime_metadata(self.config.runtime_metadata)
+            if time_budget is not None:
+                logger.info(
+                    "time_budget_enabled",
+                    session_id=state.session_id,
+                    soft_seconds=time_budget.spec.soft_seconds,
+                    hard_seconds=time_budget.spec.hard_seconds,
+                )
+            iteration_limit = (
+                None
+                if time_budget is not None
+                else min(
+                    self.config.max_iterations,
+                    workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+                )
             )
-            while state.iteration < iteration_limit and not state.task_completed:
+            while (iteration_limit is None or state.iteration < iteration_limit) and not state.task_completed:
                 self._raise_if_cancelled()
+                if time_budget is not None:
+                    decision = time_budget.check()
+                    if decision.prompt:
+                        # 预算提示以用户消息注入下一轮上下文（续跑/收尾/推进指令）
+                        self.writer.add_user_message(decision.prompt)
+                    if decision.action == "stop":
+                        state.budget_termination = decision.reason
+                        logger.info(
+                            "time_budget_terminated",
+                            session_id=state.session_id,
+                            reason=decision.reason,
+                            iterations=state.iteration,
+                        )
+                        break
                 state.iteration += 1
                 try:
                     async for event in self._apply_steering_inputs(state):
@@ -177,6 +250,8 @@ class AgentRuntime:
                     async for event in self._run_iteration(state):
                         self._raise_if_cancelled()
                         yield event
+                    if time_budget is not None:
+                        time_budget.on_turn_end(had_tool_call=state.last_turn_tool_calls > 0)
                     deterministic_error_count = 0
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
@@ -203,7 +278,8 @@ class AgentRuntime:
                         async for event in self.finalizer.fatal_error(state, terminal_error):
                             yield event
                         return
-                    if state.mode == "custom" and isinstance(exc, CustomAgentTerminalError):
+                    if isinstance(exc, CustomAgentTerminalError):
+                        # 工具循环等同源终止错误对所有模式均为不可恢复终态
                         self._ensure_user_message_written(state)
                         deferred_event = await self._close_steering_event(state)
                         if deferred_event:
@@ -241,7 +317,7 @@ class AgentRuntime:
                     async for event in self.finalizer.fatal_error(state, error):
                         yield event
                 else:
-                    async for event in self.finalizer.timeout(state):
+                    async for event in self.finalizer.timeout(state, reason=state.budget_termination):
                         yield event
 
         except Exception as exc:
@@ -288,6 +364,8 @@ class AgentRuntime:
             )
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
+        # 时间预算空转检测输入：本轮工具调用数（各分支覆写）
+        state.last_turn_tool_calls = 0
         context_result, conversation_history = await self._build_context(state)
         attachments = self._effective_attachments(state)
         self._record_visual_context(state, attachments)
@@ -322,6 +400,7 @@ class AgentRuntime:
         action_type = action.get("type", "ERROR")
 
         if streaming_tool_executor.total_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
+            state.last_turn_tool_calls = streaming_tool_executor.total_count
             async for event in self._handle_streamed_tools(state, planner_result, streaming_tool_executor):
                 self._raise_if_cancelled()
                 yield event
@@ -374,6 +453,7 @@ class AgentRuntime:
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
+            state.last_turn_tool_calls = 1
             suppressed_observation = (
                 self._fixed_workflow_blocked_observation(state, action)
                 or self._suppressed_housekeeping_observation(state, action)
@@ -417,6 +497,8 @@ class AgentRuntime:
                     yield event
                 return
             async for event in self.observation_processor.process(state, planner_result, action, observation):
+                yield event
+            async for event in self._inject_completed_delegation_results(state, planner_result):
                 yield event
             return
 
@@ -810,6 +892,11 @@ class AgentRuntime:
         if not items:
             return
 
+        # 用户中途输入代表新意图：重置工具连击计数，明确指示下的重试不受罚
+        loop_guard = getattr(self.tool_coordinator, "loop_guard", None)
+        if loop_guard is not None:
+            loop_guard.reset()
+
         self._ensure_user_message_written(state)
         messages: List[str] = []
         input_ids: List[str] = []
@@ -996,6 +1083,32 @@ class AgentRuntime:
                 original_tool_count=original_count,
                 filtered_tool_count=len(tool_schemas),
             )
+        if state.deferred_tool_names:
+            from app.agent.tool_adapter import (
+                apply_deferred_tool_stubs,
+                collect_called_deferred_tools,
+            )
+
+            # 发现状态 = 会话历史派生（调用即升级跨轮次持久，ZCode 派生思想）
+            # ∪ 本运行内增量（本轮刚调用、尚未写回历史的工具）。
+            discovered_names = (
+                collect_called_deferred_tools(conversation_history, state.deferred_tool_names)
+                | state.discovered_tools
+            )
+            tool_schemas, stub_count, stub_saved_chars = apply_deferred_tool_stubs(
+                tool_schemas,
+                deferred_names=state.deferred_tool_names,
+                discovered_names=discovered_names,
+            )
+            if stub_count:
+                logger.info(
+                    "deferred_stubs_applied",
+                    mode=state.mode,
+                    iteration=state.iteration,
+                    stubbed_tools=stub_count,
+                    discovered_count=len(state.discovered_tools & set(state.deferred_tool_names)),
+                    saved_chars_est=stub_saved_chars,
+                )
         tool_schema_chars = len(json.dumps(tool_schemas, ensure_ascii=False, default=str))
         tool_schema_tokens_est = int(tool_schema_chars / 1.5)
         context_tokens = context_result.get("tokens", {})
@@ -1129,6 +1242,18 @@ class AgentRuntime:
                 )
                 state.has_seen_tool_use = True
                 buffer.note_tool_use()
+                # deferred tools 调用即升级：模型对存根工具发起调用（无论参数
+                # 是否猜对）即说明本任务需要它，记入 discovered_tools，下一轮
+                # 组装换回全 schema 常驻（executor 按名分发，本轮调用不受影响）。
+                if state.deferred_tool_names and tool_name in state.deferred_tool_names:
+                    if tool_name not in state.discovered_tools:
+                        state.discovered_tools.add(tool_name)
+                        logger.info(
+                            "deferred_tool_upgraded_on_call",
+                            mode=state.mode,
+                            tool=tool_name,
+                            iteration=state.iteration,
+                        )
                 planner_result.tool_calls.append(ToolCall(tool_name, tool_input, tool_use_id))
                 tool_action = {
                     "type": "TOOL_CALL",
@@ -1256,7 +1381,9 @@ class AgentRuntime:
         executor_registry = getattr(executor, "tool_registry", None) or {}
         # escalate（升级提问）与 submit_result 同等待遇：由 call_sub_agent 动态
         # 注入 child registry，不在模式白名单里，必须保持全阶段可见。
-        for dynamic_tool_name in ("submit_result", "escalate", "report_finding"):
+        # tool_search 由 _setup_deferred_tools 在 deferred 模式注入 registry，
+        # 同样不在白名单里，同样必须全阶段可见。
+        for dynamic_tool_name in ("submit_result", "escalate", "report_finding", "tool_search"):
             if dynamic_tool_name in executor_registry:
                 names.append(dynamic_tool_name)
         workflow_definition = get_mode_workflow(state.mode)
@@ -1269,10 +1396,14 @@ class AgentRuntime:
             # 否则带 result_schema 的问数节点无法结构化交付。
             names = [
                 name for name in names
-                if name in phase_tools or name in {"submit_result", "escalate", "report_finding"}
+                if name in phase_tools or name in {"submit_result", "escalate", "report_finding", "tool_search"}
             ]
         elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
-            return None
+            # names 与模式白名单完全一致时返回 None（get_tool_schemas 按 mode
+            # 自行取白名单，等价但省一次列表）；deferred 模式注入了 tool_search，
+            # 名单已超出白名单，必须显式返回让 _run_planner_stream 回填其 schema。
+            if "tool_search" not in names:
+                return None
         return list(dict.fromkeys(names))
 
     def _fixed_workflow_blocked_observation(
@@ -1286,10 +1417,11 @@ class AgentRuntime:
         allowed = fixed_workflow_allowed_tools(definition, state.fixed_workflow_progress)
         requested = [name for name, _ in self._planner_action_tool_calls(action)]
         # submit_result 是交付边界工具、escalate 是升级提问工具（均见
-        # _allowed_tool_names_for_state），全阶段放行。
+        # _allowed_tool_names_for_state），全阶段放行；tool_search 是 deferred
+        # 模式的检索入口，同样全阶段放行。
         blocked = [
             name for name in requested
-            if name not in allowed and name not in {"submit_result", "escalate", "report_finding"}
+            if name not in allowed and name not in {"submit_result", "escalate", "report_finding", "tool_search"}
         ]
         if not blocked:
             return None
@@ -1399,6 +1531,67 @@ class AgentRuntime:
             },
         }
         yield {"type": "_delegation_absorbed", "absorbed": True}
+
+    async def _inject_completed_delegation_results(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """工具轮次边界收割已完成的后台委派，结果作为观察注入下一轮。
+
+        交付边界（PLAIN_TEXT_REPLY）的 _absorb_background_delegations 负责
+        阻塞等待；这里补齐工具循环内的信号通路——委派一完成，下一轮
+        planner 即可看到结果（等价"完成通知"），模型无需查询
+        manage_assistant_runs 获取进度（2026-11-08 轮询风暴复盘修复）。
+        非阻塞：未完成的委派不动，仍由交付边界等待。
+        """
+        if self.config.runtime_mode != "assistant" or state.task_completed:
+            return
+        from app.social.assistant_runs import (
+            AssistantRunService,
+            apply_inline_or_spill,
+        )
+        from config.settings import settings
+
+        service = AssistantRunService()
+        if service.pending_background_count(state.session_id) <= 0:
+            return
+        results, still_running = await service.collect_completed_runs(state.session_id)
+        if not results:
+            return
+        apply_inline_or_spill(
+            results, int(settings.assistant_delegation_inline_result_chars)
+        )
+        statuses = [str(item.get("status")) for item in results]
+        observation = {
+            "success": all(status == "succeeded" for status in statuses),
+            "delegation_results": results,
+            "summary": (
+                "后台委派已完成 {} 项（{}）{}：结果已注入，无需再用 "
+                "manage_assistant_runs 查询这些 run。".format(
+                    len(results),
+                    "/".join(statuses),
+                    f"；仍有 {still_running} 项在运行" if still_running else "",
+                )
+            ),
+        }
+        self._ensure_user_message_written(state)
+        self.writer.add_iteration(
+            planner_result.thought, {"type": "DELEGATION_RESULT"}, observation
+        )
+        state.last_observation = observation
+        yield {
+            "type": "delegation_status",
+            "data": {
+                "phase": "completed",
+                "runs": [
+                    {key: item.get(key) for key in ("run_id", "kind", "status", "goal", "target_mode")}
+                    for item in results
+                ],
+                "still_running": still_running,
+                "session_id": state.session_id,
+            },
+        }
 
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""
@@ -1590,6 +1783,8 @@ class AgentRuntime:
 
         async for event in self.observation_processor.process(state, planner_result, action, observation):
             yield event
+        async for event in self._inject_completed_delegation_results(state, planner_result):
+            yield event
 
     @staticmethod
     def _is_deterministic_model_error(error: Exception) -> bool:
@@ -1623,36 +1818,37 @@ class AgentRuntime:
         action: Dict[str, Any],
         records: List[Dict[str, Any]],
     ) -> None:
-        if state.mode != "custom":
-            return
-        missing = next((
-            record for record in records
-            if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith("工具不存在:")
-        ), None)
-        if missing is not None:
-            # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
-            # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
-            signature = json.dumps(
-                {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-            )
-            if state.last_missing_tool_signature == signature:
-                raise CustomAgentTerminalError(
-                    f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+        if state.mode == "custom":
+            missing = next((
+                record for record in records
+                if isinstance(record.get("result"), dict)
+                and str(record["result"].get("error", "")).startswith("工具不存在:")
+            ), None)
+            if missing is not None:
+                # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
+                # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
+                signature = json.dumps(
+                    {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
                 )
-            state.last_missing_tool_signature = signature
-        unavailable = next((
-            record for record in records
-            if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith("工具不可用:")
-        ), None)
-        if unavailable is not None:
-            raise CustomAgentTerminalError(
-                f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
-            )
+                if state.last_missing_tool_signature == signature:
+                    raise CustomAgentTerminalError(
+                        f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+                    )
+                state.last_missing_tool_signature = signature
+            unavailable = next((
+                record for record in records
+                if isinstance(record.get("result"), dict)
+                and str(record["result"].get("error", "")).startswith("工具不可用:")
+            ), None)
+            if unavailable is not None:
+                raise CustomAgentTerminalError(
+                    f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
+                )
+        # loop-block 终止规则对全部模式生效：block 提示已附带行动指引与上次结果，
+        # 同签名连续两次 block 说明模型无视指引原样重试，强制收尾避免空转。
         blocked = next((
             record for record in records
             if isinstance(record.get("result"), dict)

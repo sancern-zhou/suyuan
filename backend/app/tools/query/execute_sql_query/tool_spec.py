@@ -1,72 +1,55 @@
+"""execute_sql_query 共享默认契约（默认部署视角，无项目 tool_options 注入）。
+
+断言锚点 = 当前默认描述（基础文案 + AIR_QUALITY_SCHEMA_GUIDE）的真实内容：
+国控站小时/日长历史（dat_station_*）契约已从默认描述与白名单移除（归
+execute_crawler_sql_query / 项目配置层），与 xuchang 分支契约方向一致。
+许昌的路由/白名单差异契约属 xuchang 分支自持 spec——其配置来自
+projects/xuchang/project.yaml 的 backend.tool_options.execute_sql_query。
+"""
+
 from app.tools.query.execute_sql_query.tool import ExecuteSQLQueryTool
 
 
-def test_execute_sql_query_schema_embeds_reusable_frequent_table_contracts():
-    description = ExecuteSQLQueryTool().get_function_schema()["description"]
+def test_execute_sql_query_default_description_contract():
+    description = ExecuteSQLQueryTool(project_id="default").get_function_schema()["description"]
 
-    assert "查询这些表时直接生成SQL，不要先调用describe_table" in description
-    assert "城市名称和行政区代码从当前项目上下文或用户长期记忆获取" in description
-    assert "本工具不内置特定项目的地理信息" in description
-    assert "不得把模板变量原样写入SQL" in description
-    assert "411000" not in description
+    # 基础文案与硬约束
+    assert "监测数据SQL Server查询工具。二选一：describe_table 查表结构，或 sql 执行 SELECT。" in description
+    assert "只允许 SELECT（禁写/DDL）；最大返回 1000 条" in description
+    assert "database 默认 XcAiDb" in description
+    assert "质控/站点基础信息用 AirPollutionAnalysis" in description
 
-    assert "CurrentAirQuality" in description
-    assert "CityID = '{city_code}'" in description
-    assert "没有cityname、Area、CityCode" in description
+    # 高频表索引
+    assert "【常用表索引】XcAiDb：WeatherForecast7Day(7天预报)" in description
+    assert "XuchangNmcHourlyWeatherForecast(NMC逐3小时气象)" in description
+    assert "dat_zhongda_station_minute·hour·city_hour(中大平台)" in description
+    assert "city_168_statistics_*·province_statistics_*(全国省级统计)" in description
 
-    assert "CityAQIPublishHistory" in description
-    assert "Area = N'{city_name}'或CityCode = {city_code}" in description
-    assert "PM2_5，不是PM25" in description
+    # 口径硬规则（AIR_QUALITY_SCHEMA_GUIDE）
+    assert "【高频表口径规则】字段清单用 describe_table 获取，此处只列硬规则。" in description
+    assert "不得把 {city_name}/{city_code} 模板变量原样写进 SQL" in description
+    assert "城市小时优先中大审核表 dat_zhongda_city_hour（滞后约1天）" in description
+    assert "站点5分钟数据中大独有" in description
+    assert "未来逐3小时气象预报优先 XuchangNmcHourlyWeatherForecast（NMC 官方，7天）" in description
+    assert "PM2.5 列名=PM2_5（非 PM25）" in description
+    assert "无效值站点表 -99 / 城市表 -999" in description
+    assert "data_type_plan='155th'（用错规划期返回空）" in description
 
-    assert "dat_station_hour" in description
-    assert "city_area_code = '{city_code}'" in description
-    assert "污染物字段使用小写" in description
+    # 国控站小时/日长历史（dat_station_*）不进默认描述——长历史路由归
+    # execute_crawler_sql_query / 项目配置层，与 xuchang 分支契约方向一致。
+    assert "dat_station_hour" not in description
+    assert "dat_station_day" not in description
 
-    assert "dat_zhongda_station_minute" in description
-    assert "dat_zhongda_station_hour" in description
-    assert "data_table_type = 'Act'" in description
-    assert "NO浓度列名是no_val" in description
-    assert "-99为平台无效值" in description
-
-    assert "dat_zhongda_station_day" not in description
-    assert "dat_zhongda_city_day" not in description
-    assert "dat_zhongda_city_hour" in description
-    assert "城市表由平台聚合任务生成，可能为空" in description
-    assert "2026-01-01起为'155th'" in description
-    assert "用错规划期会返回空" in description
-
-    assert "优先查询中大平台表（dat_zhongda_*）" in description
-    assert "中大源为审核后数据" in description
-    assert "本表仅作补充" in description
-
-    assert "WeatherForecast7Day" in description
-    assert "cityname仅用于此预报表" in description
-
-    assert "XuchangNmcHourlyWeatherForecast" in description
-    assert "优先查询NMC逐小时气象预报" in description
-    assert "历史网格用get_weather_data" in description
-    assert "不要向这些表试查不存在的字段" in description
-    assert "气象字段：temperature（℃）" in description
-    assert "3小时间隔" in description
-
-    assert "HenanCityAccumulateRanking" in description
-    assert "period_type区分monthly（月累计）/yearly（年累计）" in description
-    assert "城市字段为city" in description
-    assert "排名为city_rank" in description
+    # 未在索引中的字段仍走 describe_table
+    assert "字段清单用 describe_table 获取" in description
 
 
-def test_execute_sql_query_schema_keeps_describe_table_for_unlisted_fields():
-    description = ExecuteSQLQueryTool().get_function_schema()["description"]
+def test_execute_sql_query_default_tables_exclude_station_long_history():
+    tool = ExecuteSQLQueryTool(project_id="default")
+    allowed = {table.lower() for table in tool.sql_validator.ALLOWED_TABLES}
 
-    assert "仅当需要契约未列出的字段，或数据库返回字段错误时，才调用describe_table" in description
-
-
-def test_xuchang_schema_routes_station_long_history_to_crawler():
-    tool = ExecuteSQLQueryTool(project_id="xuchang")
-    description = tool.get_function_schema()["description"]
-
-    assert "改用 execute_crawler_sql_query" in description
-    assert "dat_station_hour" not in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_station_day" not in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_zhongda_station_hour" in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_station_hour（站点小时）和dat_station_day（站点日）" not in description
+    assert "dat_station_hour" not in allowed
+    assert "dat_station_day" not in allowed
+    assert "dat_zhongda_station_hour" in allowed
+    assert "dat_zhongda_city_hour" in allowed
+    assert "currentairquality" in allowed

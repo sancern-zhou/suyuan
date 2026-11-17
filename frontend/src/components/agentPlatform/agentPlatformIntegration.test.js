@@ -44,7 +44,7 @@ test('sidebar moves system management entries into the bottom user settings menu
   assert.match(source, /:aria-expanded="settingsMenuOpen"/)
   assert.match(source, /userDisplayName/)
   assert.match(source, /settingsModules/)
-  assert.match(source, /const SETTINGS_MODULE_IDS = Object\.freeze\(\[[\s\S]*'session-history'[\s\S]*'skills-management'[\s\S]*'scheduled-tasks'[\s\S]*'tools-management'[\s\S]*'file-manager'[\s\S]*'fetchers'[\s\S]*'social-platform'/)
+  assert.match(source, /const SETTINGS_MODULE_IDS = Object\.freeze\(\[[\s\S]*'session-history'[\s\S]*'skills-management'[\s\S]*'scheduled-tasks'[\s\S]*'tools-management'[\s\S]*'file-manager'[\s\S]*'fetchers'/)
   assert.doesNotMatch(source.match(/const SETTINGS_MODULE_IDS = Object\.freeze\(\[([\s\S]*?)\]\)/)?.[1] || '', /'knowledge-base'/)
   assert.match(source, /document\.addEventListener\('pointerdown'/)
   assert.match(source, /event\.key === 'Escape'/)
@@ -57,7 +57,6 @@ test('data, scheduled task and social management settings open their connected p
 
   assert.match(analysisView, /case 'fetchers':[\s\S]*showManagementPanel\('fetchers'\)[\s\S]*refreshFetcherStatus/)
   assert.match(analysisView, /case 'scheduled-tasks':[\s\S]*showManagementPanel\('scheduled-tasks'\)[\s\S]*refreshScheduledTasks/)
-  assert.match(analysisView, /case 'social-platform':[\s\S]*showManagementPanel\('social-platform'\)/)
 })
 
 test('agent platform supports project-selected scene and environment grid layouts', async () => {
@@ -67,6 +66,18 @@ test('agent platform supports project-selected scene and environment grid layout
   assert.match(source, /projectConfig\.agentPlatformLayout/)
   assert.match(source, /class="scene-stack"/)
   assert.match(source, /class="agent-grid"/)
+})
+
+test('agent platform hides the assistant card when the floating assistant is the unified entry', async () => {
+  const source = await readSource('./AgentPlatform.vue')
+  const policy = await readSource('./platformCardPolicy.js')
+
+  assert.match(source, /filterPlatformAgentCards\(/)
+  assert.match(source, /assistantFloating: projectConfig\.hasFeature\('assistant_floating'\)/)
+  assert.match(source, /platformAgents\.length/)
+  assert.doesNotMatch(source, /v-for="agent in agents"/)
+  assert.match(source, /platformAgents\.value\.find\(agent => agent\.id === mode\)/)
+  assert.match(policy, /agent\.id !== 'assistant'/)
 })
 
 test('sidebar navigation omits work resource and system group labels', async () => {

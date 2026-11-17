@@ -49,6 +49,13 @@ class Settings(BaseSettings):
         default=False,
         description="Route scheduled task results through an assistant follow-up turn before replying",
     )
+    agent_deferred_tools_enabled: bool = Field(
+        default=True,
+        description=(
+            "Global kill switch for the tool_search deferred-tools mechanism; "
+            "False restores full resident schemas even for opted-in modes"
+        ),
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -330,6 +337,10 @@ class Settings(BaseSettings):
     @property
     def trusted_gateway_networks_list(self) -> List[str]:
         return self._split_unique_csv(self.trusted_gateway_networks)
+
+    @property
+    def runtime_monitor_query_users_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.runtime_monitor_query_users))
 
     @property
     def company_oidc_scopes_list(self) -> List[str]:
@@ -749,6 +760,46 @@ class Settings(BaseSettings):
         description=(
             "Consecutive-failure streak resets after this quiet window, "
             "returning the cooldown to the base duration"
+        ),
+    )
+    runtime_monitor_query_users: str = Field(
+        default="",
+        description=(
+            "CSV of user ids/usernames allowed to query runtime anomalies "
+            "from interactive (non-scheduled-task) sessions; empty disables "
+            "the interactive path entirely"
+        ),
+    )
+    monitor_report_owner: str = Field(
+        default="",
+        description=(
+            "User id whose assistant inbox receives watchdog monitor reports "
+            "(hourly inspection + realtime diagnosis); empty disables "
+            "assistant routing and submit_monitor_report refuses delivery"
+        ),
+    )
+    monitor_report_session_title: str = Field(
+        default="后台运行通报",
+        description="Conversation title for the deterministic monitor-report assistant session",
+    )
+    maintenance_daemon_url: str = Field(
+        default="http://host.docker.internal:8013",
+        description="Host maintenance daemon base URL (restart/snapshot/rollback)",
+    )
+    maintenance_daemon_token: str = Field(
+        default="",
+        description=(
+            "Shared token for the maintenance daemon; empty disables all "
+            "service-level operations (restart_service reports unavailable)"
+        ),
+    )
+    source_repair_allowed_dirs: str = Field(
+        default="",
+        description=(
+            "CSV of project-relative source dirs the source-repair task tag "
+            "may modify (e.g. 'backend/app/fetchers,backend/app/tools'); "
+            "empty disables source repair entirely. config/.env/deploy stay "
+            "hard-denied regardless"
         ),
     )
 
@@ -1204,15 +1255,8 @@ class Settings(BaseSettings):
         description="Station-level pollutant query template"
     )
 
-    # Social Platform Configuration
-    social_config_path: str = Field(
-        default="backend/config/social_config.yaml",
-        description="Path to social platform configuration file"
-    )
-    social_enabled: bool = Field(
-        default=False,
-        description="Enable social platform integration"
-    )
+    # Social worker internal API (App broadcast web->worker transport).
+    # The chat-channel platform (personal WeChat / QQ) is retired.
     social_worker_internal_host: str = Field(
         default="127.0.0.1",
         description="Host for the worker-only social account internal API"
@@ -1243,6 +1287,35 @@ class Settings(BaseSettings):
     push_getui_base_url: str = Field(default="https://restapi.getui.com/v2")
     push_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
     push_offline_ttl_ms: int = Field(default=86400000, ge=0, le=259200000)
+
+    # WeCom (企业微信) external-contact channel.  Delivery targets are app
+    # accounts; the account-to-external_userid binding lives in the social
+    # directory (wecom_bindings.json).  Group-msg tasks are confirmed by the
+    # operator member inside the WeCom app (platform design).  Empty
+    # token/AES key keeps the callback path closed at the gateway.
+    wecom_enabled: bool = Field(
+        default=False,
+        description="Enable the WeCom external-contact push channel",
+    )
+    wecom_corpid: str = Field(default="")
+    wecom_contact_secret: str = Field(
+        default="",
+        description="Secret of the 客户联系 (external contact) app for API calls",
+    )
+    wecom_default_member: str = Field(
+        default="",
+        description="Operator member userid used for bind QR codes and group-msg sender fallback",
+    )
+    wecom_token: str = Field(
+        default="",
+        description="Callback signature token; empty = callback closed",
+    )
+    wecom_aes_key: str = Field(
+        default="",
+        description="43-char EncodingAESKey for callback encryption; empty = callback closed",
+    )
+    wecom_api_prefix: str = Field(default="/api/wecom")
+    wecom_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
 
     @property
     def redis_url(self) -> str:
@@ -1344,59 +1417,6 @@ class Settings(BaseSettings):
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")
-
-    def load_social_config(self) -> Dict[str, Any]:
-        """
-        Load social platform configuration from YAML file.
-
-        Returns:
-            Dictionary with channel configurations
-        """
-        from app.utils.path_config import resolve_agent_path
-
-        config_path = resolve_agent_path(self.social_config_path)
-
-        if not config_path.exists():
-            # Return default empty config
-            return {
-                "qq": {"enabled": False, "allow_from": ["*"]},
-                "weixin": {"enabled": False, "allow_from": ["*"]},
-                "dingtalk": {"enabled": False, "allow_from": ["*"]},
-                "channels": {
-                    "send_progress": True,
-                    "send_tool_hints": False,
-                    "send_max_retries": 3
-                }
-            }
-
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-
-            # Validate config structure
-            if not isinstance(config, dict):
-                raise ValueError("Invalid social config structure")
-
-            return config
-        except Exception as e:
-            import structlog
-            logger = structlog.get_logger()
-            logger.warning("Failed to load social config, using defaults", error=str(e))
-            return self._default_social_config()
-
-    @staticmethod
-    def _default_social_config() -> Dict[str, Any]:
-        """Return a fresh, side-effect-free fallback social configuration."""
-        return {
-            "qq": {"enabled": False, "allow_from": ["*"]},
-            "weixin": {"enabled": False, "allow_from": ["*"]},
-            "dingtalk": {"enabled": False, "allow_from": ["*"]},
-            "channels": {
-                "send_progress": True,
-                "send_tool_hints": False,
-                "send_max_retries": 3,
-            },
-        }
 
 
 # Global settings instance

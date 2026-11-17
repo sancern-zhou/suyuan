@@ -1,0 +1,13 @@
+[Unit]
+Description=suyuan maintenance daemon (restart/snapshot/rollback executor)
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/suyuan-maintenance
+ExecStart=/usr/bin/python3 /opt/suyuan-maintenance/maintenance_daemon.py --env-file /opt/suyuan-maintenance/maintenance.env
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

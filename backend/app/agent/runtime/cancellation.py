@@ -27,6 +27,46 @@ class PauseCheckpointError(RuntimeError):
     """Raised when a paused run could not commit its durable transcript."""
 
 
+async def await_unkillable(awaitable: Any) -> Any:
+    """等待 awaitable 完成并忽略投向外层任务的重复取消。
+
+    SSE 断开与暂停/停止请求会对同一个濒死任务多次调用 cancel()，每次都
+    立即打断一个 await。屏障释放信号（store.finish）一旦被打断，取消状态
+    将卡在非终态：REGISTER 会拒绝该会话一切新 run，带 previous_paused_run_id
+    的消息会在屏障处等满超时后报"暂停记录保存失败"（2026-11-05 事故）。
+    """
+    task = asyncio.ensure_future(awaitable)
+    current = asyncio.current_task()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if current is not None and hasattr(current, "uncancel"):
+                while current.cancelling():
+                    current.uncancel()
+    return task.result()
+
+
+async def commit_with_retry(factory: Any, *, attempts: int = 3, delay: float = 0.2) -> Any:
+    """屏障释放信号必须送达：单次失败（如 Redis 瞬断）按有限次数重试。"""
+    last_error: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            return await await_unkillable(factory())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            last_error = error
+            if attempt < attempts - 1:
+                await await_unkillable(asyncio.sleep(delay))
+    logger.error(
+        "cancellation_commit_failed_after_retries",
+        attempts=attempts,
+        error=str(last_error),
+    )
+    raise last_error
+
+
 @dataclass
 class RunHandle:
     session_id: str
@@ -298,7 +338,16 @@ class CancellationRegistry:
                 run_id = handle.run_id
                 self._pause_errors[(session_id, handle.run_id)] = str(error)
         if run_id:
-            await self._store.finish(session_id, run_id, error=str(error))
+            # 送达失败只影响跨进程屏障等待方（退化为超时）；异常不外抛，
+            # 避免顶掉调用方正在传播的原始 finalization 错误。
+            try:
+                await commit_with_retry(
+                    lambda: self._store.finish(session_id, run_id, error=str(error))
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
 
     async def ensure_pause_succeeded(self, session_id: str, run_id: str) -> None:
         loop = asyncio.get_running_loop()
@@ -333,10 +382,82 @@ class CancellationRegistry:
                 logger.info("agent_run_unregistered", session_id=session_id)
         if monitor_task and monitor_task is not asyncio.current_task():
             monitor_task.cancel()
-            await asyncio.gather(monitor_task, return_exceptions=True)
+            try:
+                await await_unkillable(asyncio.gather(monitor_task, return_exceptions=True))
+            except Exception:
+                pass
         if run_id is not None:
-            await self._store.finish(session_id, run_id)
-            await run_ownership_registry.revoke(session_id, run_id)
+            # 这是暂停屏障的释放信号，必须送达（见 await_unkillable）；
+            # 最终失败也只记日志，不外抛以免顶掉濒死任务的原生异常。
+            try:
+                await commit_with_retry(lambda: self._store.finish(session_id, run_id))
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.error(
+                    "agent_run_finish_commit_failed",
+                    session_id=session_id,
+                    run_id=run_id,
+                    error=str(error),
+                )
+            try:
+                await await_unkillable(run_ownership_registry.revoke(session_id, run_id))
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning(
+                    "agent_run_ownership_revoke_failed",
+                    session_id=session_id,
+                    run_id=run_id,
+                    error=str(error),
+                )
+
+    async def recover_stale_states(self) -> int:
+        """启动对账：回收硬杀/重启遗留的非终态取消状态。
+
+        进程重启后本进程不可能存在存活 run，`state:<session>` 键上的非终态
+        状态全部是清理链没能送达 finish 的孤儿；REGISTER 对非终态异 run_id
+        的注册拒绝会把会话锁死到 TTL 到期。agent-workflow 键可能属于其他
+        进程（worker 侧调度），不在回收范围。
+        """
+        try:
+            stale = await self._store.list_non_terminal_sessions()
+        except Exception as error:
+            logger.warning("cancellation_state_scan_failed", error=str(error))
+            return 0
+        recovered = 0
+        for session_id, state in stale:
+            if session_id.startswith("agent-workflow:"):
+                continue
+            try:
+                finished = await self._store.finish(session_id, state.run_id)
+            except Exception as error:
+                logger.warning(
+                    "cancellation_state_recover_failed",
+                    session_id=session_id,
+                    run_id=state.run_id,
+                    error=str(error),
+                )
+                continue
+            if finished:
+                recovered += 1
+                logger.info(
+                    "cancellation_state_recovered",
+                    session_id=session_id,
+                    run_id=state.run_id,
+                    status=state.status,
+                    reason=state.reason,
+                )
+        if stale:
+            logger.info(
+                "cancellation_state_recover_completed",
+                stale=len(stale),
+                recovered=recovered,
+                skipped_workflow=sum(
+                    1 for session_id, _ in stale if session_id.startswith("agent-workflow:")
+                ),
+            )
+        return recovered
 
     async def is_cancelled(self, session_id: str) -> bool:
         async with self._lock:

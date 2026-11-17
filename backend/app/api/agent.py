@@ -15,6 +15,7 @@ import structlog
 import uuid
 
 from app.agent import create_react_agent
+from app.utils.async_cleanup import close_async_generator
 from app.utils.json_safety import dumps_safe
 from app.utils.visual_ids import repair_chart_reference_ids
 from app.agent.active_contexts import (
@@ -75,7 +76,11 @@ def _safe_preview(value: Any, max_chars: int = 100) -> str:
 
 
 async def _await_cancellation_resistant(awaitable):
-    """Finish a transcript commit even if the disconnected SSE is cancelled again."""
+    """Finish a transcript commit even if the disconnected SSE is cancelled again.
+
+    只用于不携带 ContextVar 作用域的普通协程。新 Task 会复制 Context，
+    生成器关闭必须用 close_async_generator 在当前 Context 完成。
+    """
     task = asyncio.create_task(awaitable)
     current = asyncio.current_task()
     while not task.done():
@@ -104,10 +109,15 @@ async def _finish_detached_run(
     stream_id: str,
 ) -> None:
     try:
-        await gen.aclose()
+        await close_async_generator(gen)
     except Exception:
-        logger.debug("detached_run_generator_close_failed", stream_id=stream_id)
-    await stream.close(stream_id)
+        logger.warning(
+            "detached_run_generator_close_failed",
+            stream_id=stream_id,
+            exc_info=True,
+        )
+    finally:
+        await _await_cancellation_resistant(stream.close(stream_id))
 
 
 def _build_user_message_for_history(
@@ -1707,10 +1717,8 @@ async def analyze_stream(
                     exc_info=True,
                 )
             finally:
-                # 取消路径下也要补写 stream_closed，避免订阅端悬挂
-                await _await_cancellation_resistant(
-                    _finish_detached_run(gen, detached_stream, stream_id)
-                )
+                # 生成器必须留在本任务的 Context 里关闭；stream.close 仍需抗取消。
+                await _finish_detached_run(gen, detached_stream, stream_id)
 
         asyncio.create_task(_execute_run())
         logger.info(

@@ -25,8 +25,11 @@ def register_project_workflow_handlers(project: str) -> None:
     """
     from app.scheduled_tasks.workflow_tasks import register_workflow_handler
 
-    from app.services.station_operation_monitor.workflow import register_daily_report_workflow
-    register_daily_report_workflow()
+    # station_operation_monitor 日报为广东专属工作流（存量项目层例外），仅广东部署注册；
+    # 注册本身是幂等登记，无匹配任务时不执行，非广东部署空转无意义。
+    if project == "guangdong":
+        from app.services.station_operation_monitor.workflow import register_daily_report_workflow
+        register_daily_report_workflow()
 
     if project == "xuchang":
         from app.fetchers.xuchang_weather_situation import build_weather_evidence_event

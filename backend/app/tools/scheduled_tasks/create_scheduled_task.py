@@ -212,11 +212,11 @@ class CreateScheduledTaskTool(LLMTool):
             # Match Web API validation; a tool call must not bypass configuration policy.
             from app.api.scheduled_task_routes import (
                 _validate_event_task_config, _validate_custom_task_tools,
-                _validate_task_skill, _validate_workflow_task,
+                _validate_task_skill, _validate_workflow_task, _project_manifest,
             )
             from app.auth.models import CurrentUser
             user = CurrentUser(id=owner["owner_user_id"], username=owner["owner_username"], display_name=owner["owner_display_name"])
-            await _validate_event_task_config(task)
+            await _validate_event_task_config(task, _project_manifest())
             _validate_custom_task_tools(task, user)
             _validate_task_skill(task)
             _validate_workflow_task(task)
