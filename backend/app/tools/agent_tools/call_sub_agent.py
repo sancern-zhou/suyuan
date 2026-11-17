@@ -62,6 +62,10 @@ from app.utils.path_config import (
 
 logger = structlog.get_logger()
 
+# 修复轮证据里 execute_python stdout 的保留长度。子 Agent 的计算结论在 stdout，
+# 只回 summary（"执行成功"）等于没给证据，核验类节点会因此交出 verified_facts=0。
+_REPAIR_STDOUT_CHARS = 800
+
 # 获取全局session管理器
 session_manager = get_session_manager()
 
@@ -72,25 +76,12 @@ AgentMode = Literal[
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
 
-_DEFAULT_CHILD_MAX_ITERATIONS = {
-    # 计算密集型专家任务（聚合、分箱、相关性）在 15-20 轮内常常收不完，
-    # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
-    "expert_meteorology": 40,
-    "expert_analysis": 40,
-    "expert": 40,
-    # 固定问数工作流由运行时限制为阶段预算之和（acquire 4 + normalize 15 + deliver 1）。
-    "query_monitoring": 20,
-    "query_monitoring_station": 20,
-    "query_monitoring_city": 20,
-    "query_forecast": 20,
-}
-
-
-def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) -> int:
-    default = _DEFAULT_CHILD_MAX_ITERATIONS.get(str(target_mode), 120)
+def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) -> Optional[int]:
+    """子 Agent 迭代预算：默认不设上限（None，对齐 ZCode——靠上下文压缩续跑 +
+    无进展熔断停机）；显式传值按原样生效（≥1，不再钳到 120）。"""
     if requested is None:
-        return default
-    return max(1, min(int(requested), 120))
+        return None
+    return max(1, int(requested))
 
 
 def ensure_structured_delivery_schema(target_mode: str, result_schema):
@@ -279,7 +270,7 @@ class CallSubAgentTool(LLMTool):
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 120,
-                        "description": "本次子 Agent 最大推理轮次；未指定时按专家类型使用较小默认值。",
+                        "description": "本次子 Agent 最大推理轮次；未指定时不设步数上限，靠上下文压缩续跑。",
                     },
                     "workflow_run_id": {
                         "type": "string",
@@ -305,7 +296,12 @@ class CallSubAgentTool(LLMTool):
                     },
                     "run_in_background": {
                         "type": "boolean",
-                        "description": "助手模式默认后台执行并返回 run_id（本轮先答复计划，结果在交付边界整合）；显式传 false 同步等待结果。其他模式传 true 转入进程内后台。"
+                        "description": (
+                            "助手模式默认后台执行并返回 run_id。不要反复查询进度："
+                            "需要等待时用 manage_assistant_runs action=get 传 wait_seconds（如 120）一次阻塞等待；"
+                            "也可先做其他工作或给出阶段答复，委派完成后系统会自动注入结果。"
+                            "显式传 false 同步等待结果。其他模式传 true 转入进程内后台。"
+                        )
                     },
                     "background_task_id": {
                         "type": "string",
@@ -1252,7 +1248,9 @@ class CallSubAgentTool(LLMTool):
                         repair_prompt = (
                             "任务已执行完毕，但你尚未调用 `submit_result` 提交结构化结果。"
                             "请基于已完成的证据和分析，立即调用 `submit_result` 提交结果信封，"
-                            "字段结构见工具定义，不要重新执行分析。\n"
+                            "字段结构见工具定义。"
+                            "如本轮上下文已不包含先前算出的数值，可直接读取自己已落地的产物文件"
+                            "（见下方清单）补齐引用，不要对业务数据源重新发起查询。\n"
                             f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
                         )
                     if repair_evidence:
@@ -2013,6 +2011,14 @@ class CallSubAgentTool(LLMTool):
                     piece += f"，产物 {file_path}"
                 if summary:
                     piece += f"；摘要：{summary}"
+                # execute_python 的数值结论在 stdout 里，summary 只有"执行成功"一句。
+                # 不带回 stdout 尾部，修复轮看到的证据就是一堆空壳调用记录，
+                # 模型只能报"无可引用数值"——历史事故的直接来源。
+                if tool == "execute_python":
+                    stdout = str(result.get("stdout") or "").strip()
+                    if stdout:
+                        tail = stdout[-_REPAIR_STDOUT_CHARS:]
+                        piece += f"\n  stdout 尾部：{tail}"
                 lines.append(piece)
             if len(lines) >= max_items:
                 break

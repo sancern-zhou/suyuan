@@ -220,7 +220,8 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
     assert "分析空气质量" not in merge_call["context_str"]
     assert "分析气象条件" not in merge_call["context_str"]
     assert all(call["_force_isolated_session"] is True for call in calls)
-    assert all(call["max_iterations"] == 20 for call in calls)
+    # 无步数上限模式：节点未显式配置时不再注入迭代预算
+    assert all(call["max_iterations"] is None for call in calls)
     assert all(
         node["timeout_seconds"] == 900
         for node in result["data"]["node_results"].values()
@@ -257,8 +258,9 @@ async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
 
     assert result["success"] is True, result
     by_mode = {call["target_mode"]: call for call in calls}
-    assert by_mode["expert_meteorology"]["max_iterations"] == 15
-    assert by_mode["expert_analysis"]["max_iterations"] == 20
+    # 迭代预算不再注入默认值（None=不限）；超时下限 900s 仍然生效
+    assert by_mode["expert_meteorology"]["max_iterations"] is None
+    assert by_mode["expert_analysis"]["max_iterations"] is None
     views = result["data"]["node_results"]
     assert views["weather"]["target_mode"] == "expert_meteorology"
     assert views["weather"]["timeout_seconds"] == 900
@@ -714,8 +716,9 @@ async def test_run_agent_workflow_query_nodes_get_at_least_eight_iterations(monk
 
     assert result["success"] is True, result
     by_goal = {call["goal"]: call for call in calls}
-    assert by_goal["城市取数"]["max_iterations"] == 8
-    assert by_goal["气象取数"]["max_iterations"] == 20
+    # 显式写的 4 原样保留（不再抬到 8）；未配置的为 None（不再注入 20）
+    assert by_goal["城市取数"]["max_iterations"] == 4
+    assert by_goal["气象取数"]["max_iterations"] is None
 
 
 @pytest.mark.asyncio
@@ -797,3 +800,149 @@ def test_compact_node_view_surfaces_published_charts_and_artifact_paths(tmp_path
         "label": "清远10月AQI时序图",
         "path": str(chart_png),
     }]
+
+
+def test_upstream_summaries_carry_findings_values():
+    """下游节点必须能引用上游算出的数值。
+
+    历史事故：数据节点的 findings 在传递时被整段丢弃，只剩 summary 一句概述，
+    风险核验节点据此判"只有资源清单、没有指标数值"，交出 verified_facts=0。
+    """
+    from app.tools.agent_tools.run_agent_workflow import format_upstream_summaries
+
+    dependency_results = {
+        "data_inspection": {
+            "status": "success",
+            "data": {
+                "result_envelope": {
+                    "status": "completed",
+                    "summary": "巡检取数完成",
+                    "findings": [
+                        {"statement": "任务项 2075 个，完成率 96.29%，超期 77 项"},
+                    ],
+                    "evidence": [],
+                    "uncertainties": [],
+                    "data_gaps": [],
+                },
+            },
+        },
+    }
+
+    rendered = format_upstream_summaries(dependency_results)
+
+    assert "96.29%" in rendered
+    assert "2075" in rendered
+
+
+def test_upstream_summaries_reads_findings_from_structured_result():
+    """submit_result 提交后 findings 归位到 data.structured_result；两种形状都要认。"""
+    from app.tools.agent_tools.run_agent_workflow import format_upstream_summaries
+
+    dependency_results = {
+        "data_workorder": {
+            "status": "success",
+            "data": {
+                "result_envelope": {"status": "completed", "summary": "工单取数完成"},
+                "structured_result": {
+                    "findings": [{"statement": "本周故障单 21 单，重复故障率 38.1%"}],
+                },
+            },
+        },
+    }
+
+    rendered = format_upstream_summaries(dependency_results)
+
+    assert "38.1%" in rendered
+
+
+def test_upstream_summaries_are_empty_safe_without_findings():
+    """无 findings 时不得凭空造值：上游没给就是空列表。"""
+    from app.tools.agent_tools.run_agent_workflow import format_upstream_summaries
+
+    dependency_results = {
+        "data_rates": {
+            "status": "success",
+            "data": {
+                "result_envelope": {
+                    "status": "completed_with_gaps",
+                    "summary": "仅完成表结构确认",
+                    "evidence": [],
+                    "uncertainties": [],
+                    "data_gaps": ["未取得率值明细"],
+                },
+            },
+        },
+    }
+
+    rendered = format_upstream_summaries(dependency_results)
+
+    assert "未取得率值明细" in rendered
+    assert '"findings": []' in rendered
+
+
+@pytest.mark.asyncio
+async def test_workflow_result_carries_node_digest_in_content(monkeypatch):
+    """节点结论摘要必须随 result 正文回传。
+
+    历史代价：观察层截断 data 后父 Agent 只看到"工作流执行完成"一句，
+    一次周度风险分析被迫用约 25 次 execute_python 分批挖结果文件。
+    """
+    from app.tools.agent_tools.run_agent_workflow import _render_node_digest
+
+    # 单元层：digest 从 compact 视图提取首个数值 findings
+    node_views = {
+        "data_inspection": {
+            "status": "completed",
+            "result_envelope": {
+                "status": "completed",
+                "summary": "巡检取数完成",
+                "findings": [{"statement": "任务项 2075 个，完成率 96.29%"}],
+            },
+        },
+        "data_rates": {
+            "status": "completed_with_gaps",
+            "result_envelope": {"status": "completed_with_gaps", "summary": "仅完成表结构确认"},
+        },
+    }
+    digest = _render_node_digest(node_views)
+    assert "96.29%" in digest
+    assert "data_inspection [completed]" in digest
+    assert "data_rates [completed_with_gaps]" in digest
+    assert "仅完成表结构确认" in digest
+
+    # 集成层：真实执行路径的 result/summary 都带节点结论
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            return {
+                "status": "success",
+                "success": True,
+                "result": kwargs["goal"],
+                "data": {
+                    "result_envelope": {
+                        "status": "completed",
+                        "summary": "取数完成",
+                        "findings": [{"statement": "工单总量 380 张"}],
+                        "evidence": [],
+                        "uncertainties": [],
+                        "data_gaps": [],
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    result = await RunAgentWorkflowTool().execute(
+        workflow={
+            "workflow_id": "digest-1",
+            "nodes": [
+                {"task_id": "wo", "target_mode": "gd_ops_data_workorder", "goal": "工单取数"},
+            ],
+        },
+    )
+    assert result["success"] is True
+    assert "380" in result["result"]
+    assert "各节点结论摘要" in result["result"]
+    assert "380" in result["summary"]

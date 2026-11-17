@@ -25,8 +25,11 @@ def register_project_workflow_handlers(project: str) -> None:
     """
     from app.scheduled_tasks.workflow_tasks import register_workflow_handler
 
-    from app.services.station_operation_monitor.workflow import register_daily_report_workflow
-    register_daily_report_workflow()
+    # station_operation_monitor 日报为广东专属工作流（存量项目层例外），仅广东部署注册；
+    # 注册本身是幂等登记，无匹配任务时不执行，非广东部署空转无意义。
+    if project == "guangdong":
+        from app.services.station_operation_monitor.workflow import register_daily_report_workflow
+        register_daily_report_workflow()
 
     if project == "xuchang":
         from app.fetchers.xuchang_weather_situation import build_weather_evidence_event
@@ -84,7 +87,13 @@ async def start_scheduled_task_service() -> None:
             register_task_review_hooks()
             register_event_result_handler(persist_scheduled_task_result)
 
-        service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
+        # 定时任务无人值守：默认无步数上限的交互式语义不适用，保留迭代
+        # 兜底上限防止失控运行（任务编排可显式覆盖）。
+        def _scheduled_agent_factory(**kwargs):
+            kwargs.setdefault("max_iterations", 120)
+            return create_react_agent(**kwargs)
+
+        service = init_service(agent_factory=_scheduled_agent_factory)
         from app.scheduled_tasks.jiangsu_default_tasks import ensure_project_default_tasks
         from app.scheduled_tasks.project_tasks import sync_project_scheduled_tasks
         from app.utils.path_config import PROJECT_ROOT

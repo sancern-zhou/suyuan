@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import structlog
+
+logger = structlog.get_logger()
+
 TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     "query": {
         "positioning": "问数 Agent：面向数据本身的取数、统计与核算。",
@@ -244,3 +248,28 @@ def build_target_mode_contract(compact: bool = True) -> str:
         lines.append(line)
     lines.append(_ROUTING_RULES)
     return "\n".join(lines)
+
+
+def _apply_declared_target_mode_contracts() -> None:
+    """合并部署项目声明的 target_mode 契约（backend.target_mode_contracts）。
+
+    已有契约按字段覆盖（如项目改写某模式的 boundary 指向项目专属子模式），
+    新 mode id 直接注册（如广东组分问数/组分专家）。项目专属子模式契约只
+    允许出现在 projects/<id>/project.yaml，共享契约不写死任何项目子模式。
+    """
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        declared = (
+            load_project_context(settings.project_id).manifest.backend.target_mode_contracts or {}
+        )
+    except Exception as exc:
+        logger.warning("target_mode_contract_declaration_unavailable", error=str(exc))
+        return
+    for mode_id, contract in declared.items():
+        base = TARGET_MODE_CONTRACTS.get(mode_id, {})
+        TARGET_MODE_CONTRACTS[mode_id] = {**base, **contract}
+
+
+_apply_declared_target_mode_contracts()

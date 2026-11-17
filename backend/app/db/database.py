@@ -275,7 +275,13 @@ async def init_db():
     import app.db.report_package_model  # noqa: F401
     import app.db.models.scheduled_task_result_db  # noqa: F401
     import app.db.models.spawn_task_db  # noqa: F401
-    import app.db.models.xuchang_station_alert_episode_db  # noqa: F401
+    # 许昌站点偏离告警 episode 表：项目专属模型，按部署项目条件建表，
+    # 避免其他项目库首次启动带上许昌业务表（消费方 episode_storage_db 为惰性 import）。
+    from app.project_config.loader import load_project_context
+    from config.settings import settings as _settings
+
+    if load_project_context(_settings.project_id).manifest.project == "xuchang":
+        import app.db.models.xuchang_station_alert_episode_db  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the
     # required `sessions` tables on their first startup as well.

@@ -1,6 +1,5 @@
 """子 Agent 墙钟时间预算与原地续跑决策器（2026-11-12 v3 方案）。
 
-设计（projects/jiangsu-ops/docs/operations-analysis-dag-fix-plan-20261112.md）：
 - 轮次不是工作量单位（同样 10 轮实测 115-290s），自由 agent 节点取消轮次硬限，
   只保留墙钟时间预算；token 由时间约束（LLM 每轮有物理耗时下限）。
 - 预算耗尽 ≠ 失败：时间到且有进展 → 原地续跑（同实例、上下文不动、延长 deadline），

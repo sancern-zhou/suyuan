@@ -32,6 +32,7 @@ from app.services.llm_failover import (
 )
 from app.services.llm_concurrency import llm_request_slot
 from app.services.llm_thinking_policy import reset_request_tier, set_request_tier
+from app.utils.async_cleanup import reset_context_var
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
     ToolCallArgumentsError,
@@ -59,6 +60,28 @@ OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
 
 # OpenCode Go 订阅 provider：go 为原有套餐，go2 为第二个套餐（可配置更高优先级）
 OPENCODE_GO_PROVIDERS = frozenset({"go", "go2"})
+
+
+def _parse_extra_headers(raw: str) -> Dict[str, str]:
+    """解析 LLM_EXTRA_HEADERS（JSON 对象）为请求头字典。
+
+    非法 JSON 或非对象值返回空字典并告警，不阻断请求。
+    """
+    if not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        logger.warning("llm_extra_headers_parse_failed")
+        return {}
+    if not isinstance(parsed, dict):
+        logger.warning("llm_extra_headers_not_object")
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in parsed.items()
+        if value is not None
+    }
 
 
 class LLMService:
@@ -196,7 +219,7 @@ class LLMService:
             yield
         finally:
             temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
+            reset_context_var(_llm_request_state, token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
 
@@ -232,7 +255,7 @@ class LLMService:
             yield
         finally:
             temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
+            reset_context_var(_llm_request_state, token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
 
@@ -240,11 +263,37 @@ class LLMService:
         self,
         auto_profile: Optional[str] = None,
     ) -> Tuple[str, str, Optional[str]]:
-        """Resolve the configured priority chain without opening a request context.
+        """Resolve the configured priority chain without opening a request context."""
+        active_state = _llm_request_state.get()
+        if (
+            active_state is not None
+            and active_state.get("selection_source") != "tier"
+            and (active_state.get("provider") or active_state.get("model"))
+        ):
+            return self.provider, self.model, self.request_fallbacks
 
-        2026-10-16: 多模态独立链已移除(现有模型均为多模态), 所有档位/能力配置
-        共用主链(primary + LLM_FALLBACKS); auto_profile 参数保留以兼容调用方签名。
-        """
+        profile = (auto_profile or "").strip().lower()
+        profile_config = {
+        }.get(profile)
+        if profile_config and profile_config.strip():
+            candidates = [
+                candidate
+                for candidate in parse_fallback_candidates("", "", profile_config)
+                if candidate.provider
+            ]
+            if candidates:
+                primary = candidates[0]
+                fallback_items = [
+                    f"{candidate.provider}/{candidate.model}"
+                    if candidate.model
+                    else candidate.provider
+                    for candidate in candidates[1:]
+                ]
+                return (
+                    primary.provider,
+                    primary.model or "",
+                    ",".join(fallback_items),
+                )
         return self.provider, self.model, self.request_fallbacks
 
     @contextmanager
@@ -274,7 +323,7 @@ class LLMService:
         finally:
             reset_request_tier(tier_token)
             temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
+            reset_context_var(_llm_request_state, token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
 
@@ -309,19 +358,83 @@ class LLMService:
         try:
             yield
         finally:
-            _llm_opencode_session_id.reset(token)
+            reset_context_var(_llm_opencode_session_id, token)
 
     @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):
-        """Capability-profile chain selection removed (2026-10-16).
+        """Temporarily select a model chain for Auto based on capability profile.
 
-        多模态独立链已下线: 现有模型均为多模态, 全部走主链(primary + LLM_FALLBACKS)。
-        保留 contextmanager 形态以兼容既有调用方, auto_profile 仅记录不生效。
+        Capability profiles override Flash/Pro tier selections. Explicit
+        provider/model calls remain authoritative for non-Agent callers.
         """
         profile = (auto_profile or "").strip().lower()
-        if profile and profile not in ("", "default"):
-            logger.info("llm_auto_profile_ignored", auto_profile=profile)
-        yield
+        if not profile or profile == "default":
+            yield
+            return
+        if profile == "flash":
+            # 挡位改制后 flash 复用主配置链，仅思考开关不同，无独立 profile。
+            yield
+            return
+
+        active_state = _llm_request_state.get()
+        if (
+            active_state is not None
+            and active_state.get("selection_source") != "tier"
+            and (active_state.get("provider") or active_state.get("model"))
+        ):
+            yield
+            return
+
+        profile_configs = {
+        }
+        profile_config = profile_configs.get(profile)
+        if profile_config is None:
+            logger.warning("llm_auto_profile_unsupported", auto_profile=profile)
+            yield
+            return
+        if not profile_config.strip():
+            logger.warning("llm_auto_profile_unconfigured", auto_profile=profile)
+            yield
+            return
+
+        candidates = [
+            candidate
+            for candidate in parse_fallback_candidates("", "", profile_config)
+            if candidate.provider
+        ]
+        if not candidates:
+            raise ValueError(f"No candidates configured for Auto profile: {profile}")
+
+        token = _llm_request_state.set({})
+        try:
+            state = _llm_request_state.get()
+            if state is not None:
+                state["selection_source"] = "auto_profile"
+                state["auto_profile"] = profile
+            primary = candidates[0]
+            self.provider = primary.provider
+            self._load_provider_config()
+            if primary.model:
+                self.model = primary.model
+            fallback_items = [
+                f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
+                for candidate in candidates[1:]
+            ]
+            self.request_fallbacks = ",".join(fallback_items)
+            logger.info(
+                "llm_request_auto_profile_selected",
+                auto_profile=profile,
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+                fallbacks=self.request_fallbacks,
+            )
+            yield
+        finally:
+            temporary_client = self.anthropic_client
+            reset_context_var(_llm_request_state, token)
+            if temporary_client is not None:
+                self._schedule_anthropic_client_close(temporary_client)
 
     @staticmethod
     def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1538,23 +1651,6 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_go_model_fallback_to_env", model=self.model)
 
-        elif self.provider == "go2":
-            self.api_mode = getattr(settings, "go2_api_mode", "chat_completions")
-            self.base_url = (
-                settings.go2_base_url
-                or os.getenv(config["url_env"])
-                or config["url_default"]
-            )
-            self.api_key = (
-                settings.go2_api_key
-                or os.getenv(config["key_env"])
-                or ""
-            )
-            self.model = settings.go2_model
-            if not self.model:
-                self.model = os.getenv(config["model_env"], config["model_default"])
-                logger.debug("llm_go2_model_fallback_to_env", model=self.model)
-
         elif self.provider == "glm":
             self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
             self.base_url = (
@@ -1785,6 +1881,13 @@ class LLMService:
             headers["x-opencode-session"] = (
                 _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"
             )
+
+        # 供应商网关自定义请求头（如内网网关的 jcmp-token）；显式配置优先
+        extra_headers = _parse_extra_headers(
+            getattr(settings, "llm_extra_headers", "") or ""
+        )
+        if extra_headers:
+            headers.update(extra_headers)
 
         return url, headers
 

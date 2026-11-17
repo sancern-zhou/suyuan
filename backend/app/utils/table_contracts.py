@@ -1,8 +1,9 @@
-"""采集库（DataCrawler MySQL）表契约：单一事实源驱动的字段知识注入。
+"""采集库/监测库表契约：单一事实源驱动的字段知识注入（共享渲染器）。
 
 契约文件由真实库 information_schema 生成（backend/config/data_table_contracts.yaml），
 部署可用 ``<data_registry_dir>/data_table_contracts.yaml`` 覆盖。渲染为紧凑 markdown
-后拼进 execute_crawler_sql_query 的工具描述，替代易漂移的手写表说明。
+后拼进消费方（execute_crawler_sql_query 工具描述、mode_workflows 表契约块）的
+提示词，替代易漂移的手写表说明。
 
 fail-soft：文件缺失或损坏时返回空串并告警，工具描述退化为"先 describe_table"引导。
 """
@@ -30,8 +31,8 @@ def _candidate_paths() -> List[Path]:
 
     paths = [Path(settings.data_registry_dir) / CONTRACT_FILENAME]
     config_path = Path(__file__).resolve()
-    # app/tools/query/execute_crawler_sql_query/table_contracts.py → backend/config
-    backend_config = config_path.parents[4] / "config" / CONTRACT_FILENAME
+    # app/utils/table_contracts.py → backend/config
+    backend_config = config_path.parents[2] / "config" / CONTRACT_FILENAME
     paths.append(backend_config)
     return paths
 

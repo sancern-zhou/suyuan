@@ -12,6 +12,8 @@ class ManageAssistantRunsTool(LLMTool):
             "管理本人的办公或专业委派运行：list/get 查询真实运行，result 分页读取完整结果，"
             "cancel 请求停止，steer 向仍接受输入的单个办公子 Agent 补充文本要求。"
             "使用委派返回的 assistant_run_id/run_id，不是长期事项或调度计划 ID。"
+            "get 支持 wait_seconds 阻塞等待到终态——需要等结果时一次 get 传 wait_seconds（如 120），"
+            "禁止对同一 running 运行反复无等待地查询。"
             "补充要求或停止仅在 accepted=true 时受理；再次查询才能确认结束。"
             "unknown 表示执行器状态无法确认，不代表完成，不能自动重跑。"
         )
@@ -32,6 +34,15 @@ class ManageAssistantRunsTool(LLMTool):
                             "enum": ["list", "get", "result", "cancel", "steer"],
                         },
                         "run_id": {"type": "string"},
+                        "wait_seconds": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 600,
+                            "description": (
+                                "仅 action=get 生效：阻塞等待该运行到终态再返回（0-600 秒，默认 0 不等待）。"
+                                "委派未完成时传 wait_seconds 一次等待，代替反复轮询。"
+                            ),
+                        },
                         "message": {"type": "string", "maxLength": 20000},
                         "offset": {"type": "integer", "minimum": 0},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20000},
@@ -49,6 +60,7 @@ class ManageAssistantRunsTool(LLMTool):
         message=None,
         offset=0,
         limit=None,
+        wait_seconds=0,
         data_context_manager=None,
         **kwargs,
     ):
@@ -65,9 +77,22 @@ class ManageAssistantRunsTool(LLMTool):
                 or not 1 <= limit <= 20000
             ):
                 raise ValueError("分页参数无效")
+            if wait_seconds is None:
+                wait_seconds = 0
+            if not isinstance(wait_seconds, (int, float)) or isinstance(wait_seconds, bool):
+                raise ValueError("wait_seconds 须为数字")
+            wait_seconds = float(wait_seconds)
+            if not 0 <= wait_seconds <= 600:
+                raise ValueError("wait_seconds 须在 0-600 秒之间")
             service = self.service or AssistantRunService()
             data = await service.command(
-                context, action=action, run_id=run_id, message=message, offset=offset, limit=limit
+                context,
+                action=action,
+                run_id=run_id,
+                message=message,
+                offset=offset,
+                limit=limit,
+                wait_seconds=wait_seconds,
             )
             return {"success": True, "status": "success", "data": data}
         except (ValueError, PermissionError) as exc:

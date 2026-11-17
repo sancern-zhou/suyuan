@@ -81,6 +81,29 @@ class Finalizer:
             yield event
         yield self.events.complete(state, status="incomplete", reason=reason)
 
+    async def no_progress(self, state: RunState) -> AsyncGenerator[dict, None]:
+        """无进展熔断：连续多轮无成功工具结果与正文输出，判定任务停摆。
+
+        无步数上限模式下接管原迭代上限的失控保护职能；会话上下文保留，
+        用户可补充指示后继续。
+        """
+        state.response_text = (
+            "任务已连续多轮没有新的进展（无成功的工具调用或有效输出），"
+            "为避免无效消耗已停止。请补充说明或调整任务后重试。"
+        )
+        state.task_completed = False
+        if not state.assistant_message_written:
+            self.writer.session.add_assistant_response(state.response_text)
+            state.assistant_message_written = True
+        if self.agent_logger:
+            self.agent_logger.end_run(
+                status="timeout",
+                metadata={"iterations": state.iteration, "reason": "no_progress_detected"},
+            )
+        async for event in self._stream_response(state):
+            yield event
+        yield self.events.complete(state, status="incomplete", reason="no_progress_detected")
+
     async def fatal_error(self, state: RunState, error: Exception) -> AsyncGenerator[dict, None]:
         if self.agent_logger:
             self.agent_logger.log_error(error=str(error), error_type="fatal")

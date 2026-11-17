@@ -44,11 +44,10 @@ class WorkflowNodeSpec:
     dependency_policy: str = "all_success"
     when: Optional[Dict[str, Any]] = None
 
-    # 重试预算递增：每次重试在原预算上放大 50%（迭代封顶 120、超时封顶 1 小时）。
+    # 重试预算递增：每次重试在原预算上放大 50%（迭代无全局硬封顶、超时封顶 1 小时）。
     # 首次尝试保持调用方设定的紧凑预算；预算耗尽型失败（慢任务被杀）重试时
     # 给更多余量，避免"同预算重试→再失败→累计更久"的浪费模式。
     RETRY_BUDGET_STEP = 0.5
-    MAX_ITERATIONS_CAP = 120
     MAX_TIMEOUT_SECONDS_CAP = 3600.0
 
     def expanded_budget(self, attempt: int) -> "WorkflowNodeSpec":
@@ -65,10 +64,10 @@ class WorkflowNodeSpec:
         factor = 1.0 + self.RETRY_BUDGET_STEP * (attempt - 1)
         kwargs: Dict[str, Any] = {"payload": dict(self.payload)}
         if self.max_iterations is not None:
-            scaled_iterations = min(
-                self.MAX_ITERATIONS_CAP, self.payload.get("iteration_cap", self.MAX_ITERATIONS_CAP),
-                max(1, round(self.max_iterations * factor))
-            )
+            scaled_iterations = max(1, round(self.max_iterations * factor))
+            iteration_cap = self.payload.get("iteration_cap")
+            if iteration_cap is not None:
+                scaled_iterations = min(int(iteration_cap), scaled_iterations)
             kwargs["max_iterations"] = scaled_iterations
             kwargs["payload"]["max_iterations"] = scaled_iterations
         if self.timeout_seconds is not None:
