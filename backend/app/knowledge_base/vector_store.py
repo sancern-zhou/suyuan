@@ -249,10 +249,14 @@ class KnowledgeVectorStore:
             params = collection_info.config.params
             vectors = getattr(params, "vectors", None)
             sparse_vectors = getattr(params, "sparse_vectors", None)
+            dense_vector = (
+                vectors.get("dense") if isinstance(vectors, dict) else vectors
+            )
             config = {
                 "has_named_vectors": isinstance(vectors, dict),
                 "has_sparse": sparse_vectors is not None,
-                "vectors_type": type(vectors).__name__
+                "vectors_type": type(vectors).__name__,
+                "dense_size": getattr(dense_vector, "size", None),
             }
             with self._collection_config_lock:
                 self._collection_config_cache[collection_name] = config.copy()
@@ -264,6 +268,22 @@ class KnowledgeVectorStore:
                 error=str(e)
             )
             raise
+
+    def _ensure_collection_dim_matches(
+        self, collection_name: str, config: Dict[str, Any]
+    ) -> None:
+        """集合既有稠密维度必须与当前嵌入模型一致，否则写入/检索必然失败。
+
+        典型场景：知识库按 1024 维 bge-m3 建库后切换到 4096 维远程模型。
+        """
+        dense_size = config.get("dense_size")
+        if dense_size and int(dense_size) != int(self._embedding_dim):
+            raise RuntimeError(
+                f"Collection {collection_name} uses {dense_size}-dim dense vectors "
+                f"but the active embedding model produces {self._embedding_dim}-dim. "
+                "Re-index this knowledge base (re-upload or rebuild the collection) "
+                "after switching the embedding model."
+            )
 
     def _invalidate_collection_config_cache(self, collection_name: str) -> None:
         with self._collection_config_lock:
@@ -312,18 +332,50 @@ class KnowledgeVectorStore:
             existing_names = [c.name for c in collections]
 
             if collection_name in existing_names:
-                if enable_hybrid and not await asyncio.to_thread(self._collection_supports_hybrid, collection_name):
-                    point_count = await asyncio.to_thread(self._collection_point_count, collection_name)
+                existing_config = await asyncio.to_thread(
+                    self._get_collection_vector_config, collection_name
+                )
+                supports_hybrid = bool(
+                    existing_config["has_named_vectors"]
+                    and existing_config["has_sparse"]
+                )
+                dim_mismatch = bool(
+                    existing_config.get("dense_size")
+                    and int(existing_config["dense_size"])
+                    != int(self._embedding_dim)
+                )
+                needs_recreate = (enable_hybrid and not supports_hybrid) or dim_mismatch
+
+                if needs_recreate:
+                    point_count = await asyncio.to_thread(
+                        self._collection_point_count, collection_name
+                    )
                     if point_count == 0:
                         logger.warning(
-                            "recreate_empty_collection_for_hybrid",
-                            collection=collection_name
+                            "recreate_empty_collection",
+                            collection=collection_name,
+                            reason=(
+                                "embedding_dim_changed"
+                                if dim_mismatch
+                                else "missing_hybrid_vectors"
+                            ),
+                            existing_dim=existing_config.get("dense_size"),
+                            embedding_dim=self._embedding_dim,
                         )
                         await asyncio.to_thread(
                             self.qdrant_client.delete_collection, collection_name
                         )
                         self._invalidate_collection_config_cache(collection_name)
                     else:
+                        if dim_mismatch:
+                            raise RuntimeError(
+                                f"Collection {collection_name} stores "
+                                f"{existing_config['dense_size']}-dim dense vectors but the "
+                                f"active embedding model produces {self._embedding_dim}-dim, "
+                                "and the collection contains "
+                                f"{point_count} points. Re-index this knowledge base "
+                                "after switching the embedding model."
+                            )
                         logger.warning(
                             "collection_exists_without_hybrid",
                             collection=collection_name,
@@ -390,7 +442,8 @@ class KnowledgeVectorStore:
                 self._collection_config_cache[collection_name] = {
                     "has_named_vectors": True,
                     "has_sparse": True,
-                    "vectors_type": "dict"
+                    "vectors_type": "dict",
+                    "dense_size": self._embedding_dim,
                 }
             else:
                 # 创建仅支持稠密向量的Collection（向后兼容）
@@ -412,7 +465,8 @@ class KnowledgeVectorStore:
                 self._collection_config_cache[collection_name] = {
                     "has_named_vectors": False,
                     "has_sparse": False,
-                    "vectors_type": "VectorParams"
+                    "vectors_type": "VectorParams",
+                    "dense_size": self._embedding_dim,
                 }
             
             return True
@@ -496,6 +550,7 @@ class KnowledgeVectorStore:
             show_progress_bar=False,
         )
         config = self._get_collection_vector_config(collection_name)
+        self._ensure_collection_dim_matches(collection_name, config)
         use_named_vectors = bool(config["has_named_vectors"])
         use_sparse = bool(config["has_sparse"] and use_named_vectors)
         points = []
@@ -600,6 +655,7 @@ class KnowledgeVectorStore:
         query_filter = Filter(must=must)
         embedding = self.embedding_model.encode(query, normalize_embeddings=True)
         config = self._get_collection_vector_config(collection_name)
+        self._ensure_collection_dim_matches(collection_name, config)
         query_vector = (
             ("dense", embedding.tolist())
             if config["has_named_vectors"]
@@ -858,6 +914,9 @@ class KnowledgeVectorStore:
         dense_embedding = self.embedding_model.encode(
             query,
             normalize_embeddings=True
+        )
+        self._ensure_collection_dim_matches(
+            collection_name, self._get_collection_vector_config(collection_name)
         )
         sparse_vector = self._compute_sparse_vector(query)
 

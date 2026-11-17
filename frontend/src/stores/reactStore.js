@@ -58,6 +58,7 @@ import {
 } from './reactStoreQueue.js'
 import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
+import { fatalErrorDisplayText, isSilentErrorEvent } from './reactStoreErrorEvents.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
 const VALID_MODES = [...new Set([...AGENT_MODE_IDS, ...projectConfig.agentModeIds, 'graph'])]
@@ -1908,6 +1909,11 @@ export const useReactStore = defineStore('react', {
 
         case 'error': {
           // 迭代错误
+          if (isSilentErrorEvent(data)) {
+            // 可自动重试的瞬时故障（网关 504/过载/超时）：只留服务端日志，不打扰用户
+            console.warn('[handleEvent] silent error event:', data?.error || data?.error_type)
+            break
+          }
           addMessage('error', `错误: ${data?.error || '未知错误'}`, data)
           break
         }
@@ -1934,7 +1940,8 @@ export const useReactStore = defineStore('react', {
           // 致命错误
           targetState.isAnalyzing = false
           if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
-          targetState.error = data?.error || '致命错误'
+          // 后端对可重试类故障（504/过载/超时）给出友好文案，技术细节只进日志
+          targetState.error = fatalErrorDisplayText(data)
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
           targetState.activeRunId = null
@@ -2735,7 +2742,8 @@ export const useReactStore = defineStore('react', {
         preserveCurrentMode = false,
         queuedAlreadyShown = false,
         dequeuedInput = false,
-        onAccepted
+        onAccepted,
+        onRejected
       } = options
 
       const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
@@ -2763,6 +2771,7 @@ export const useReactStore = defineStore('react', {
       const hasStructuredSelection = skillIds.length > 0 || contextRefs.length > 0
 
       if (!query.trim() && !hasStructuredSelection) {
+        if (typeof onRejected === 'function') onRejected()
         return
       }
 
@@ -2779,6 +2788,7 @@ export const useReactStore = defineStore('react', {
           options: {
             ...options,
             onAccepted: undefined,
+            onRejected: undefined,
             agentMode: actualMode,
             skillIds,
             contextRefs,
@@ -2807,6 +2817,7 @@ export const useReactStore = defineStore('react', {
           options: {
             ...options,
             onAccepted: undefined,
+            onRejected: undefined,
             agentMode: actualMode,
             skillIds,
             contextRefs,
@@ -2945,6 +2956,7 @@ export const useReactStore = defineStore('react', {
           ...(boardContext !== null ? { boardContext } : {}),
           ...(mapContext !== null ? { mapContext } : {}),
           onAccepted,
+          onRejected,
           onEvent: (event) => {
             if (accountEpoch !== accountGeneration()) return
             if (!event.data) event.data = {}

@@ -75,6 +75,18 @@ test('gateway prefixes are not duplicated', () => {
 })
 
 
+test('server URLs already carrying the gateway prefix are not prefixed twice', () => {
+  const contentUrl = '/api/suyuan/sessions/s1/resources/r1/content?preview_ticket=abc'
+  assert.equal(
+    gatewayUrl(contentUrl, './api/suyuan'),
+    './api/suyuan/sessions/s1/resources/r1/content?preview_ticket=abc'
+  )
+  assert.equal(gatewayUrl(contentUrl, '/api/suyuan'), contentUrl)
+  assert.equal(gatewayUrl('/api/suyuan/sessions', './api/suyuan'), './api/suyuan/sessions')
+  assert.equal(gatewayUrl('/api/sessions', './api/suyuan'), './api/suyuan/sessions')
+})
+
+
 test('401 clears the session while 403 preserves it', async () => {
   const storage = sessionStorage()
   const statuses = [401, 403]

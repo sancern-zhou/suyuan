@@ -121,8 +121,8 @@
 
 | 模式 | 定位 | acquire 工具面 |
 |---|---|---|
-| `query_monitoring_station` | 站点层级：国控站小时/日历史、乡镇站与中台口径 | `execute_crawler_sql_query` + `xuchang_station_catalog` + `query_airdata_platform`（国控站直接 SQL 查采集库；乡镇站编码不可猜，先目录解析编码再查中台） |
-| `query_monitoring_city` | 城市层级：城市小时/日/年均值、发布历史、全国对比 | `query_xcai_city_history`、`execute_sql_query`、`execute_crawler_sql_query`、`execute_postgres_sql_query`、`query_airdata_platform`、`airdata_calc_report_summary`、`query_national_city_air_quality` |
+| `query_monitoring_station` | 站点层级：国控站小时/日历史、乡镇站与中台口径 | `execute_postgres_sql_query` + `xuchang_station_catalog` + `query_airdata_platform`（国控站直接 SQL 查声环境监测库；乡镇站编码不可猜，先目录解析编码再查中台） |
+| `query_monitoring_city` | 城市层级：城市小时/日/年均值、发布历史、全国对比 | `query_xcai_city_history`、`execute_postgres_sql_query`、`query_airdata_platform`、`airdata_calc_report_summary`、`query_national_city_air_quality` |
 | `query_monitoring` | 层级混合兜底 | 原 9 个工具；**报告 DAG 已禁用**，仅限非报告父模式直接委托 |
 | `query_forecast` | 气象实况/预报与空气质量预报 | `get_weather_data`、`get_current_weather`、`get_weather_forecast`、`query_airdata_platform`、`xuchang_station_catalog`、`resolve_station_geo`、`execute_postgres_sql_query` |
 
@@ -135,7 +135,7 @@
 3. **阶段推进由代码判定**：`observe_tool_results` 按工具结果推进——成功批次立即推进，acquire 失败批次只给一轮修复；normalize 只认"动手"工具（`execute_python`/`write_file`/`publish_session_file`）为推进信号；
 4. **禁止提前完结**：acquire 阶段的纯文本回复被拒（`fixed_workflow_phase_incomplete`），必须先完成取数。
 
-同时每轮注入当前阶段提示（`render_phase_prompt`，含"第 X/Y 次机会"），采集库表字段契约（`data_table_contracts.yaml`，由 information_schema 生成）按层级注入 acquire 阶段说明，避免模型猜字段。
+同时每轮注入当前阶段提示（`render_phase_prompt`，含"第 X/Y 次机会"）；库表字段契约由 `execute_postgres_sql_query` 的 `describe_table` 参数按需读取，避免模型猜字段。
 
 ## 五、target_mode 契约与路由
 
@@ -156,7 +156,7 @@
 
 ### 6.2 data_shape 元数据
 
-`data_shape.py` 为外置数据文件生成"列名/类型/行数"形状元数据：SQL 工具库侧精确类型优先（采集库走表契约 YAML，PG/KingbaseES 走 information_schema 缓存，SQL Server 走线程池查询），派生列样本推断兜底。形状随工具结果进 LLM 上下文（经 `compact_shape` 截断为前 12 列 + `columns_total` 总列数）、落 `.data_shape.json` sidecar、随 DAG 资源交接流转，下游模型不再凭记忆猜列名。
+`data_shape.py` 为外置数据文件生成"列名/类型/行数"形状元数据：SQL 工具库侧精确类型优先（KingbaseES/PostgreSQL 走 information_schema 缓存，SQL Server 走线程池查询），派生列样本推断兜底。形状随工具结果进 LLM 上下文（经 `compact_shape` 截断为前 12 列 + `columns_total` 总列数）、落 `.data_shape.json` sidecar、随 DAG 资源交接流转，下游模型不再凭记忆猜列名。
 
 ## 七、子 agent 运行时的其他约束
 
@@ -182,5 +182,4 @@
 | `backend/app/agent/runtime/agent_runtime.py` | 子 agent 执行循环：阶段门控、工具过滤、推进判定 |
 | `backend/app/agent/context/data_shape.py` | 数据形状元数据（生成、压缩、sidecar、缓存） |
 | `backend/app/agent/prompts/tool_registry.py` | 按模式工具白名单（含问数分模式清单） |
-| `backend/config/data_table_contracts.yaml` | 采集库表字段契约（scripts/generate_data_table_contracts.py 再生成） |
 | `frontend/src/components/workflow/WorkflowPanel.vue` | 工作流面板：阶段分组、节点状态、子 agent 轨迹 |

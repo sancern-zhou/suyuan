@@ -362,3 +362,4 @@ deploy/nginx/templates-local/
 # 维护守护进程本地配置与缰绳状态
 deploy/maintenance/maintenance.env
 deploy/maintenance/maintenance_state.json
+frontend/npm-cache/

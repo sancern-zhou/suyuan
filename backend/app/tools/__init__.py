@@ -421,19 +421,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_xcai_city_history", error=str(e))
 
-    # 通用SQL执行工具
-    try:
-        from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool, ExecuteTenderSQLQueryTool
-        registry.register(ExecuteSQLQueryTool(project_id=context.manifest.project), priority=47)
-        logger.info("tool_loaded", tool="execute_sql_query")
-        registry.register(ExecuteOpsSQLQueryTool(), priority=47)
-        logger.info("tool_loaded", tool="execute_ops_sql_query")
-        registry.register(ExecuteTenderSQLQueryTool(), priority=47)
-        logger.info("tool_loaded", tool="execute_tender_sql_query")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
-
-    # PostgreSQL/KingbaseES 企业排污许可证查询工具
+    # PostgreSQL/KingbaseES 只读 SQL 查询工具（bigdata_system + sound_data 双库）
     try:
         from app.tools.query.execute_postgres_sql_query.tool import ExecutePostgresSQLQueryTool
         registry.register(ExecutePostgresSQLQueryTool(), priority=47)

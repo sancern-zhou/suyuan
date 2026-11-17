@@ -8,6 +8,8 @@ import tiktoken
 from typing import List, Dict, Any, Optional
 import structlog
 
+from app.utils.tiktoken_offline import bootstrap_tiktoken_cache, encoding_is_cached
+
 logger = structlog.get_logger()
 
 
@@ -39,6 +41,17 @@ class TokenCounter:
         """
         self.model = model
         self.encoding_name = self._get_encoding_name(model)
+        # 词表缺失时 tiktoken 会同步下载且无超时，内网会阻塞数十秒，直接回退估算。
+        bootstrap_tiktoken_cache()
+        if not encoding_is_cached(self.encoding_name):
+            logger.warning(
+                "token_counter_encoding_not_cached",
+                model=model,
+                encoding=self.encoding_name,
+                message="Falling back to character-based token estimation",
+            )
+            self.encoding = None
+            return
         try:
             self.encoding = tiktoken.get_encoding(self.encoding_name)
         except Exception as e:
@@ -48,9 +61,7 @@ class TokenCounter:
                 encoding=self.encoding_name,
                 error=str(e)
             )
-            # 回退到默认编码
-            self.encoding = tiktoken.get_encoding("cl100k_base")
-            self.encoding_name = "cl100k_base"
+            self.encoding = None
 
     def _get_encoding_name(self, model: str) -> str:
         """获取模型的编码名称"""
@@ -78,6 +89,9 @@ class TokenCounter:
         """
         if not text:
             return 0
+        if self.encoding is None:
+            # 简单估算：平均每个字符 0.25 个 token
+            return int(len(str(text)) * 0.25)
         try:
             return len(self.encoding.encode(str(text)))
         except Exception as e:

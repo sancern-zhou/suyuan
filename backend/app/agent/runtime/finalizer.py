@@ -108,4 +108,14 @@ class Finalizer:
         if self.agent_logger:
             self.agent_logger.log_error(error=str(error), error_type="fatal")
             self.agent_logger.end_run(status="failed", metadata={"error": str(error)})
-        yield self.events.fatal_error(state, error)
+        yield self.events.fatal_error(state, error, user_message=self._user_message(error))
+
+    @staticmethod
+    def _user_message(error: Exception) -> str | None:
+        """重试链耗尽时给用户友好文案，而不是把网关堆栈直接糊到对话区。"""
+        from app.services.llm_failover import (
+            TRANSIENT_FAILURE_USER_MESSAGE,
+            is_transient_failure,
+        )
+
+        return TRANSIENT_FAILURE_USER_MESSAGE if is_transient_failure(error) else None

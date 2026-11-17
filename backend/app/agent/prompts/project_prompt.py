@@ -92,3 +92,52 @@ def load_project_prompt_fragment(
     if not fragment:
         raise ProjectConfigError(f"prompt fragment is empty: {format_agent_path(fragment_path)}")
     return fragment
+
+
+def load_project_prompt_switches(
+    context: ProjectContext | None = None,
+) -> tuple[bool, bool]:
+    """Return ``(data_source_map_enabled, air_quality_standard_transition)``.
+
+    共享层往系统提示词追加的段落里，数据源地图会写入具体工具名、空气质量
+    标准过渡段落会写入 PM10/PM2.5 限值；这两段对声环境等非大气项目不成立，
+    由项目清单显式关闭，共享层只读开关不判断项目身份。
+    """
+    project_context = context or load_project_context(settings.project_id)
+    backend = project_context.manifest.backend
+    return backend.data_source_map_enabled, backend.air_quality_standard_transition
+
+
+def load_project_report_final_review_prompt(
+    context: ProjectContext | None = None,
+) -> str | None:
+    """Return the project-owned report auto-review prompt, if configured.
+
+    报告模式在产出最终交付后会自动追加一轮复核，复核提示词作为下一轮
+    用户输入注入。共享默认版本面向空气质量项目（排名工具、PM2.5 等
+    新标准字段），会污染声环境等项目的会话；项目可声明自己的复核要点。
+    """
+    project_context = context or load_project_context(settings.project_id)
+    configured_path = project_context.manifest.backend.report_final_review_prompt_file
+    if not configured_path:
+        return None
+
+    project_root = resolve_agent_path(f"projects/{project_context.manifest.project}")
+    prompt_path = resolve_agent_path(configured_path)
+    if not is_path_within(prompt_path, [project_root]):
+        raise ProjectConfigError(
+            f"report final review prompt must be inside "
+            f"projects/{project_context.manifest.project}: {format_agent_path(prompt_path)}"
+        )
+    if not prompt_path.is_file():
+        raise ProjectConfigError(
+            f"report final review prompt not found: {format_agent_path(prompt_path)}"
+        )
+
+    prompt = prompt_path.read_text(encoding="utf-8").strip()
+    if not prompt:
+        raise ProjectConfigError(
+            "report final review prompt is empty: "
+            f"{format_agent_path(prompt_path)}"
+        )
+    return prompt

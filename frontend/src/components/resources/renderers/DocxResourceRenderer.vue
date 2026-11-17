@@ -43,6 +43,7 @@ import { DocxEditor } from '@eigenpal/docx-editor-vue'
 import '@eigenpal/docx-editor-vue/styles.css'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { saveDocxResource } from '@/services/spreadsheetResourceApi.js'
+import { authFetch } from '@/auth/http.js'
 
 const props = defineProps({
   resource: { type: Object, required: true },
@@ -64,7 +65,7 @@ const editable = computed(() => Boolean(props.resource?.actions?.save))
 
 onMounted(async () => {
   try {
-    const response = await fetch(props.contentUrl)
+    const response = await authFetch(props.contentUrl)
     if (!response.ok) throw new Error(`文档内容加载失败 (${response.status})`)
     buffer.value = await response.arrayBuffer()
   } catch (e) {

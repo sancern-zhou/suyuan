@@ -6,6 +6,7 @@ import ToolsManagementView from '@/views/ToolsManagementView.vue'
 import SkillsManagementView from '@/views/SkillsManagementView.vue'
 import ExpertDeliberationView from '@/views/ExpertDeliberationView.vue'
 import LoginView from '@/views/LoginView.vue'
+import SsoView from '@/views/SsoView.vue'
 import { projectConfig } from '@/config/projectConfig.js'
 import { filterProjectRoutes } from './projectRoutes.js'
 
@@ -15,6 +16,12 @@ const routes = [
       name: 'login',
       component: LoginView,
       meta: { public: true, title: '登录' }
+    },
+    {
+      path: '/sso',
+      name: 'sso',
+      component: SsoView,
+      meta: { public: true, title: '平台免登录' }
     },
     {
       path: '/',

@@ -84,6 +84,24 @@ test('mock administrator enters protected routes without a company token', async
   )
 })
 
+test('public sso route bypasses login even before a session exists', async () => {
+  const auth = store({
+    async bootstrap() { this.initialized = true; throw new Error('no session') }
+  })
+  const guard = createAuthGuard(auth)
+
+  assert.equal(
+    await guard({
+      path: '/sso',
+      fullPath: '/sso?ticket=abc',
+      meta: { public: true },
+      query: { ticket: 'abc' }
+    }),
+    true
+  )
+})
+
+
 test('dashboard routes pass unauthenticated when the URL carries an access token', async () => {
   const auth = store({
     async bootstrap() { this.initialized = true; throw new Error('no session') }

@@ -7,8 +7,7 @@ const {
   buildComposerPayload,
   findComposerTrigger,
   normalizeConversationResources,
-  normalizeSkills,
-  shouldClearAcceptedComposer
+  normalizeSkills
 } = commandPalette
 
 test('detects slash and at triggers only at token boundaries', () => {
@@ -156,11 +155,4 @@ test('accepts an explicit replacement independently from unrelated composer edit
     dirty: false,
     editVersion: 5
   })
-})
-
-test('only clears the composer if the accepted draft is still current', () => {
-  const sent = { query: '分析', skillId: 'trend', fileIds: ['f1'] }
-  assert.equal(shouldClearAcceptedComposer(sent, { ...sent }), true)
-  assert.equal(shouldClearAcceptedComposer(sent, { ...sent, query: '分析更多' }), false)
-  assert.equal(shouldClearAcceptedComposer(sent, { ...sent, fileIds: ['f1', 'f2'] }), false)
 })

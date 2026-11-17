@@ -17,7 +17,7 @@ def test_xuchang_query_and_expert_prompts_include_relative_memory_paths(monkeypa
         assert f"常驻长期记忆 `MEMORY.md`：路径 `{relative_path}`" in prompt
         assert str(PROJECT_ROOT) not in prompt
         assert "不得读取或修改其他模式的记忆文件" in prompt
-        assert "直接使用 edit_file" in prompt
+        assert "直接在该文件中增、改、删条目" in prompt
         assert "facts/*.md" in prompt
         assert "已整理事实索引" in prompt
         assert "过期自动遗忘" in prompt
