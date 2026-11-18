@@ -51,11 +51,12 @@ _FIXED_QUERY_NODE_MODES = frozenset({
     "query_component",
 })
 
-# 专家分析类节点默认超时（2026-11-05 上调）：跨节点数据分析实测 8–12 分钟
-# （清远 10 月溯源：expert_meteorology 493s、expert_analysis 705s 成功），
-# 旧默认 300/360s 在分析中途即被取消，重试扩档（×1.5）也覆盖不了。
-# D6：所有分析子 agent 超时下限 900s——编排写了更小值也抬到下限（见 _apply_node_budgets）。
-# 迭代步数不再注入默认上限（无步数上限模式，靠上下文压缩续跑）；此处只管墙钟超时。
+# 节点墙钟超时的系统默认表（编排不再输入 timeout_seconds）：专家分析类 900s
+# （2026-11-05 上调；跨节点数据分析实测 8–12 分钟，清远 10 月溯源
+# expert_meteorology 493s、expert_analysis 705s 成功，旧默认 300/360s 会在
+# 分析中途取消子代理），固定问数流程 600s 容纳慢查询与重试。
+# 项目声明的 timeout cap 在 prepare_node 二次收口。
+# 迭代步数全链路不设默认上限（靠上下文压缩续跑 + 无进展熔断）。
 _DEFAULT_EXPERT_NODE_TIMEOUTS = {
     "expert_meteorology": {"timeout_seconds": 900},
     "expert_analysis": {"timeout_seconds": 900},
@@ -100,29 +101,29 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
     "适合问数、专家研判、多源数据分析和分阶段报告任务。编排由你自主决定：按分析问题规划节点数量、"
     "每个节点的 target_mode 与 goal；无依赖节点并行，需要上游产物或结论的节点用 dependencies 表达。"
-    "每个节点必须有唯一 task_id、target_mode、goal。goal 只写本任务的特定事实：时间范围、区域、指标口径、预期输出与差异要求；"
+    "每个节点必须有唯一 task_id、target_mode、goal。goal 只写目标与分工：回答什么问题、时间范围、区域、粒度（按市/按站）；"
+    "不定义字段、统计口径与交付形态——字段与口径由子代理按其数据源与工具决定，交付由子代理按其提示词契约自行给出（一段结论说明文字亦可）；"
     "全 DAG 通用的规范标准与历史教训不逐节点复写——统一成图标准子 Agent 作图工具手册已内置，"
-    "统一口径写进 result_schema 字段描述，上一轮失败信息由重试上下文携带，不靠 goal 复读。"
+    "数据缺口由子代理经 data_gaps 如实上报，上一轮失败信息由重试上下文携带，不靠 goal 复读。"
     "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
     "同阶段节点共用一个名字，面板按阶段分组展示故事线。\n"
     + _orchestration_skill_hint()
-    + "**硬约束**：固定问数节点由运行时控制为最多 20 轮（可收紧，低于 8 的值抬到 8），失败项最多补查一次；"
-    "任务书写清时间范围、区域与指标口径即可，不要教写 SQL。"
+    + "**硬约束**：固定问数节点失败项最多补查一次；不要教写 SQL。"
+    "环境统计值（均值/分位数/达标率等）必须经统计接口直接获取，禁止让子代理经 SQL 工具取原始明细后自行计算统计值——"
+    "自算必有口径与精度偏差，数据缺口如实上报，不得自行估算补齐。"
     "一个专家节点只回答一个独立问题，多个问题拆成多个并行节点。"
-    "专家分析类节点 timeout 下限 900s（跨节点数据分析实测 8–12 分钟），声明更小值也会被抬到 900s。"
+    "节点超时与迭代预算由系统按模式默认管理，编排无需配置。"
     "节点视图 published_charts 列出子代理已产出并发布到本会话的图表（resource_id/label/path）："
     "聊天答复中用 [[chart:<resource_id>]] 引用即可渲染；成稿作为 create_report_package 的 image assets。"
-    "报告需要的分析图表必须在对应子节点的 goal 中要求随节点产出，"
+    "需要图表的分析节点，在 goal 的分工部分点名图表产出（图表属分工安排，不属于交付形态约束），"
     "禁止 DAG 完成后由父 Agent 重新绘制分析图表。"
-    "报告 DAG 禁止综合问数（query / query_monitoring）与综合 expert 子节点；"
-    "监测历史按层级拆 query_monitoring_station（站点）或 query_monitoring_city（城市），层级不明确先向用户确认口径。"
-    "DAG 禁止 query、expert、report 主模式子节点；当前父 Agent 是唯一整合与成稿者。\n"
-    "goal 必须完整描述本节点的问题、范围和预期交付；需要结构化字段时按节点提供 result_schema，"
-    "无需固定任务书或统一的结果字段。子 Agent 可在结果中用可选 data_gaps 声明真实证据缺口。"
+    "DAG 禁止综合主模式子节点（query/expert/report，可用子模式以委派边界校验为准）；"
+    "当前父 Agent 是唯一整合与成稿者。领域路由由项目编排提示词承载。\n"
+    "goal 写清目标与分工即可，不罗列预期交付清单；result_schema 仅在下游节点需要机器可读消费或 when 条件要引用上游字段时提供，"
+    "纯取数节点不传。子 Agent 可在结果中用可选 data_gaps 声明真实证据缺口。"
     "需要落盘文件的节点在 result_schema 中声明 deliverables 数组（{path}：子 Agent 提交时回填真实路径，"
-    "运行时只核对文件真实存在，路径无效会被退回修复轮重交）；口径与单位写进 goal 和字段 description。"
-    "首试给紧凑预算：重试自动续用子会话，迭代与超时各放宽 50%（迭代封顶 120、超时封顶 1 小时），"
-    "因此首试预算不足不会直接失败。"
+    "运行时只核对文件真实存在，路径无效会被退回修复轮重交）。"
+    "重试自动续用子会话并放宽预算，预算不足不会直接失败。"
     "条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果的点分路径）、op、value；"
     "支持 all/any/not 组合；条件为假会跳过该分支，缺少比较证据会报告失败，不猜测真假。"
     "辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，"
@@ -605,8 +606,7 @@ class RunAgentWorkflowTool(LLMTool):
                             "type": "object",
                             "description": (
                                 "完整 DAG 定义：{workflow_id?, version?, nodes:[{task_id, target_mode, goal, context, "
-                                "dependencies, task_contract, result_schema, max_attempts, max_iterations, "
-                                "timeout_seconds}]}. workflow_id 缺省时自动生成。"
+                                "dependencies, task_contract, result_schema, max_attempts}]}. workflow_id 缺省时自动生成。"
                                 "编排由你自主规划；无依赖节点并行，依赖用 dependencies 表达。"
                                 "新建时提供 nodes；补图时只提供 workflow_id，并传 extension。"
                                 "budget 可限制累计 timeout_seconds/max_nodes/max_retries/max_extensions，"
@@ -656,18 +656,6 @@ class RunAgentWorkflowTool(LLMTool):
                                             "phase": {
                                                 "type": "string",
                                                 "description": "可选阶段名（用户可读的业务语言），同阶段节点共用一个名字",
-                                            },
-                                            "max_iterations": {
-                                                "type": "integer",
-                                                "minimum": 1,
-                                                "maximum": 120,
-                                                "description": "子 Agent 最大推理轮次；气象专家建议15，常规分析专家建议20。",
-                                            },
-                                            "timeout_seconds": {
-                                                "type": "number",
-                                                "minimum": 30,
-                                                "maximum": 1800,
-                                                "description": "节点硬超时秒数；到期后取消正在运行的子 Agent 和工具。",
                                             },
                                         },
                                         "required": ["task_id", "target_mode", "goal"],
@@ -812,20 +800,15 @@ class RunAgentWorkflowTool(LLMTool):
             for node in [*nodes, *added_nodes]:
                 if not node.get("target_mode") or not node.get("goal"):
                     return self._failure(f"节点 {node.get('task_id') or '<unknown>'} 缺少 target_mode 或 goal")
+                # 节点预算由系统管理，编排不再输入：幻觉传入的预算键一律丢弃。
+                # 超时按模式默认表管理（专家 900s、问数 600s，项目声明的 cap 在
+                # prepare_node 二次收口）；迭代步数不注入默认值——未配置即无步数
+                # 上限，靠上下文压缩续跑。
+                node.pop("max_iterations", None)
+                node.pop("timeout_seconds", None)
                 limits = _DEFAULT_EXPERT_NODE_TIMEOUTS.get(str(node.get("target_mode")))
                 if limits:
-                    if str(node.get("target_mode") or "").startswith("expert"):
-                        # D6（2026-11-05）：分析子 agent 超时下限 900s——编排写了更小值也抬到下限，
-                        # 防止 300/360s 类小预算在分析中途取消子代理（qingyuan-oct 教训）。
-                        try:
-                            authored = int(node.get("timeout_seconds") or 0)
-                        except (TypeError, ValueError):
-                            authored = 0
-                        node["timeout_seconds"] = max(authored, limits["timeout_seconds"])
-                    else:
-                        node.setdefault("timeout_seconds", limits["timeout_seconds"])
-                # 迭代步数不注入默认值：节点未显式配置即无步数上限（靠上下文压缩续跑），
-                # 编排显式写的 max_iterations 原样保留。
+                    node.setdefault("timeout_seconds", limits["timeout_seconds"])
             # 报告编排只暴露领域取数与专家节点，禁止综合模式或产出型模式越权。
             runtime_mode = str(
                 getattr(context, "runtime_mode", None)

@@ -63,7 +63,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "**⚠️ 图表随节点并行产出**：报告需要的分析图表必须在对应子节点的任务书中明确要求（如“输出风速分箱图”“绘制相关性热力图”），由子 Agent 分析的同时一并生成并交付图表文件；你在成稿阶段直接复用子节点回传的图表文件（上游产物清单中可见），只补报告专属的版式图，禁止在 DAG 完成后再自行重新绘制分析图表——那会串行追加一整段耗时。\n",
         "报告型 DAG 通过 `run_agent_workflow(workflow={workflow_id, nodes:[...]})` 提交，编排由你自主规划：监测历史数据使用固定流程 `target_mode='query_monitoring_station'`（站点）或 `target_mode='query_monitoring_city'`（城市），气象实况、气象预报和空气质量预报使用固定流程 `target_mode='query_forecast'`，无依赖时并行且最多 4 轮，失败项最多补查一次；需要上游产物或结论的节点用 dependencies 表达。气象条件、输送通道、静稳形势拆 `target_mode='expert_meteorology'`，六参数浓度、AQI、超标统计和时空变化拆 `target_mode='expert_analysis'`，二者可并行；离子、碳组分、地壳元素或 VOCs/OFP 分析保留给后续独立组分专家。需要交叉归因时增加一个依赖全部上游的研判节点，或由你直接整合各源节点结论；整合阶段复用上游数据，聚焦研判与撰写并控制在 5 轮以内。工作流为每个节点生成血缘清单，结论引用对应证据和产物。\n",
         "报告 DAG 完成后必须检查返回的 `data.node_results` 中各节点的 result_envelope：确认 status、findings、evidence 与 data_gaps；存在缺口时先补齐或明确告知用户，不得把不完整的报告包当作最终交付。**findings 就是报告取数来源，其中的数值可直接写进报告**；各节点完整结果已落盘在 `data.full_results.path`，确需更多细节时用 read_file 对该文件一次整读，禁止分页反复读同一文件。\n",
-        "委托专家时用 goal 完整描述独立问题、分析范围、所需证据和预期交付，不得只发送一句泛化的“请分析一下”；需要特定结构化字段时按节点传入 result_schema。证据不足时由专家如实说明，你负责判断是否补充分析再进入成稿。\n",
+        "委托专家时用 goal 写清独立问题、时间范围与区域即可，不定义字段、统计口径与交付形态——子代理按其数据源与提示词契约自行交付（一段结论说明文字亦可）；不得只发送一句泛化的“请分析一下”。仅在下游节点需要机器可读消费或 when 路由要引用上游字段时按节点传入 result_schema。证据不足时由专家如实说明，你负责判断是否补充分析再进入成稿。\n",
         "## 报告模板系统\n",
         "\n",
         "**计划模板位置**：`backend/backend_data_registry/report_templates/`（纯Markdown文件，包含查询计划和报告生成计划）\n",

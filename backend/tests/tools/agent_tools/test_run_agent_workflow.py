@@ -60,8 +60,9 @@ def test_run_agent_workflow_schema_documents_free_form_dag():
 
     assert "workflow" in properties
     node_properties = properties["workflow"]["properties"]["nodes"]["items"]["properties"]
-    assert node_properties["max_iterations"]["maximum"] == 120
-    assert node_properties["timeout_seconds"]["minimum"] == 30
+    # 节点预算由系统管理，编排不再输入 max_iterations/timeout_seconds
+    assert "max_iterations" not in node_properties
+    assert "timeout_seconds" not in node_properties
     assert "workflow_template" not in properties
     assert "template_options" not in properties
     assert schema["parameters"]["required"] == ["workflow"]
@@ -77,7 +78,9 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
     target_mode = schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]
 
     assert "定位与边界" in description
-    assert "同源数据由一个节点获取，后续节点通过 dependencies 复用" in description
+    # 领域路由已从共享契约移除：由项目编排提示词承载
+    assert "静稳" not in description
+    assert "六参数浓度" not in description
     assert {"query", "expert", "report"}.isdisjoint(target_mode["enum"])
     call_target_mode = CallSubAgentTool().get_function_schema()["parameters"]["properties"]["target_mode"]
     assert call_target_mode["enum"] == target_mode["enum"]
@@ -448,7 +451,8 @@ async def test_run_agent_workflow_returns_compact_view_and_persists_full_results
     assert "```json" not in view["result_envelope"]["summary"]
     assert view["resource_ids"] == ["res-1"]
     assert view["iterations"] == 3
-    assert view["max_iterations"] == 20
+    # 编排传入的预算被丢弃（节点预算由系统管理），无步数上限
+    assert view["max_iterations"] is None
     assert view["result_envelope"]["data_gaps"] == ["组分数据缺测"]
     assert "thought" not in _json.dumps(view, ensure_ascii=False)
     # 全文落盘到统一资源目录并登记为会话资源
@@ -738,8 +742,8 @@ async def test_run_agent_workflow_query_nodes_get_at_least_eight_iterations(monk
 
     assert result["success"] is True, result
     by_goal = {call["goal"]: call for call in calls}
-    # 显式写的 4 原样保留（不再抬到 8）；未配置的为 None（不再注入 20）
-    assert by_goal["城市取数"]["max_iterations"] == 4
+    # 编排不再输入节点预算：显式写的 4 被丢弃；未配置的为 None
+    assert by_goal["城市取数"]["max_iterations"] is None
     assert by_goal["气象取数"]["max_iterations"] is None
 
 
@@ -771,7 +775,7 @@ async def test_expert_node_timeout_floor_overrides_authored_smaller_value(monkey
     )
     assert result["success"] is True, result
     # 超时由 coordinator 按节点定义的 asyncio.timeout 执行，不随 kwargs 下发；
-    # 下限生效体现在节点视图 timeout_seconds 被抬到 900
+    # 编排输入的 300 被丢弃，节点视图按系统默认表取 900
     assert result["data"]["node_results"]["met"]["timeout_seconds"] == 900
 
 
