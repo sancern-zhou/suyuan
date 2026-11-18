@@ -222,6 +222,34 @@ backend:
       - describe_jiangxi_noise_api
       - call_jiangxi_noise_api
       - execute_postgres_sql_query
+  # deferred tools opt-in（tool_search 按需注入参数契约，机制见 AGENTS.md
+  # 「上下文注入选型策略」）：只接管 query/expert 两个综合模式——它们的
+  # 白名单含全部 8 个 get_jiangxi_noise_* 域工具（schema 合计 ~23K 字符），
+  # 存根化后每轮常驻省 ~21K 字符（约 7K tok）。三个报告 DAG 子模式的胖
+  # schema 是其身份工具且为委派热路径（每个节点都要用 1-2 个），存根会让
+  # DAG 节点普遍多付 tool_search 往返，故不 opt-in。
+  # always_on 只留分析与交付管道（几乎每轮必用、多轮复用），域工具与
+  # list_directory 进存根候选（模型可先 tool_search 取契约，也可凭常用
+  # 参数形态盲调，工具自行校验、失败回注完整契约）。≤600 字符小工具
+  # （三件套/发布/读写资源等）由 DEFERRED_STUB_SCHEMA_CHAR_FLOOR 自动豁免，
+  # ask_user_question 在共享永不存根集合，均无需列出。
+  agent_mode_deferred_tools:
+    query:
+      - execute_python
+      - execute_postgres_sql_query
+      - execute_echarts_python
+      - read_file
+      - grep
+      - edit_file
+      - list_session_resources
+    expert:
+      - execute_python
+      - execute_postgres_sql_query
+      - execute_echarts_python
+      - read_file
+      - grep
+      - edit_file
+      - list_session_resources
   # 报告 DAG 项目子模式（参照广东 gd_ops_* 做法：按数据域拆分，每个子模式只
   # 暴露本域工具，父 Agent 无法把跨域任务塞给单个节点；跨域取数列入 data_gaps
   # 交父委派）。噪声域站点/城市/区县是同一 API 族的参数分支（无链路差异），
