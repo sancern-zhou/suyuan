@@ -47,6 +47,8 @@ def test_minute_sql_join_uses_xuchang_name_not_foreign_id(tmp_path):
     replies = iter([[{"count": 6}],
                     [{"station_code": "1005A", "station_name": "市一中", "aqi": None, "pm25": None,
                       "pm10": None, "o3": None, "no2": None, "so2": None, "co": None,
+                      "so2_mark": None, "no2_mark": None, "o3_mark": None, "co_mark": None,
+                      "pm10_mark": None, "pm25_mark": None,
                       "time_point": datetime(2026, 9, 9, 13)}],
                     [{"count": 6}], [{"station_id": "1005A", "name": "市一中（启用170929）"}]])
     service._query = lambda *args: next(replies)

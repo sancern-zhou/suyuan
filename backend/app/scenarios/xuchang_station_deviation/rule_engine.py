@@ -3,7 +3,8 @@
 实现《空气质量浓度数据告警规则体系（判据修订）》规则总表：
 
 - 单点突升 DS：当前值 − 基线 >= MAX(基线 × 比例, 绝对增量)；单窗口成立，
-  前提是邻站未同向；
+  前提是邻站未同向，且当前浓度高于同组其余站点剔除极值后的均值
+  （需求方补充，2026-11-13；对照站不足 3 个时该条件不启用）；
 - 连续抬升 CL：3 段单调不减，每段增量 >= 总增量 15%，累计抬升达到阈值；
   基线取抬升起点前 15 分钟均值（PM2.5 取起点前一小时）；
 - 站点离群 OL：本站与同区域其余有效站同刻平均值比较，达到比例 + 绝对
@@ -91,8 +92,12 @@ def slot_of(value: datetime, grain: str) -> datetime:
 
 
 def valid_value(row: dict[str, Any], column: str) -> float | None:
-    """单条记录的参数有效值：缺测/负值/带质控标记均视为空值。"""
-    if row.get("data_source") == "minute" and has_mark(row.get(f"{column}_mark")):
+    """单条记录的参数有效值：缺测/负值/带质控标记均视为空值。
+
+    质控标记对分钟表与小时表同等有效（2026-11-13 望田路111号案例：小时表
+    标记的零值曾进入 DS 基线造成伪告警），带标记时段不参与基线与判定。
+    """
+    if has_mark(row.get(f"{column}_mark")):
         return None
     return as_float(row.get(column))
 
@@ -100,6 +105,11 @@ def valid_value(row: dict[str, Any], column: str) -> float | None:
 def ge1(value: float, threshold: float) -> bool:
     """数值比较统一约定：保留 1 位小数后比较。"""
     return round(float(value), 1) >= round(float(threshold), 1)
+
+
+def gt1(value: float, threshold: float) -> bool:
+    """严格大于：保留 1 位小数后比较（与 ge1 同一口径）。"""
+    return round(float(value), 1) > round(float(threshold), 1)
 
 
 def level_name_for(pollutant: str, concentration: Any) -> str | None:
@@ -307,6 +317,23 @@ def _previous_values(
     return tail[:count] if tail else None
 
 
+def trimmed_peer_mean(
+    values: dict[str, float],
+    station_id: str,
+    min_peer_count: int,
+) -> float | None:
+    """其余有效站剔除极值（去最高/最低）后的均值。
+
+    DS 附加条件（需求方补充，2026-11-13）的对比基准：同槽其余站点浓度
+    排序后去掉最高与最低再取均值（5 站对照剩 3 站）。对照站少于
+    ``min_peer_count``（下限 3）时无法剔除极值，返回 None 表示条件不启用。
+    """
+    peers = sorted(value for sid, value in values.items() if sid != station_id)
+    if len(peers) < max(int(min_peer_count), 3):
+        return None
+    return mean(peers[1:-1])
+
+
 def rule_ds(
     value: float,
     baseline_value: float | None,
@@ -314,8 +341,14 @@ def rule_ds(
     level_name: str | None,
     config: AirAlertRuleConfig,
     peer_same_direction_count: int = 0,
+    peer_trimmed_mean: float | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """单点突升：Δ >= MAX(基线 × 比例, 绝对增量)，单窗口成立。"""
+    """单点突升：Δ >= MAX(基线 × 比例, 绝对增量)，单窗口成立。
+
+    附加条件（需求方补充，2026-11-13）：本站告警时段浓度需严格高于同组
+    其余站点剔除极值后的均值（``peer_trimmed_mean``）；该值为 None 时
+    （对照站不足）条件不启用。
+    """
     if baseline_value is None or baseline_value < 0 or level_name is None:
         return 0, {}
     ratio, absolute = config.thresholds(pollutant, "sudden_rise", level_name)
@@ -331,10 +364,14 @@ def rule_ds(
         "threshold": round(threshold, 3),
         "rise_percent": round(delta / baseline_value * 100, 1) if baseline_value > 0 else None,
         "peer_same_direction_count": peer_same_direction_count,
+        "peer_trimmed_mean": round(peer_trimmed_mean, 3) if peer_trimmed_mean is not None else None,
         "recovery_threshold": round(threshold, 3),
     }
     if peer_same_direction_count >= config.neighbor_same_direction_count:
         detail["suppressed_reason"] = "neighbor_same_direction"
+        return 0, detail
+    if peer_trimmed_mean is not None and not gt1(value, peer_trimmed_mean):
+        detail["suppressed_reason"] = "peer_trimmed_mean_not_exceeded"
         return 0, detail
     if delta >= 0 and ge1(delta, threshold):
         return 1, detail
@@ -440,43 +477,79 @@ class CycleOutcome:
     region_merged: list[dict[str, Any]] = field(default_factory=list)
 
 
+# 区域合并按规则类型取参数与主告警度量：CL 比累计抬升绝对量，DS 比相对
+# 基线的跳变增量（detail.delta）。
+_REGION_MERGE_SPECS: dict[str, tuple[str, str]] = {
+    "continuous_rise": ("cl_region_merge_sites", "total_rise_abs"),
+    "sudden_rise": ("ds_region_merge_sites", "delta"),
+}
+
+
 def merge_regional_rises(
     candidates: list[dict[str, Any]],
     config: AirAlertRuleConfig,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """连续抬升区域合并：同污染物同窗口 >=N 站命中 CL 时只推最大站一条。
+    """区域合并：同污染物同窗口多站命中同一规则时只推最大站一条。
 
-    主告警取累计抬升绝对量最大的站点，detail 附全站清单
-    ``region_stations``；其余站点候选原样返回，由推送链以
-    ``regional_merge`` 抑制入库（不推送但保留流水）。DS/OL 候选不受影响。
+    - 连续抬升 CL：>= ``cl_region_merge_sites`` 站命中 → 只留累计抬升绝对量
+      最大的站点；
+    - 单点突升 DS：>= ``ds_region_merge_sites`` 站同窗口命中 → 只留跳变增量
+      最大的站点。默认 2 收口"恰好两站双命中"缝隙（此时彼此的邻站同向
+      抑制都不到门槛，会推出两条互相矛盾的单点突升）；>=3 站命中时引擎层
+      已按区域同向抑制、不会产生候选。
+
+    主告警 detail 附全站清单 ``region_stations``；其余站点候选原样返回，
+    由推送链以 ``regional_merge`` 抑制入库（不推送但保留流水）。OL 不合并。
     """
-    min_sites = int(getattr(config, "cl_region_merge_sites", 0) or 0)
-    if min_sites <= 0:
-        return candidates, []
     kept: list[dict[str, Any]] = []
     suppressed: list[dict[str, Any]] = []
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for alert in candidates:
-        if alert.get("rule_type") == "continuous_rise":
-            grouped[(str(alert.get("measurement_granularity")), str(alert.get("target_pollutant")))].append(alert)
-        else:
+        rule_type = str(alert.get("rule_type") or "")
+        if rule_type not in _REGION_MERGE_SPECS:
             kept.append(alert)
-    for items in grouped.values():
-        if len(items) < min_sites:
+            continue
+        grouped[
+            (
+                rule_type,
+                str(alert.get("measurement_granularity")),
+                str(alert.get("target_pollutant")),
+            )
+        ].append(alert)
+    for (rule_type, _grain, _pollutant), items in grouped.items():
+        field_name, metric = _REGION_MERGE_SPECS[rule_type]
+        min_sites = int(getattr(config, field_name, 0) or 0)
+        if min_sites <= 0 or len(items) < min_sites:
             kept.extend(items)
             continue
-        primary = max(items, key=lambda a: float(a.get("total_rise_abs") or a.get("detail", {}).get("total_rise_abs") or 0))
-        primary["detail"]["region_stations"] = [
-            {
+
+        def _metric_value(alert: dict[str, Any]) -> float:
+            detail = alert.get("detail") or {}
+            raw = alert.get(metric, detail.get(metric))
+            try:
+                return float(raw or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        primary = max(items, key=_metric_value)
+        stations = []
+        for item in sorted(items, key=lambda a: str(a.get("station_id"))):
+            if item is primary:
+                continue
+            detail = item.get("detail") or {}
+            entry: dict[str, Any] = {
                 "station_id": item.get("station_id"),
                 "station_name": item.get("station_name"),
                 "station_value": item.get("station_value"),
-                "total_rise_abs": (item.get("detail") or {}).get("total_rise_abs"),
                 "air_quality_level": item.get("air_quality_level"),
             }
-            for item in sorted(items, key=lambda a: str(a.get("station_id")))
-            if item is not primary
-        ]
+            if rule_type == "continuous_rise":
+                entry["total_rise_abs"] = detail.get("total_rise_abs")
+            else:
+                entry["delta"] = detail.get("delta")
+                entry["baseline"] = detail.get("baseline")
+            stations.append(entry)
+        primary["detail"]["region_stations"] = stations
         primary["region_merged_count"] = len(items)
         kept.append(primary)
         suppressed.extend(item for item in items if item is not primary)
@@ -584,7 +657,8 @@ def evaluate_five_minute_cycle(
                     if other != station_id and other_ctx["hit"]
                 )
                 hit, detail = rule_ds(
-                    value, context["baseline"], pollutant, level, config, peer_same_direction
+                    value, context["baseline"], pollutant, level, config, peer_same_direction,
+                    peer_trimmed_mean=trimmed_peer_mean(all_values, station_id, config.ds_peer_trim_min_peers),
                 )
                 if hit:
                     outcome.candidates.append(_candidate(
@@ -706,7 +780,8 @@ def evaluate_pm25_hourly_cycle(
                 if other != station_id and other_ctx["hit"]
             )
             hit, detail = rule_ds(
-                value, context["baseline"], pollutant, level, config, peer_same_direction
+                value, context["baseline"], pollutant, level, config, peer_same_direction,
+                peer_trimmed_mean=trimmed_peer_mean(all_values, station_id, config.ds_peer_trim_min_peers),
             )
             if hit:
                 outcome.candidates.append(_candidate(
