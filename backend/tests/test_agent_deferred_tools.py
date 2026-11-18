@@ -225,7 +225,9 @@ async def test_tool_search_no_hit_returns_catalog(query_mode_deferred):
     assert probe in result["data"]["deferred_catalog"]
 
 
-async def test_tool_search_unavailable_without_optin():
+async def test_tool_search_unavailable_without_optin(monkeypatch):
+    # 隔离项目清单声明：jiangxi 已对 query 真实 opt-in，未隔离时本工具可用。
+    _isolate_project_declaration(monkeypatch)
     tool = ToolSearchTool(mode="query")
     result = await tool.execute(query="anything")
     assert result["success"] is False
