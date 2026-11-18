@@ -55,7 +55,7 @@ def test_pure_project_parent_contract_lists_only_project_children(monkeypatch):
     """纯项目父模式（共享父边界无记录）的委派契约只列项目 child_modes：
 
     清单外共享子模式对它不可委派（delegation_error 拒绝），不得出现在其
-    上下文；共享大气路由规则（_ROUTING_RULES）也不得带入非大气项目父。
+    上下文；共享大气路由规则已从契约构建移除（领域路由由项目编排提示词承载）。
     """
     from app.project_config.models import BackendManifest
 
