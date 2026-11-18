@@ -260,14 +260,12 @@ backend:
       scope: 站点秒/分/时/日/月季年、城市小时功能区聚合、区县日值的取数与核算，同比环比、分组聚合、缺测核对、目录解析；可按独立取数批次并行部署多个节点
       boundary: 只取数与统计核算，不做成因研判（归 noise_expert_analysis），不产报告图表、不成稿
       outputs: 结构化数据文件（file_path）+ 口径、时间范围和缺口说明（data_gaps）
-      max_iterations: 20
       timeout_seconds: 420
     noise_query_evaluation:
       positioning: 运行态与达标问数子 Agent：面向噪声事件、告警与 GB 3096 合规评价的取数与核算
       scope: 噪声事件清单、告警分析、站点运行状态、昼夜达标评价（功能区类别、对应限值、评价时段）；可按独立取数批次并行部署多个节点
       boundary: 只取数与核算，达标判定必须带功能区类别、限值与昼夜口径，不做成因研判、不产报告图表、不成稿
       outputs: 结构化数据文件（file_path）+ 口径、时间范围和缺口说明（data_gaps）
-      max_iterations: 20
       timeout_seconds: 420
     noise_expert_analysis:
       positioning: 声环境研判子 Agent：面向超标成因、敏感点影响与声源线索解读的专业判断
