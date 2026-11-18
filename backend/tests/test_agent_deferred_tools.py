@@ -49,6 +49,20 @@ def _probe_tool_name(mode: str = "query") -> str:
     raise AssertionError(f"query 模式白名单缺少探测工具候选：{sorted(mode_names)}")
 
 
+def _isolate_project_declaration(monkeypatch) -> None:
+    """隔离项目清单声明：部分项目（如 jiangxi）已在 project.yaml 真实 opt-in，
+    项目声明优先于共享表，会让本文件的共享表语义测试误红或语义漂移。
+    统一替换为"空声明项目上下文"——resolve 走共享表分支，其余调用点
+    （模式白名单等）不受影响。"""
+    from app.project_config.models import BackendManifest
+
+    monkeypatch.setattr(
+        tool_registry,
+        "_load_project_context",
+        lambda: SimpleNamespace(manifest=SimpleNamespace(backend=BackendManifest())),
+    )
+
+
 # ========================================
 # 1. 存根构造与豁免
 # ========================================
@@ -117,13 +131,15 @@ def test_apply_deferred_tool_stubs_exemptions():
 # ========================================
 
 
-def test_resolver_defaults_off_for_all_modes():
-    """共享层默认零 opt-in：任何模式 resolve 均为 None（零行为变化守门）。"""
+def test_resolver_defaults_off_for_all_modes(monkeypatch):
+    """共享表默认零 opt-in：无项目声明时任何模式 resolve 均为 None（零行为变化守门）。"""
+    _isolate_project_declaration(monkeypatch)
     for mode in ("query", "expert", "assistant", "office", "report", "unknown_mode_xyz"):
         assert resolve_deferred_tool_config(mode) is None, mode
 
 
 def test_resolver_shared_table_and_never_stub(monkeypatch):
+    _isolate_project_declaration(monkeypatch)
     monkeypatch.setitem(
         tool_registry.DEFERRED_TOOL_MODES, "query", ["execute_sql_query", "read_file"]
     )
@@ -182,6 +198,8 @@ def test_manifest_accepts_new_field():
 
 @pytest.fixture
 def query_mode_deferred(monkeypatch):
+    # 无论哪个项目检出运行，本 fixture 统一以共享表 opt-in。
+    _isolate_project_declaration(monkeypatch)
     monkeypatch.setitem(tool_registry.DEFERRED_TOOL_MODES, "query", [])
 
 
