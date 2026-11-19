@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { dashboardAssetUrl, fetchScreenSnapshot } from '@/api/bigScreen.js'
+import { dashboardAssetUrl, fetchScreenSnapshot } from '@/api/xuchang/bigScreen.js'
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000
 
