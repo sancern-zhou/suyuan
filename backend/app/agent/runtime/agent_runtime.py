@@ -55,11 +55,37 @@ def _records_have_progress(records) -> bool:
     return False
 
 
-class CustomAgentTerminalError(RuntimeError):
-    """A scheduled/custom Agent reached a non-retryable terminal failure.
+def _round_tool_signatures(records) -> frozenset:
+    """本轮工具调用签名集合（tool + 规范化 args），用于纯重复轮判定。"""
+    signatures = set()
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        signatures.add(json.dumps(
+            {"tool": record.get("tool_name"), "args": record.get("tool_input", {})},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ))
+    return frozenset(signatures)
 
-    也用于全模式的工具循环强制终止（同签名连续两次 loop-block）。
+
+def _round_progress(records, previous_signatures: frozenset | None) -> tuple[bool, frozenset | None]:
+    """判定本轮工具记录是否算进展，并返回更新后的签名基准。
+
+    纯重复轮（本轮全部调用与上一轮签名集合完全相同）即使全部成功也不算
+    进展——重复执行确定性调用不会产生新信息（循环守卫已对齐 ZCode 不拦截，
+    此规则让无进展熔断能兜住「重复成功调用」型空转）。空记录轮（压缩/纯文本）
+    不改变基准。
     """
+    signatures = _round_tool_signatures(records)
+    pure_repeat = bool(signatures) and signatures == previous_signatures
+    progress = _records_have_progress(records) and not pure_repeat
+    return progress, (signatures or previous_signatures)
+
+
+class CustomAgentTerminalError(RuntimeError):
+    """A custom scheduled Agent reached a non-retryable terminal failure."""
 
 
 @dataclass
@@ -334,8 +360,7 @@ class AgentRuntime:
                         async for event in self.finalizer.fatal_error(state, terminal_error):
                             yield event
                         return
-                    if isinstance(exc, CustomAgentTerminalError):
-                        # 工具循环等同源终止错误对所有模式均为不可恢复终态
+                    if state.mode == "custom" and isinstance(exc, CustomAgentTerminalError):
                         self._ensure_user_message_written(state)
                         deferred_event = await self._close_steering_event(state)
                         if deferred_event:
@@ -549,7 +574,10 @@ class AgentRuntime:
                 tool_events = [self.events.tool_result(state, tool_call_id, observation, False, tool_name)]
             else:
                 observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
-            if _records_have_progress(records):
+            progress, state.last_round_tool_signatures = _round_progress(
+                records, state.last_round_tool_signatures
+            )
+            if progress:
                 state.progress_seq += 1
             self._capture_multimodal_attachments(state, observation)
             self._capture_drawio_board_context(state, observation)
@@ -559,6 +587,7 @@ class AgentRuntime:
             self.writer.add_iteration(planner_result.thought, action, observation)
             self._observe_fixed_workflow(state, records)
             self._enforce_custom_tool_terminal_rules(state, action, records)
+            self._drain_loop_guard_reminders(state)
             for event in tool_events:
                 yield event
             submitted = self._submitted_result_from_records(records)
@@ -971,10 +1000,11 @@ class AgentRuntime:
         if not items:
             return
 
-        # 用户中途输入代表新意图：重置工具连击计数，明确指示下的重试不受罚
+        # 用户中途输入代表新意图：重置工具连击计数与纯重复轮基准，明确指示下的重试不受罚
         loop_guard = getattr(self.tool_coordinator, "loop_guard", None)
         if loop_guard is not None:
             loop_guard.reset()
+        state.last_round_tool_signatures = None
 
         self._ensure_user_message_written(state)
         messages: List[str] = []
@@ -1842,7 +1872,10 @@ class AgentRuntime:
             yield completed_result["message"]
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
-        if _records_have_progress(records):
+        progress, state.last_round_tool_signatures = _round_progress(
+            records, state.last_round_tool_signatures
+        )
+        if progress:
             state.progress_seq += 1
         self._capture_multimodal_attachments(state, observation)
         self._capture_drawio_board_context(state, observation)
@@ -1852,6 +1885,7 @@ class AgentRuntime:
         self.writer.add_iteration(planner_result.thought, action, observation)
         self._observe_fixed_workflow(state, records)
         self._enforce_custom_tool_terminal_rules(state, action, records)
+        self._drain_loop_guard_reminders(state)
 
         submitted = self._submitted_result_from_records(records)
         if submitted is not None:
@@ -2059,29 +2093,21 @@ class AgentRuntime:
                 raise CustomAgentTerminalError(
                     f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
                 )
-        # loop-block 终止规则对全部模式生效：block 提示已附带行动指引与上次结果，
-        # 同签名连续两次 block 说明模型无视指引原样重试，强制收尾避免空转。
-        blocked = next((
-            record for record in records
-            if isinstance(record.get("result"), dict)
-            and record["result"].get("loop_guard") is True
-            and record["result"].get("severity") == "block"
-        ), None)
-        if blocked is None:
-            if records:
-                state.last_loop_block_signature = None
+
+    def _drain_loop_guard_reminders(self, state: RunState) -> None:
+        """循环守卫提醒以用户消息注入下一轮上下文（对齐 ZCode system-reminder 注入）。"""
+        loop_guard = getattr(self.tool_coordinator, "loop_guard", None)
+        if loop_guard is None:
             return
-        signature = json.dumps(
-            {"tool": blocked.get("tool_name"), "args": blocked.get("tool_input", {})},
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        )
-        if state.last_loop_block_signature == signature:
-            raise CustomAgentTerminalError(
-                f"工具循环已终止: {blocked.get('tool_name')} 使用相同参数重复请求"
+        reminders = loop_guard.drain_pending_reminders()
+        for body in reminders:
+            self.writer.add_user_message(f"【系统提醒】{body}")
+        if reminders:
+            logger.info(
+                "loop_guard_reminders_injected",
+                session_id=state.session_id,
+                count=len(reminders),
             )
-        state.last_loop_block_signature = signature
 
     async def _complete_response(
         self,

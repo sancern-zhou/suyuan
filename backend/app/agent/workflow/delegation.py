@@ -73,6 +73,10 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
     if policy and DELEGATION_TOOLS.intersection(available_tools):
         from app.agent.workflow.target_mode_contract import build_target_mode_contract
 
+        # 纯项目父模式（共享父边界无记录）：清单外共享子模式不可委派（delegation_error
+        # 拒绝），契约只列项目 child_modes 且不携带共享大气路由规则，避免无关子模式与
+        # 领域语义进入项目父上下文；混合父（如 assistant）保留共享+项目全量契约。
+        contract_modes = None if mode in PARENT_CHILD_MODES else list(policy.child_modes)
         return (
             "\n\n## 项目内部工作流\n"
             "简单问题直接完成；只有独立问题、上下文隔离或明确依赖值得委派时才使用 DAG。"
@@ -85,7 +89,7 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
             f"允许子模式：{', '.join(policy.child_modes)}。"
             f"并发最多 {policy.max_concurrency}，累计节点 {policy.max_nodes}、重试 {policy.max_retries}、"
             f"补图 {policy.max_extensions} 次，总时长 {policy.timeout_seconds} 秒。\n"
-            + build_target_mode_contract()
+            + build_target_mode_contract(modes=contract_modes)
         )
     if mode not in PARENT_CHILD_MODES or not DELEGATION_TOOLS.intersection(available_tools):
         return ""

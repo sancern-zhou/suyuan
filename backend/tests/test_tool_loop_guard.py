@@ -1,4 +1,4 @@
-"""ToolLoopGuard unit tests."""
+"""ToolLoopGuard unit tests（对齐 ZCode：只观察+提醒注入，从不拦截）。"""
 
 import importlib.util
 from pathlib import Path
@@ -19,52 +19,32 @@ _guard = _load_module("tool_loop_guard", _guard_path)
 ToolLoopGuard = _guard.ToolLoopGuard
 
 
-def test_first_repeated_call_is_allowed():
+def test_warning_fires_only_at_threshold_point():
+    """每连击仅在阈值点（第 3 次）触发一次，第 4、5 次不再触发。"""
     guard = ToolLoopGuard()
-    assert guard.before_call("read_file", {"path": "/tmp/a"}) is None
-    assert guard.before_call("read_file", {"path": "/tmp/a"}) is None
+    args = {"path": "/tmp/a"}
+    assert guard.before_call("read_file", args) is None
+    assert guard.before_call("read_file", args) is None
+    warning = guard.before_call("read_file", args)
+    assert warning is not None
+    assert warning["severity"] == "warning"
+    assert warning["repeated"] == 3
+    assert warning["reminder_injected"] is True
+    assert guard.before_call("read_file", args) is None
+    assert guard.before_call("read_file", args) is None
 
 
-def test_soft_browser_tools_only_warn():
+def test_never_blocks_any_tool():
+    """任何工具、任意次数的重复调用都不产生 block——工具照常执行。"""
     guard = ToolLoopGuard()
-    assert guard.before_call("snapshot", {"format": "ai"}) is None
-    assert guard.before_call("snapshot", {"format": "ai"}) is None
-    result = guard.before_call("snapshot", {"format": "ai"})
-    assert result["severity"] == "warning"
-    assert result["loop_guard"] is True
-    assert result["success"] is False
-
-
-def test_hard_tools_eventually_block():
-    guard = ToolLoopGuard()
-    assert guard.before_call("navigate", {"url": "https://example.com"}) is None
-    assert guard.before_call("navigate", {"url": "https://example.com"}) is None
-    result = None
-    for _ in range(4):
-        result = guard.before_call("navigate", {"url": "https://example.com"})
-        if result is not None:
-            break
-    assert result is not None
-    assert result["severity"] in {"warning", "block"}
-
-    while result and result["severity"] != "block":
-        result = guard.before_call("navigate", {"url": "https://example.com"})
-    assert result["severity"] == "block"
-    assert result["loop_guard"] is True
-
-
-def test_normal_tool_warns_at_3_blocks_at_5():
-    guard = ToolLoopGuard()
-    args = {"station": "A001"}
-    assert guard.before_call("query_noise", args) is None
-    assert guard.before_call("query_noise", args) is None
-    assert guard.before_call("query_noise", args)["severity"] == "warning"
-    assert guard.before_call("query_noise", args)["severity"] == "warning"
-    assert guard.before_call("query_noise", args)["severity"] == "block"
+    args = {"url": "https://example.com"}
+    for _ in range(20):
+        outcome = guard.before_call("browser", args)
+        assert outcome is None or outcome["severity"] == "warning"
 
 
 def test_alternating_calls_do_not_accumulate_streak():
-    """连击制：不同调用穿插时计数重置，不应触发警告（对齐 ZCode 语义）。"""
+    """连击制：不同调用穿插时计数重置，不应触发警告。"""
     guard = ToolLoopGuard()
     a = {"path": "/tmp/a"}
     b = {"path": "/tmp/b"}
@@ -74,7 +54,7 @@ def test_alternating_calls_do_not_accumulate_streak():
 
 
 def test_reset_clears_streak_after_user_input():
-    """用户 steer 后 reset：明确指示下的重试不受罚。"""
+    """用户 steer 后 reset：明确指示下的重试不受罚（注入预算不重置）。"""
     guard = ToolLoopGuard()
     args = {"path": "/tmp/a"}
     guard.before_call("read_file", args)
@@ -82,37 +62,41 @@ def test_reset_clears_streak_after_user_input():
     guard.reset()
     assert guard.before_call("read_file", args) is None
     assert guard.before_call("read_file", args) is None
-    # reset 只清连击，不清结果缓存
-    assert guard._last_results == {}
 
 
-def test_block_includes_last_result_excerpt_and_guidance():
-    """block 附带上次真实结果摘要与行动指引，避免错误结果诱发原样重试。"""
+def test_drain_pending_reminders_returns_and_clears():
     guard = ToolLoopGuard()
     args = {"station": "A001"}
-    guard.before_call("query_noise", args)
-    guard.record_result("query_noise", args, {"success": True, "rows": 42, "data": "x" * 3000})
-    for _ in range(4):
+    for _ in range(3):
         guard.before_call("query_noise", args)
-    blocked = guard.before_call("query_noise", args)
-    assert blocked["severity"] == "block"
-    assert blocked["last_result_excerpt"] is not None
-    assert "rows" in blocked["last_result_excerpt"]
-    # 超长结果被截断
-    assert len(blocked["last_result_excerpt"]) <= _guard.LAST_RESULT_EXCERPT_LIMIT + 20
-    # 行动指引：禁止原样重试 + 三选一去向
-    summary = blocked["summary"]
-    assert "请勿重试" in summary or "禁止" in summary
-    assert "last_result_excerpt" in summary
-    assert "向用户" in summary
+    reminders = guard.drain_pending_reminders()
+    assert len(reminders) == 1
+    assert "query_noise" in reminders[0]
+    assert "完全相同的参数连续调用 3 次" in reminders[0]
+    assert "不要再次发起完全相同的调用" in reminders[0]
+    assert guard.drain_pending_reminders() == []
 
 
-def test_block_without_recorded_result_still_guides():
+def test_injection_budget_per_turn():
+    """每回合最多注入 3 条提醒：第 4 个连击只记日志（reminder_injected=False）。"""
     guard = ToolLoopGuard()
-    args = {"path": "/tmp/a"}
-    for _ in range(5):
+    for i in range(4):
+        args = {"index": i}
+        guard.before_call("read_file", args)  # 第 1 次（建签名）
         guard.before_call("read_file", args)
-    blocked = guard.before_call("read_file", args)
-    assert blocked["severity"] == "block"
-    assert blocked["last_result_excerpt"] is None
-    assert "更换参数" in blocked["summary"]
+        warning = guard.before_call("read_file", args)
+        assert warning is not None
+        expected_injected = i < 3
+        assert warning["reminder_injected"] is expected_injected
+    assert len(guard.drain_pending_reminders()) == 3
+
+
+def test_reminder_carries_redirection_hint():
+    """改道指引随提醒注入（委派轮询场景）。"""
+    guard = ToolLoopGuard()
+    args = {"action": "get", "run_id": "g1"}
+    for _ in range(3):
+        guard.before_call("manage_assistant_runs", args)
+    (reminder,) = guard.drain_pending_reminders()
+    assert "wait_seconds" in reminder
+    assert "改道" in reminder

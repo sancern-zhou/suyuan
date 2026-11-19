@@ -105,7 +105,8 @@ class WorkflowModeManifest(StrictModel):
     scope: str = Field(min_length=1)
     boundary: str = Field(min_length=1)
     outputs: str = Field(min_length=1)
-    max_iterations: int = Field(default=12, ge=1, le=120)
+    # None = 不设步数上限（靠上下文压缩续跑 + 无进展熔断停机，对齐共享子模式语义）
+    max_iterations: int | None = Field(default=None, ge=1, le=120)
     timeout_seconds: int = Field(default=240, ge=1, le=3600)
     require_counter_evidence: bool = False
 
