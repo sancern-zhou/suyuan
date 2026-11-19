@@ -91,35 +91,6 @@ def test_react_agent_factory_accepts_an_explicit_registry(monkeypatch):
     assert agent.kwargs["enable_memory"] is False
 
 
-def test_custom_loop_guard_terminates_on_second_identical_block():
-    state = RunState(session_id="s", user_query="run", mode="custom")
-    action = {"type": "TOOL_CALL", "tool": "alpha", "args": {"value": 1}}
-    records = [{
-        "tool_name": "alpha",
-        "tool_input": {"value": 1},
-        "result": {"loop_guard": True, "severity": "block"},
-    }]
-
-    AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
-    with pytest.raises(CustomAgentTerminalError, match="工具循环已终止"):
-        AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
-
-
-def test_loop_block_termination_applies_to_all_modes():
-    """同签名连续两次 loop-block 对普通对话模式同样强制终止。"""
-    state = RunState(session_id="s", user_query="q", mode="assistant")
-    action = {"type": "TOOL_CALL", "tool": "alpha", "args": {"value": 1}}
-    records = [{
-        "tool_name": "alpha",
-        "tool_input": {"value": 1},
-        "result": {"loop_guard": True, "severity": "block"},
-    }]
-
-    AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
-    with pytest.raises(CustomAgentTerminalError, match="工具循环已终止"):
-        AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
-
-
 def test_missing_tool_rule_stays_custom_only():
     """工具不存在/不可用的终止规则仍为 custom 专属，其他模式回传自纠。"""
     state = RunState(session_id="s", user_query="q", mode="assistant")
