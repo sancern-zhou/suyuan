@@ -49,6 +49,7 @@ import {
 } from './reactStoreSteering.js'
 import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership.js'
 import { createRunStreamTracker, observeRunStreamEvent, shouldReportMissingRunProgress } from './reactStoreRunReattach.js'
+import { buildQuestionResumeOptions } from './reactStoreInteractions.js'
 import {
   acknowledgeQueuedInput,
   enqueueUserInput,
@@ -691,8 +692,10 @@ export const useReactStore = defineStore('react', {
       return true
     },
 
-    async resolvePendingInteraction({ decision, response = null, answers = null } = {}) {
-      const interactionState = this.currentState
+    async resolvePendingInteraction({ decision, response = null, answers = null, targetState = null } = {}) {
+      // targetState：调用方指定的目标会话状态（浮窗传 assistant 状态，浮窗不切换全局模式）；
+      // 缺省为全局当前状态（全页工作区行为不变）。
+      const interactionState = targetState || this.currentState
       const interaction = interactionState?.pendingInteraction
       if (!interaction?.interaction_id || !interaction.session_id) return false
       const resolution = await resolveAgentInteraction(
@@ -703,12 +706,13 @@ export const useReactStore = defineStore('react', {
       interactionState.pendingInteraction = null
       if (interaction.kind === 'structured_question') {
         if (decision === 'answer' && resolution?.resume_query) {
-          await this.startAnalysis(resolution.resume_query, {
-            agentMode: resolution.mode || interaction.mode || interactionState.mode || this.currentMode,
-            synthetic: true,
-            syntheticMeta: { source: 'structured_question_resume', interaction_id: interaction.interaction_id },
-            queuedAlreadyShown: true
-          })
+          await this.startAnalysis(resolution.resume_query, buildQuestionResumeOptions({
+            resolution,
+            interaction,
+            interactionState,
+            currentMode: this.currentMode,
+            externalTarget: Boolean(targetState)
+          }))
         }
         return true
       }
@@ -1040,8 +1044,9 @@ export const useReactStore = defineStore('react', {
       prependHistory(this.currentState, messages, normalizeRestoredMessages)
     },
 
-    async loadMoreMessages() {
-      const state = this.currentState
+    async loadMoreMessages(targetState = null) {
+      // targetState：调用方指定的目标会话状态（浮窗传 assistant 状态）；缺省为全局当前状态。
+      const state = targetState || this.currentState
       const generation = accountGeneration()
       try {
         await loadHistoryPage(state, async (...args) => {
@@ -3102,20 +3107,22 @@ export const useReactStore = defineStore('react', {
     },
 
     // 暂停分析（与stopAnalysis相同）
-    async pauseAnalysis() {
-      freezeActiveAssistantOutput(this.currentState, { reason: 'paused' }, contentToString)
-      const activeRunId = this.currentState.activeRunId
+    async pauseAnalysis(targetState = null) {
+      // targetState：调用方指定的目标会话状态（浮窗传 assistant 状态）；缺省为全局当前状态。
+      const state = targetState || this.currentState
+      freezeActiveAssistantOutput(state, { reason: 'paused' }, contentToString)
+      const activeRunId = state.activeRunId
       if (activeRunId) {
-        this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
-        this.currentState.pendingPausedRunId = activeRunId
-        this.currentState.activeRunId = null
+        state.ignoredRunIds = [...(state.ignoredRunIds || []), activeRunId]
+        state.pendingPausedRunId = activeRunId
+        state.activeRunId = null
       }
-      this.currentState.isAnalyzing = false
-      if (this.currentMode === 'board' && this.currentState.board) this.currentState.board.readOnly = false
-      this.currentState.isComplete = false
-      this.currentState.error = null
-      this.currentState.isInterruption = false
-      void agentAPI.cancel(this.currentState.sessionId, activeRunId)
+      state.isAnalyzing = false
+      if (this.currentMode === 'board' && state.board) state.board.readOnly = false
+      state.isComplete = false
+      state.error = null
+      state.isInterruption = false
+      void agentAPI.cancel(state.sessionId, activeRunId)
       // 不添加系统消息
     },
 
