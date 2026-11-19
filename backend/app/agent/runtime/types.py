@@ -87,7 +87,6 @@ class RunState:
     deferred_tool_names: frozenset = field(default_factory=frozenset)
     discovered_tools: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
-    last_loop_block_signature: Optional[str] = None
     last_missing_tool_signature: Optional[str] = None
     fixed_workflow_progress: Dict[str, Any] = field(default_factory=dict)
     # 最近一次 LLM 调用的上下文占用快照（planner context_usage 事件数据）
