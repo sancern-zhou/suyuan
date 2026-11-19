@@ -11,12 +11,17 @@ frontend:
     hide_sidebar_brand: true  # 侧边栏不显示品牌名（标题仍保留）
   agent_modes:
     - query
-    - assistant
+    # 2026-11-19 知识问答由借用 assistant 模式 ID 改为独立 knowledge 模式
+    # （对标江苏）：assistant 是前端硬编码的通用助手（事项与建议面板、个人
+    # 记忆），改名复用会让知识问答带着助手专属能力错位出现，也没有模式级
+    # MEMORY.md；knowledge 是名实相符的共享模式 ID，前端/记忆/提示词契约
+    # 均按知识问答对待，显示名仍由下方 override 覆盖。
+    - knowledge
     - expert
     - report
   default_agent_mode: query
   agent_mode_overrides:
-    assistant:
+    knowledge:
       name: 声环境知识问答智能体
       description: 解答声环境标准、监测、评价与噪声治理相关知识问题
       welcome:
@@ -68,7 +73,7 @@ backend:
   data_source_map_enabled: false
   air_quality_standard_transition: false
   mode_prompt_files:
-    assistant: projects/jiangxi/prompts/knowledge_qa.md
+    knowledge: projects/jiangxi/prompts/knowledge_qa.md
     query: projects/jiangxi/prompts/query.md
     expert: projects/jiangxi/prompts/expert.md
     report: projects/jiangxi/prompts/report.md
@@ -92,10 +97,13 @@ backend:
     - call_jiangxi_noise_api
   fetchers_enabled: false
   agent_mode_tools:
-    assistant:
+    knowledge:
       - knowledge_qa_workflow
       - web_search
       - publish_session_file
+      # 模式级 MEMORY.md 维护（knowledge 非 assistant，提示词自动附加
+      # 长期记忆契约，需要 edit_file 才能执行增改删）
+      - edit_file
     expert:
       - list_session_resources
       - publish_session_file

@@ -38,7 +38,7 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.frontend.brand_name == "江西省噪声智能分析平台"
     assert context.manifest.frontend.agent_modes == [
         "query",
-        "assistant",
+        "knowledge",
         "expert",
         "report",
     ]
@@ -53,7 +53,7 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.backend.data_source_map_enabled is False
     assert context.manifest.backend.air_quality_standard_transition is False
     assert context.manifest.backend.mode_prompt_files == {
-        "assistant": "projects/jiangxi/prompts/knowledge_qa.md",
+        "knowledge": "projects/jiangxi/prompts/knowledge_qa.md",
         "query": "projects/jiangxi/prompts/query.md",
         "expert": "projects/jiangxi/prompts/expert.md",
         "report": "projects/jiangxi/prompts/report.md",
@@ -78,10 +78,11 @@ def test_jiangxi_project_disables_data_fetchers():
         "describe_jiangxi_noise_api",
         "call_jiangxi_noise_api",
     ]
-    assert context.manifest.backend.agent_mode_tools["assistant"] == [
+    assert context.manifest.backend.agent_mode_tools["knowledge"] == [
         "knowledge_qa_workflow",
         "web_search",
         "publish_session_file",
+        "edit_file",
     ]
     for mode in ("query", "expert", "chart"):
         assert "get_jiangxi_noise_data" in context.manifest.backend.agent_mode_tools[mode]
