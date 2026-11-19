@@ -24,7 +24,7 @@
       :has-more-messages="!!state.pagination?.hasMoreMessages"
       :total-message-count="state.pagination?.totalMessageCount || 0"
       :loading-more="!!state.pagination?.loadingMore"
-      @load-more="store.loadMoreMessages()"
+      @load-more="store.loadMoreMessages(state)"
       @preview-message-attachment="preview"
     />
     <div v-if="!policy.readOnly && quickPrompts.length && !state.isAnalyzing" class="floating-quick-prompts" aria-label="快捷提问">
@@ -47,7 +47,7 @@
       agent-mode="assistant"
       :placeholder="inputPlaceholder"
       @send="send"
-      @pause="store.pauseAnalysis()"
+      @pause="store.pauseAnalysis(state)"
     />
     <Transition name="items-drawer">
       <div v-if="itemsOpen" class="items-backdrop" @click.self="itemsOpen = false">
@@ -121,8 +121,11 @@ function close() { emit('close') }
 async function resolveInteraction(resolution) {
   if (interactionResolving.value) return
   interactionResolving.value = true
-  try { await store.resolvePendingInteraction(resolution) }
-  catch (failure) { error.value = failure.message || '操作失败' }
+  try {
+    // resolve 必须作用于浮窗的 assistant 状态：全局 currentMode 可能停在别的
+    // 模式（浮窗不切换全局模式），缺省的 currentState 里没有这份待答交互。
+    await store.resolvePendingInteraction({ ...resolution, targetState: state.value })
+  } catch (failure) { error.value = failure.message || '操作失败' }
   finally { interactionResolving.value = false }
 }
 </script>
