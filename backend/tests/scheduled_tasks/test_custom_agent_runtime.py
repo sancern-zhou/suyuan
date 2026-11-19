@@ -6,7 +6,12 @@ from app.agent import tool_adapter
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.tool_registry import AGENT_HIDDEN_TOOL_NAMES
 from app.agent.react_agent import create_react_agent
-from app.agent.runtime.agent_runtime import AgentRuntime, CustomAgentTerminalError
+from app.agent.runtime.agent_runtime import (
+    _round_progress,
+    _round_tool_signatures,
+    AgentRuntime,
+    CustomAgentTerminalError,
+)
 from app.agent.runtime.types import RunState
 
 
@@ -322,3 +327,54 @@ async def test_custom_runtime_breaks_after_two_deterministic_model_failures():
     assert calls == 2
     assert events[-1]["type"] == "fatal_error"
     assert "已熔断" in events[-1]["data"]["error"]
+
+
+# --------------------------------------------------------------------- #
+# 纯重复轮进度判定（重复成功调用型空转的兜底）
+# --------------------------------------------------------------------- #
+
+def _tool_record(tool="alpha", args=None, success=True):
+    return {
+        "tool_name": tool,
+        "tool_input": args or {"value": 1},
+        "result": {"success": success},
+    }
+
+
+def test_round_progress_new_call_counts():
+    progress, baseline = _round_progress([_tool_record()], None)
+    assert progress is True
+    assert baseline is not None
+
+
+def test_round_progress_identical_round_does_not_count_even_on_success():
+    _, baseline = _round_progress([_tool_record()], None)
+    progress, kept = _round_progress([_tool_record()], baseline)
+    assert progress is False  # 重复成功调用：无新信息，交给无进展熔断
+    assert kept == baseline
+
+
+def test_round_progress_new_signature_counts_again():
+    _, baseline = _round_progress([_tool_record()], None)
+    progress, baseline = _round_progress(
+        [_tool_record(), _tool_record(args={"value": 2})], baseline
+    )
+    assert progress is True  # 出现新调用（参数不同）即算进展
+
+
+def test_round_progress_failed_results_never_count():
+    progress, _ = _round_progress([_tool_record(success=False)], None)
+    assert progress is False
+
+
+def test_round_progress_empty_records_keep_baseline():
+    _, baseline = _round_progress([_tool_record()], None)
+    progress, kept = _round_progress([], baseline)
+    assert progress is False  # 空 records（压缩轮等）无进展
+    assert kept == baseline   # 但基准不变，后续同签名轮仍判纯重复
+
+
+def test_round_tool_signatures_ignores_key_order():
+    a = [{"tool_name": "alpha", "tool_input": {"x": 1, "y": 2}}]
+    b = [{"tool_name": "alpha", "tool_input": {"y": 2, "x": 1}}]
+    assert _round_tool_signatures(a) == _round_tool_signatures(b)

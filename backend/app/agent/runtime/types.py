@@ -88,6 +88,8 @@ class RunState:
     discovered_tools: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
     last_missing_tool_signature: Optional[str] = None
+    # 上一轮工具调用签名集合（纯重复轮判定基准；steering 后清空）
+    last_round_tool_signatures: Optional[frozenset] = None
     fixed_workflow_progress: Dict[str, Any] = field(default_factory=dict)
     # 最近一次 LLM 调用的上下文占用快照（planner context_usage 事件数据）
     last_context_usage: Optional[Dict[str, Any]] = None

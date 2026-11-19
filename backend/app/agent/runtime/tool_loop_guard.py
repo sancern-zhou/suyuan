@@ -6,7 +6,9 @@
 守卫只观察、不干预：达到阈值时不拦截、不缓存、不产生错误结果——工具
 照常执行，仅排队一条文本提醒，由 runtime 在本轮结束后以用户消息注入
 下一轮上下文（等价 ZCode 的 <system-reminder> 注入）。每连击仅在阈值
-点触发一次，每回合注入上限 max_warnings_per_turn 条，超出只记日志。
+点触发一次；注入上限 max_warnings_per_turn 按运行计——守卫随
+AgentRuntime 每次运行新建，一次运行即一条用户消息的完整回合，故一次
+运行内最多注入 3 条，超出只记日志。
 状态查询类工具的改道指引（_REDIRECTION_HINTS）随提醒带回。
 """
 
@@ -27,6 +29,8 @@ REMINDER_BODY_TEMPLATE = (
 @dataclass
 class ToolLoopGuard:
     warning_threshold: int = 3
+    # 命名沿用 ZCode maxBudgetWarningsPerTurn；实际按运行计（守卫随
+    # AgentRuntime 每次运行新建，一次运行=一条用户消息的完整回合）
     max_warnings_per_turn: int = 3
 
     # 状态查询类工具的循环改道指引：把正确用法随提醒带回（提醒即召回钩子）。
@@ -83,7 +87,7 @@ class ToolLoopGuard:
         return reminders
 
     def reset(self) -> None:
-        """用户新输入/steering 后重置连击（注入预算按回合计，不在此重置）。"""
+        """用户新输入/steering 后重置连击（注入预算按运行计，不在此重置）。"""
         self._last_signature = None
         self._streak = 0
 
