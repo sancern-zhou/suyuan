@@ -55,6 +55,35 @@ def _records_have_progress(records) -> bool:
     return False
 
 
+def _round_tool_signatures(records) -> frozenset:
+    """本轮工具调用签名集合（tool + 规范化 args），用于纯重复轮判定。"""
+    signatures = set()
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        signatures.add(json.dumps(
+            {"tool": record.get("tool_name"), "args": record.get("tool_input", {})},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ))
+    return frozenset(signatures)
+
+
+def _round_progress(records, previous_signatures: frozenset | None) -> tuple[bool, frozenset | None]:
+    """判定本轮工具记录是否算进展，并返回更新后的签名基准。
+
+    纯重复轮（本轮全部调用与上一轮签名集合完全相同）即使全部成功也不算
+    进展——重复执行确定性调用不会产生新信息（循环守卫已对齐 ZCode 不拦截，
+    此规则让无进展熔断能兜住「重复成功调用」型空转）。空记录轮（压缩/纯文本）
+    不改变基准。
+    """
+    signatures = _round_tool_signatures(records)
+    pure_repeat = bool(signatures) and signatures == previous_signatures
+    progress = _records_have_progress(records) and not pure_repeat
+    return progress, (signatures or previous_signatures)
+
+
 class CustomAgentTerminalError(RuntimeError):
     """A custom scheduled Agent reached a non-retryable terminal failure."""
 
@@ -545,7 +574,10 @@ class AgentRuntime:
                 tool_events = [self.events.tool_result(state, tool_call_id, observation, False, tool_name)]
             else:
                 observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
-            if _records_have_progress(records):
+            progress, state.last_round_tool_signatures = _round_progress(
+                records, state.last_round_tool_signatures
+            )
+            if progress:
                 state.progress_seq += 1
             self._capture_multimodal_attachments(state, observation)
             self._capture_drawio_board_context(state, observation)
@@ -968,10 +1000,11 @@ class AgentRuntime:
         if not items:
             return
 
-        # 用户中途输入代表新意图：重置工具连击计数，明确指示下的重试不受罚
+        # 用户中途输入代表新意图：重置工具连击计数与纯重复轮基准，明确指示下的重试不受罚
         loop_guard = getattr(self.tool_coordinator, "loop_guard", None)
         if loop_guard is not None:
             loop_guard.reset()
+        state.last_round_tool_signatures = None
 
         self._ensure_user_message_written(state)
         messages: List[str] = []
@@ -1832,7 +1865,10 @@ class AgentRuntime:
             yield completed_result["message"]
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
-        if _records_have_progress(records):
+        progress, state.last_round_tool_signatures = _round_progress(
+            records, state.last_round_tool_signatures
+        )
+        if progress:
             state.progress_seq += 1
         self._capture_multimodal_attachments(state, observation)
         self._capture_drawio_board_context(state, observation)
