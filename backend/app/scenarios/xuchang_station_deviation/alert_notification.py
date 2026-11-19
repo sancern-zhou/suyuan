@@ -303,7 +303,11 @@ def _dispatch_sentences(alert: dict[str, Any]) -> list[str]:
 
 
 def _region_merge_sentence(alert: dict[str, Any]) -> str:
-    """区域合并附注：主告警带 region_stations 时列出同窗口合并的其余站点。"""
+    """区域合并附注：主告警带 region_stations 时列出同窗口合并的其余站点。
+
+    连续抬升与单点突升共用该清单结构（CL 主告警取累计抬升最大站、DS 取
+    跳变增量最大站），文案按规则类型区分措辞。
+    """
     region_stations = (alert.get("detail") or {}).get("region_stations") or []
     if not region_stations:
         return ""
@@ -313,9 +317,11 @@ def _region_merge_sentence(alert: dict[str, Any]) -> str:
         f"{_fmt(item.get('station_value'))}{unit}"
         for item in region_stations
     )
+    is_sudden = str(alert.get("rule_type") or "") == "sudden_rise"
+    kind = "单点突升" if is_sudden else "连续抬升"
     return (
-        f"同窗口另有{len(region_stations)}个站点同因子连续抬升"
-        f"（{names}），已合并为本条区域告警，图表展示的是抬升幅度最大的站点。"
+        f"同窗口另有{len(region_stations)}个站点同因子{kind}"
+        f"（{names}），已合并为本条区域告警，图表展示的是{'突升' if is_sudden else '抬升'}幅度最大的站点。"
     )
 
 

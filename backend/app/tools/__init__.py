@@ -465,6 +465,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
 
     # MySQL 采集库长历史数据查询工具（许昌本地站点/城市小时、逐日、PM2.5 年均值）：
     # 模块本体与数据源均属许昌（backend/app/tools/xuchang/），按项目声明启用。
+    # 共享 main 不注册（其他部署无许昌采集库，注册也查不到数据）。
     if is_project_tool_enabled(context, "xuchang-air-quality", "execute_crawler_sql_query"):
         try:
             from app.tools.xuchang.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool

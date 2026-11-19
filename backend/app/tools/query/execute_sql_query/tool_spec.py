@@ -3,9 +3,8 @@
 断言锚点 = 当前默认描述（基础文案 + AIR_QUALITY_SCHEMA_GUIDE）的真实内容：
 国控站小时/日长历史（dat_station_*）契约已从默认描述与白名单移除（归
 execute_crawler_sql_query / 项目配置层），与 xuchang 分支契约方向一致。
-文件尾部同时承载许昌路由/白名单差异契约——其配置来自
-projects/xuchang/project.yaml 的 backend.tool_options.execute_sql_query
-（显式 project_id="xuchang" 构造，与部署环境变量无关）。
+许昌的路由/白名单差异契约属 xuchang 分支自持 spec——其配置来自
+projects/xuchang/project.yaml 的 backend.tool_options.execute_sql_query。
 """
 
 from app.tools.query.execute_sql_query.tool import ExecuteSQLQueryTool
@@ -54,19 +53,3 @@ def test_execute_sql_query_default_tables_exclude_station_long_history():
     assert "dat_zhongda_station_hour" in allowed
     assert "dat_zhongda_city_hour" in allowed
     assert "currentairquality" in allowed
-
-
-def test_xuchang_schema_routes_station_long_history_to_crawler():
-    tool = ExecuteSQLQueryTool(project_id="xuchang")
-    description = tool.get_function_schema()["description"]
-
-    assert "监测数据SQL Server查询工具（许昌）。" in description
-    assert "改用 execute_crawler_sql_query" in description
-    assert "国控站点日值（日及以上）优先 query_airdata_platform" in description
-    assert "dat_station_hour" not in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_station_day" not in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_zhongda_station_hour" in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_station_hour（站点小时）和dat_station_day（站点日）" not in description
-    # 受限白名单不含共享默认里的气象/抓取侧表
-    assert "era5_reanalysis_data" not in tool.sql_validator.ALLOWED_TABLES
-    assert "dust_forecasts" not in tool.sql_validator.ALLOWED_TABLES

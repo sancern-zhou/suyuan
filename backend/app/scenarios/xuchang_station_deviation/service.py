@@ -475,7 +475,8 @@ class XuchangStationDeviationAlertService:
         expected_hour_count = int(expected_hour[0]["count"] or 0) if expected_hour else 0
         hour_rows = self._query(
             f"""
-            SELECT station_code, station_name, aqi, pm25, pm10, o3, no2, so2, co, time_point
+            SELECT station_code, station_name, aqi, pm25, pm10, o3, no2, so2, co,
+                   so2_mark, no2_mark, o3_mark, co_mark, pm10_mark, pm25_mark, time_point
             FROM dbo.dat_zhongda_station_hour
             WHERE data_table_type = 'Act' AND parameter_type = 'gp'
               AND station_code IN ({placeholders})
@@ -494,6 +495,11 @@ class XuchangStationDeviationAlertService:
                 "aqi": row["aqi"],
                 "pm25": row["pm25"], "pm10": row["pm10"], "o3": row["o3"],
                 "no2": row["no2"], "so2": row["so2"], "co": row["co"],
+                # 小时表同样带质控标记列：标记时段按无效值处理（不参与基线
+                # 与判定，图表留空断线），与分钟表口径一致。
+                "so2_mark": row["so2_mark"], "no2_mark": row["no2_mark"],
+                "o3_mark": row["o3_mark"], "co_mark": row["co_mark"],
+                "pm10_mark": row["pm10_mark"], "pm25_mark": row["pm25_mark"],
                 "data_time": row["time_point"],
             }
             for row in hour_rows
@@ -577,23 +583,29 @@ class XuchangStationDeviationAlertService:
         if not field:
             return None
         station_id = str(alert.get("station_id") or "")
-        points: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
+        # 值为 None 的点表示该槽数据无效（带质控标识）：保留时间轴位置但
+        # 不画值，matplotlib 在 None 处断开折线，避免跨无效段连线。
+        points: dict[str, list[tuple[datetime, float | None]]] = defaultdict(list)
         station_names: dict[str, str] = {}
         for row in rows:
             current_id = str(row.get("station_id") or "")
             name = row.get("name") or row.get("station_name")
             if current_id and name:
                 station_names[current_id] = str(name)
-            value = _float(row.get(field))
             timestamp = row.get("data_time")
-            if value is None or not isinstance(timestamp, datetime):
+            if not isinstance(timestamp, datetime):
                 continue
             if row.get("data_source") != ("hour" if alert.get("measurement_granularity") == "hour" else "minute"):
                 continue
-            if row.get("data_source") == "minute" and _has_mark(row.get(f"{field}_mark")):
+            if _has_mark(row.get(f"{field}_mark")):
+                # 分钟表与小时表的质控标识均视为无效：该槽留空，折线断开。
+                points[current_id].append((timestamp, None))
                 continue
-            points[str(row.get("station_id") or "")].append((timestamp, value))
-        if not points:
+            value = _float(row.get(field))
+            if value is None:
+                continue
+            points[current_id].append((timestamp, value))
+        if not any(value is not None for values in points.values() for _timestamp, value in values):
             return None
         # The chart is for dispatch use: resolve every legend entry through
         # the station name returned by the monitoring tables and never expose
@@ -610,7 +622,7 @@ class XuchangStationDeviationAlertService:
         padding = max(timedelta(minutes=2.5), span * 0.05)
         ax.set_xlim(chart_start - padding, chart_end + padding)
         for current_id, values in sorted(points.items()):
-            values.sort()
+            values.sort(key=lambda item: item[0])
             ax.plot([item[0] for item in values], [item[1] for item in values], marker="o" if len(values) < 20 else None,
                     linewidth=2.2 if current_id == station_id else 1.0,
                     color="#d62728" if current_id == station_id else None,
@@ -764,8 +776,7 @@ class XuchangStationDeviationAlertService:
         if not station_ids:
             return None
         cell_text = [[names.get(sid, "未命名站点")] + [
-            f"{latest[sid][p][1]:.2f}*" if p in latest[sid] and marked[sid][p] else
-            f"{latest[sid][p][1]:.2f}" if p in latest[sid] else "—"
+            f"{latest[sid][p][1]:.2f}" if p in latest[sid] and not marked[sid][p] else "—"
             for p in pollutants
         ] for sid in station_ids]
         fig, ax = plt.subplots(figsize=(11, max(2.8, 0.55 * len(cell_text) + 1.5)), dpi=160)
@@ -783,11 +794,8 @@ class XuchangStationDeviationAlertService:
                 if (sid, pollutant) in alerted:
                     cell.set_facecolor("#ffe0e0")
                     cell.set_edgecolor("#d62728"); cell.set_linewidth(2.0)
-                if marked[sid][pollutant]:
-                    cell.get_text().set_color("#888888")
-                    cell.get_text().set_fontstyle("italic")
         ax.set_title(
-            f"多因子污染物浓度综合表（{slot_key:%m-%d %H:%M} 快照，PM2.5 为上一小时值；红框为告警因子，灰色斜体*为带标识数据）",
+            f"多因子污染物浓度综合表（{slot_key:%m-%d %H:%M} 快照，PM2.5 为上一小时值；红框为告警因子，—为缺测或带标识（无效）数据）",
             fontproperties=font, pad=16)
         apply_font_to_figure(fig)
         event_id = alerts[0].get("event_id", "multifactor")

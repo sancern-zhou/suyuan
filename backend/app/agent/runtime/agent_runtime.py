@@ -1955,7 +1955,7 @@ class AgentRuntime:
         logger.warning(
             "agent_runtime_truncated_tool_call_recovered",
             iteration=state.iteration,
-            tool_name=tool_name,
+            tool_name=error.tool_name,
             tool_call_id=tool_use_id,
             received_chars=received_chars,
             recovery_count=state.truncated_tool_call_recoveries,

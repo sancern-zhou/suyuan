@@ -28,6 +28,7 @@ from app.scenarios.xuchang_station_deviation.rule_engine import (
     evaluate_pm25_hourly_cycle,
     level_name_for,
     new_rule_state,
+    trimmed_peer_mean,
 )
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -175,6 +176,62 @@ def test_ds_suppressed_when_neighbors_rise_too():
         rows.append(_row(sid, slot, {"pm10": current[sid]}))
     outcome = _cycle(rows, slot)
     assert _slot_values(outcome, "sudden_rise") == []
+
+
+def test_trimmed_peer_mean_removes_extremes():
+    # 剔除极值口径：对照站 [40,40,70,70,70] 去最高/最低 → mean(40,70,70)。
+    values = {"a": 10.0, "b": 40.0, "c": 40.0, "d": 70.0, "e": 70.0, "f": 70.0}
+    assert trimmed_peer_mean(values, "a", 3) == pytest.approx((40.0 + 70.0 + 70.0) / 3)
+    # 对照站不足（无法剔除极值）→ None，条件不启用。
+    assert trimmed_peer_mean({"a": 10.0, "b": 40.0}, "a", 3) is None
+    assert trimmed_peer_mean(values, "a", 99) is None
+
+
+def test_ds_suppressed_below_peer_trimmed_mean():
+    # DS 附加条件：本站浓度需高于同组其余站点剔除极值后的均值。
+    # 对照站 [40,40,90,90,90] 去极值均值 = (40+90+90)/3 ≈ 73.3；
+    # a 40→55（Δ15 ≥ 良档阈值 15，双门限过、邻站同向 0），但 55 < 73.3 → 抑制。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    base = {"a": 40.0, "b": 90.0, "c": 90.0, "d": 90.0, "e": 40.0, "f": 40.0}
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 60.0 if sid == "a" else base[sid]}, source="hour"))
+        rows.extend(_history_rows(sid, [base[sid]] * 4, slot))
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {"pm10": 55.0 if sid == "a" else base[sid]}))
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "sudden_rise") == []
+
+
+def test_ds_suppressed_when_equal_to_peer_trimmed_mean():
+    # 严格高于才成立：对照站 [40,55,70,40,70] 去极值均值 = (40+55+70)/3 = 55，
+    # a=55 等于均值 → 不触发。对照站高值档位抬到中度（阈值 45）避免邻站同向。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    current = {"a": 55.0, "b": 40.0, "c": 55.0, "d": 70.0, "e": 40.0, "f": 70.0}
+    rows = []
+    for sid in STATIONS:
+        level_value = 60.0 if sid == "a" else 300.0
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": level_value}, source="hour"))
+        rows.extend(_history_rows(sid, [40.0] * 4, slot))
+        rows.append(_row(sid, slot, {"pm10": current[sid]}))
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "sudden_rise") == []
+
+
+def test_ds_skips_trimmed_mean_condition_with_few_peers():
+    # 有效站只有 3 个（对照 2 个，无法剔除极值）→ 附加条件不启用，
+    # DS 双门限过即触发；detail.peer_trimmed_mean=None 表示未启用。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS[:3]:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 60.0 if sid == "a" else 40.0}, source="hour"))
+        rows.extend(_history_rows(sid, [40.0] * 4, slot))
+    for sid in STATIONS[:3]:
+        rows.append(_row(sid, slot, {"pm10": 55.0 if sid == "a" else 40.0}))
+    outcome = _cycle(rows, slot)
+    rises = _slot_values(outcome, "sudden_rise")
+    assert len(rises) == 1 and rises[0]["station_id"] == "a"
+    assert rises[0]["detail"]["peer_trimmed_mean"] is None
 
 
 def test_ds_single_station_still_fires_with_two_neighbors_flat():
@@ -410,6 +467,52 @@ def test_pm25_hourly_ds_suppressed_when_region_rises():
     assert [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"] == []
 
 
+def test_pm25_hourly_ds_suppressed_below_peer_trimmed_mean():
+    # 小时版同样受附加条件约束：a 50→65（轻度档阈值 12.5 过、邻站同向 0），
+    # 对照站 [40,40,90,90,90] 去极值均值 ≈73.3 → 65 < 73.3 → 抑制。
+    hour = datetime(2026, 9, 12, 8, 0, tzinfo=TZ)
+    base = {"a": 50.0, "b": 90.0, "c": 90.0, "d": 90.0, "e": 40.0, "f": 40.0}
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, hour - timedelta(hours=1), {"pm25": base[sid]}, source="hour"))
+        rows.append(_row(sid, hour, {"pm25": 65.0 if sid == "a" else base[sid]}, source="hour"))
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour, config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    assert [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"] == []
+
+
+def test_pm25_hourly_marked_current_value_is_invalid():
+    # 小时值带质控标记同样无效：当前槽带标记不判 DS/OL，且不参与 1h 选档
+    #（望田路111号 2026-11-13 12/13 点零值校准场景）。
+    hour = datetime(2026, 9, 12, 8, 0, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, hour - timedelta(hours=1), {"pm25": 40.0}, source="hour"))
+        marks = {"pm25": "H"} if sid == "a" else None
+        rows.append(_row(sid, hour, {"pm25": 200.0 if sid == "a" else 40.0}, marks=marks, source="hour"))
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour, config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    assert ("hour", "a", "PM2.5") not in outcome.current_values
+    assert all(c["station_id"] != "a" for c in outcome.candidates)
+
+
+def test_pm25_hourly_marked_baseline_hour_breaks_ds():
+    # 基线小时带标记 → 基线缺失、DS 不判，不再产生“基线 0”的伪突升
+    #（2026-11-13 14:00 实际案例：13:00 标记零值进基线，baseline=0 误报）。
+    hour = datetime(2026, 9, 12, 8, 0, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        marks = {"pm25": "BB"} if sid == "a" else None
+        rows.append(_row(sid, hour - timedelta(hours=1), {"pm25": 0.0}, marks=marks, source="hour"))
+        rows.append(_row(sid, hour, {"pm25": 28.0 if sid == "a" else 40.0}, source="hour"))
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour, config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    assert [c for c in outcome.candidates if c["rule_type"] == "sudden_rise" and c["station_id"] == "a"] == []
+
+
 def test_pm25_hourly_cl_three_hours():
     # 连续 3 小时上涨 40→55→65→75，基线取起点前一小时 40：
     # 累计 35 ≥ max(40×0.5, 25)=25，各段 15/10/10 ≥ 5.25 → 触发。
@@ -523,6 +626,81 @@ def test_regional_rise_merge_can_be_disabled():
         config=AirAlertRuleConfig(cl_region_merge_sites=0),
     )
     assert len([c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]) == 6
+
+
+# ---- DS 区域合并（2026-11-18 缝隙修复）----
+# 恰好 2 站同窗口双命中 DS 时，彼此的邻站同向抑制（阈值 2）都不到门槛，
+# 会推出两条互相矛盾的"单点突升"；ds_region_merge_sites=2 收口为一条。
+
+def _dual_ds_run(config: AirAlertRuleConfig | None = None):
+    """两站同窗口双命中 DS：a 40→55（Δ15）、b 40→57（Δ17），其余 4 站走平。
+
+    良档（小时 60 → PM10 良）阈值 max(40×0.3, 15)=15，两站都过；彼此的
+    邻站同向计数 1 < 2 互不抑制；剔除极值均值 40，两站都高于均值。
+    """
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        hour_value = 60.0 if sid in {"a", "b"} else 40.0
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": hour_value}, source="hour"))
+        rows.extend(_history_rows(sid, [40.0] * 4, slot))
+    current = {"a": 55.0, "b": 57.0, "c": 40.0, "d": 40.0, "e": 40.0, "f": 40.0}
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {"pm10": current[sid]}))
+    return _cycle(rows, slot, config=config)
+
+
+def test_dual_sudden_rise_merged_to_single_primary():
+    # 两站双命中 DS → 合并为一条：跳变增量最大的站（b，Δ17）做主告警，
+    # a 进 region_stations 清单与 region_merged 抑制流水。
+    outcome = _dual_ds_run()
+    rises = [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"]
+    assert len(rises) == 1
+    primary = rises[0]
+    assert primary["station_id"] == "b"
+    assert primary["region_merged_count"] == 2
+    assert len(primary["detail"]["region_stations"]) == 1
+    peer = primary["detail"]["region_stations"][0]
+    assert peer["station_id"] == "a"
+    assert peer["delta"] == 15.0 and peer["baseline"] == 40.0
+    assert peer["station_value"] == 55.0
+    assert len(outcome.region_merged) == 1
+    assert outcome.region_merged[0]["station_id"] == "a"
+
+
+def test_dual_sudden_rise_merge_can_be_disabled():
+    # ds_region_merge_sites=0：不合并，两站各自保留候选（旧行为）。
+    outcome = _dual_ds_run(config=AirAlertRuleConfig(ds_region_merge_sites=0))
+    rises = [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"]
+    assert len(rises) == 2
+    assert {c["station_id"] for c in rises} == {"a", "b"}
+    assert outcome.region_merged == []
+
+
+def test_dual_sudden_rise_merge_audited_in_push_log(tmp_path):
+    # 被合并站以 regional_merge 抑制入库：不推送、流水 merged_into_event_id
+    # 指回主告警，与 CL 区域合并同一管线。
+    outcome = _dual_ds_run()
+    primary = next(c for c in outcome.candidates if c["rule_type"] == "sudden_rise")
+    loser = outcome.region_merged[0]
+    loser["suppress_reason"] = "regional_merge"
+    loser["merged_into_event_id"] = primary["event_id"]
+    store = AlertStateStore(tmp_path)
+    log_store = PushLogStore(tmp_path)
+    pushed, suppressed, _summary = apply_push_chain(
+        list(outcome.candidates), store=store, config=AirAlertRuleConfig(),
+        now=datetime(2026, 9, 12, 8, 10, tzinfo=TZ), log_store=log_store,
+        recovery_metrics=outcome.recovery_metrics,
+        pre_suppressed=[{"alert": loser, "reason": "regional_merge"}],
+    )
+    assert len(pushed) == 1 and pushed[0]["station_id"] == "b"
+    assert [item["reason"] for item in suppressed] == ["regional_merge"]
+    log_file = next(iter((tmp_path / "push_log").glob("*.jsonl")))
+    entries = [json.loads(line) for line in log_file.read_text(encoding="utf-8").strip().splitlines()]
+    merge_entries = [e for e in entries if e["reason"] == "regional_merge"]
+    assert len(merge_entries) == 1
+    assert merge_entries[0]["station_id"] == "a"
+    assert merge_entries[0]["merged_into_event_id"] == primary["event_id"]
 
 
 # ---- 推送链协同（引擎产物 → 管控）----

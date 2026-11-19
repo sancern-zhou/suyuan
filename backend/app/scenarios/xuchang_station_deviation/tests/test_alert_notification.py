@@ -173,12 +173,43 @@ def test_region_merged_alerts_listed_in_notice():
     assert "文教园区88" in message and "椹涧乡82" in message
     assert "图表展示的是抬升幅度最大的站点" in message
 
-    # 兜底文案同样要体现区域合并
+
+def test_region_merged_sudden_rise_wording():
+    # DS 区域合并（2026-11-18 缝隙修复）：合并附注按规则类型区分措辞，
+    # 不再把单点突升写成"连续抬升"。
+    primary = _deviation_alert(
+        target_pollutant="PM25",
+        station_value=57.0,
+        rule_type="sudden_rise",
+        rule="sudden_rise",
+        rule_label="单点突升",
+        detail={
+            "baseline": 40.0,
+            "delta": 17.0,
+            "region_stations": [
+                {
+                    "station_id": "1012A", "station_name": "望田路111号",
+                    "station_value": 55.0, "delta": 15.0, "baseline": 40.0,
+                },
+            ],
+        },
+        pollutant_source_features={"status": "not_calculated"},
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": primary, "evidence": _deviation_evidence()},
+    ]))
+    assert "同窗口另有1个站点同因子单点突升" in message
+    assert "望田路111号55" in message
+    assert "图表展示的是突升幅度最大的站点" in message
+    assert "连续抬升" not in message
+
+    # 兜底文案同样要体现区域合并（按 DS 措辞）
     fallback = compose_station_alert_fallback_message(_package([
         {"alert": primary, "evidence": _deviation_evidence()},
     ]))
-    assert "同窗口另有2个站点同因子连续抬升" in fallback
-    assert "文教园区88" in fallback
+    assert "同窗口另有1个站点同因子单点突升" in fallback
+    assert "望田路111号55" in fallback
+    assert "图表展示的是突升幅度最大的站点" in fallback
 
     # 非区域合并告警不受影响
     plain = compose_station_alert_message(_package([

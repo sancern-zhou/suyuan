@@ -49,18 +49,6 @@ class ToolLoopGuard:
     _warnings_injected: int = field(default=0, init=False, repr=False)
     _pending_reminders: List[str] = field(default_factory=list, init=False, repr=False)
 
-    # 状态查询类工具的循环改道指引：拦截不是终点，把正确用法随错误信息带回
-    # （错误信息即召回钩子）。委派轮询风暴事故（2026-11-08 复盘）后引入。
-    _REDIRECTION_HINTS: Dict[str, str] = field(
-        default_factory=lambda: {
-            "manage_assistant_runs": (
-                " 改道：委派进度查询已无进展——需要等待时用 action=get 且传 "
-                "wait_seconds（如 120）一次阻塞等待终态；或先做其他工作/直接交付，"
-                "委派完成后系统会自动注入结果。"
-            ),
-        }
-    )
-
     def before_call(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any] | None:
         """从不拦截：返回 warning 字典仅供日志/遥测；提醒经 drain_pending_reminders 注入。"""
         signature = f"{tool_name}:{self._hash(tool_args)}"
@@ -102,9 +90,6 @@ class ToolLoopGuard:
         """用户新输入/steering 后重置连击（注入预算按运行计，不在此重置）。"""
         self._last_signature = None
         self._streak = 0
-
-    def _redirection_hint(self, tool_name: str) -> str:
-        return self._REDIRECTION_HINTS.get(tool_name, "")
 
     def _redirection_hint(self, tool_name: str) -> str:
         return self._REDIRECTION_HINTS.get(tool_name, "")
