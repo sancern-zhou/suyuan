@@ -21,8 +21,11 @@ from app.agent.markup_sanitizer import (
     DSML_TOOL_CALL_BLOCKED_NOTICE,
     strip_dsml_tool_call_markup,
 )
-from app.services.llm_failover import is_media_fetch_failure_message
-from app.services.llm_service import llm_service
+from app.services.llm_failover import (
+    classify_llm_failure,
+    is_media_fetch_failure_message,
+)
+from app.services.llm_service import ToolCallArgumentsError, llm_service
 from app.tools.base.registry import ToolRegistry
 from app.utils.llm_context_logger import get_llm_context_logger
 from app.utils.token_budget import COMPRESSION_THRESHOLD_RATIO, token_budget_manager
@@ -360,6 +363,7 @@ class ReActPlanner:
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
         auto_profile: Optional[str] = None,
+        _stream_retry_allowed: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式规划器（按模式过滤 tools schema）
 
@@ -367,6 +371,11 @@ class ReActPlanner:
         按 content_block 事件逐步 yield：
         - text blocks: 流式输出文本内容
         - tool_use blocks: 完成后 yield 工具调用
+
+        失败处置：中断后保持流式重试一次（_stream_retry_allowed），不再回退非流式。
+        非流式请求需要一次性生成完整长 JSON 载荷，遇到超长工具参数时更容易被上游
+        网关判超时（2026-11-14 江西噪声会话 12:10-12:14 连续 504 即由此放大）；
+        且流的可见内容一旦下发就无法撤回，重试会重复输出。
 
         Args:
             tools: 按模式过滤的工具 schema（Expert 模式约 44 个工具，节省 53% token）
@@ -412,6 +421,10 @@ class ReActPlanner:
         # message_delta 给输出侧（OpenAI 兼容协议两者都在 delta 帧），message_stop
         # 合并产出一次 usage_delta，供运行时累计 spent_tokens。
         turn_usage_acc: Dict[str, int] = {}
+        # 是否已有用户可见内容下发（文本/tool_use）。一旦下发就不能重放整轮，
+        # 否则前端会看到重复输出与重复工具调用。thinking_delta 只进日志侧展示、
+        # 运行时不转发用户，重放安全，因此不计入。
+        emitted_visible = False
 
         def _acc_turn_usage(usage: Dict[str, Any]) -> None:
             for field in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"):
@@ -482,6 +495,7 @@ class ReActPlanner:
                                 visible_chunk = text_stream_buffer
                                 text_stream_buffer = ""
                                 if visible_chunk:
+                                    emitted_visible = True
                                     yield {
                                         "type": "streaming_text",
                                         "data": {"chunk": visible_chunk, "is_complete": False}
@@ -557,6 +571,7 @@ class ReActPlanner:
 
                     if current_text_block and current_text_block["index"] == index:
                         if not text_stream_suppressed and text_stream_buffer:
+                            emitted_visible = True
                             yield {
                                 "type": "streaming_text",
                                 "data": {"chunk": text_stream_buffer, "is_complete": False}
@@ -638,6 +653,7 @@ class ReActPlanner:
                         # V4 核心：content_block_stop 时立即 yield tool_use 事件
                         # 让 StreamingToolExecutor 可以在流中立即启动工具执行
                         yielded_tool_use_count += 1
+                        emitted_visible = True
                         yield {
                             "type": "tool_use",
                             "data": {
@@ -769,17 +785,40 @@ class ReActPlanner:
             logger.error(
                 "anthropic_planner_streaming_failed",
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
+                emitted_visible=emitted_visible,
             )
-            # 流式中断后从零发起一次非流式请求实现 failover：
-            # llm_service 已给中断的供应商标记 cooldown，这次请求会跳过它
-            # 直接切换下一个候选供应商，不会重复等待同一供应商的多次超时。
+            # 流式失败后只做同协议流式重投一次，绝不回退非流式：
+            # 非流式要一次性生成完整长 JSON 载荷，超长工具参数（本次事故的
+            # execute_echarts_python）更易被上游网关判超时，形成
+            # "参数截断 → 非流式 → 504 → 单候选冷却" 的自我放大循环。
+            # 触发面与旧逻辑一致（任何流式失败）；递归时 _stream_retry_allowed
+            # 关闭，保证最多多试一次。已下发用户可见内容（文本/tool_use）时不重试，
+            # 避免前端重复输出。抓图失败可改用内联 base64 重投。
             retry_content = self._base64_retry_content(user_content, attachments)
-            logger.info(
-                "anthropic_planner_fallback_to_non_streaming",
-                retry_with_base64=self._is_fetch_url_failure(e) and retry_content is not user_content,
+            retry_with_base64 = (
+                self._is_fetch_url_failure(e) and retry_content is not user_content
             )
-            result = await self.think_and_action(
+            failure = classify_llm_failure(e)
+            if isinstance(e, ToolCallArgumentsError) and e.truncated:
+                # 上游截断（无 finish_reason 即收流）是确定性失败：同负载重投
+                # 必然再被截断（实测 132 次请求逐字节相同）。直接交给运行时
+                # 回灌错误并让模型缩短参数，不在生成器内浪费一次 6 秒重试。
+                logger.warning(
+                    "anthropic_planner_streaming_truncated_no_retry",
+                    tool_name=e.tool_name,
+                    received_chars=len(str(e.raw or "")),
+                )
+                raise
+            if not _stream_retry_allowed or emitted_visible:
+                raise
+            logger.info(
+                "anthropic_planner_streaming_retry",
+                retry_with_base64=retry_with_base64,
+                failure_reason=failure.reason,
+                error_type=type(e).__name__,
+            )
+            async for event in self.think_and_action_streaming(
                 query=query,
                 system_prompt=system_prompt,
                 user_conversation=user_conversation,
@@ -787,54 +826,14 @@ class ReActPlanner:
                 iteration=iteration,
                 mode=mode,
                 conversation_history=conversation_history,
-                user_content=retry_content if self._is_fetch_url_failure(e) else user_content,
+                user_content=retry_content if retry_with_base64 else user_content,
                 attachments=attachments,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
                 auto_profile=auto_profile,
-            )
-            yield {
-                "type": "streaming_text",
-                "data": {"chunk": "", "is_complete": True}
-            }
-
-            # ✅ 提取 text_content（用于第二个 thought 事件）
-            text_content = ""
-            for b in current_blocks:
-                if b["type"] == "text":
-                    text_content = b["text"]
-                    break
-
-            yield {
-                "type": "thought",
-                "data": {
-                    "thought": result.get("thought", ""),
-                    "text_content": text_content  # ✅ 添加 text_content 字段
-                }
-            }
-
-            # ✅ 新增：发送真实的 thinking 内容（如果有）
-            raw_thinking_blocks = result.get("raw_thinking_blocks", [])
-            if raw_thinking_blocks:
-                real_thinking = ""
-                for block in raw_thinking_blocks:
-                    if block.get("type") == "thinking":
-                        thinking_content = block.get("thinking", "")
-                        if thinking_content:
-                            real_thinking += thinking_content + "\n"
-
-                if real_thinking.strip():
-                    yield {
-                        "type": "thinking_content",
-                        "data": {
-                            "content": real_thinking.strip()
-                        }
-                    }
-
-            yield {
-                "type": "action",
-                "data": result
-            }
+                _stream_retry_allowed=False,
+            ):
+                yield event
 
     def _parse_anthropic_response(
         self,

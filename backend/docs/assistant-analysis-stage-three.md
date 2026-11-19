@@ -35,7 +35,7 @@ enable_memory=False. It clears inherited turn authority and uses a separate
 run session with the matter owner as user_identifier. It imports neither an
 additional Agent framework nor a second scheduler.
 
-The audited query candidates are execute_sql_query, execute_postgres_sql_query,
+The audited query candidates are execute_postgres_sql_query,
 query_xcai_city_history and get_weather_data. The actual grant is their intersection
 with the current project's social tools and enabled registry entries. At runtime,
 the complete frozen set must still be permitted and classified read-only. Every

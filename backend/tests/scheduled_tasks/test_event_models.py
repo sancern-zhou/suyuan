@@ -189,3 +189,34 @@ def test_weekly_custom_requires_weekday_and_time():
             schedule_type="weekly_custom",
             **_task_kwargs(),
         )
+
+
+def test_event_definitions_filtered_by_project_namespace():
+    """事件目录消费口按部署项目过滤命名空间：其他项目不暴露 xuchang.* 事件。"""
+    from types import SimpleNamespace
+
+    from app.scheduled_tasks.event_catalog import (
+        _event_belongs_to_project,
+        get_event_definition,
+        get_event_definitions,
+    )
+
+    assert get_event_definitions(SimpleNamespace(project="default")) == []
+    assert (
+        get_event_definition("xuchang.station_deviation.alert_created", SimpleNamespace(project="default"))
+        is None
+    )
+
+    xuchang = SimpleNamespace(project="xuchang")
+    assert get_event_definitions(xuchang), "xuchang 部署应看到自己的事件"
+    assert (
+        get_event_definition("xuchang.station_deviation.alert_created", xuchang)
+        is not None
+    )
+
+    # jiangsu-ops 部署通过命名空间首段匹配分支自持目录中的 jiangsu.* 事件
+    assert _event_belongs_to_project("jiangsu.smart_event.judged", "jiangsu-ops") is True
+    assert _event_belongs_to_project("xuchang.station_deviation.alert_created", "jiangsu-ops") is False
+
+    # 不传 manifest 保持旧行为（全量，向后兼容）
+    assert len(get_event_definitions()) >= 10

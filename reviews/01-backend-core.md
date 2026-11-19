@@ -74,7 +74,7 @@
 4. **上传链路防御完整**：uuid 命名落盘、SVG 用 defusedxml 消毒并转 PNG（upload_routes.py:301-386）、会话属主校验（:50-61）、附件强制 Content-Disposition + nosniff。
 5. **声明式装配与拆分**：ROUTER_REGISTRY 数据驱动注册、可选模块失败降级（core/routing.py:26-157），main.py 仅 64 行，lifecycle 按 database/social/kb/scheduled 分文件。
 6. **SSE 基建统一**：core/sse.py 心跳与业务流分离、send 超时兜底；专家会商 SSE 在断连时正确 cancel 后台任务并回收（api/expert_deliberation.py:62-115）。
-7. **SQL 工具白名单化**：表名白名单 + SELECT/CTE 限制 + TOP/Limit 消毒（sql_validator.py + tools/query/execute_sql_query/tool.py:688-709），方向正确（缺口见 P1）。
+7. **SQL 工具白名单化**：表名白名单 + SELECT/CTE 限制 + TOP/Limit 消毒（sql_validator.py + tools/query/execute_postgres_sql_query/tool.py），方向正确（缺口见 P1）。
 8. **合规自查工具化**：path_config_test.py 甚至内置了对生产代码 `Path.cwd()` 违规的静态扫描（backend/app/utils/path_config_test.py:144）。
 
 ## 五、修复优先级路线建议

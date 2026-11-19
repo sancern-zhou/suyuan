@@ -138,6 +138,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { historyRowLabels } from './sessionHistoryAccess.js'
+import { parseConversationTimestamp } from '@/components/conversationListPolicy.js'
 
 // Props
 const props = defineProps({
@@ -232,39 +233,33 @@ const rowLabels = (session) => historyRowLabels(session, props.isAdmin)
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '未知'
-  try {
-    const date = new Date(timestamp)
-    const now = new Date()
-    const diff = now - date
+  const time = parseConversationTimestamp(timestamp)
+  if (!time) return '无效时间'
+  const date = new Date(time)
+  const diff = Date.now() - time
 
-    const minutes = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
-    const days = Math.floor(diff / 86400000)
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
 
-    if (minutes < 60) return `${minutes}分钟前`
-    if (hours < 24) return `${hours}小时前`
-    if (days < 7) return `${days}天前`
-    return date.toLocaleDateString('zh-CN')
-  } catch {
-    return '无效时间'
-  }
+  if (minutes < 60) return `${minutes}分钟前`
+  if (hours < 24) return `${hours}小时前`
+  if (days < 7) return `${days}天前`
+  return date.toLocaleDateString('zh-CN')
 }
 
 const formatFullTime = (timestamp) => {
   if (!timestamp) return '未知'
-  try {
-    const date = new Date(timestamp)
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    })
-  } catch {
-    return '无效时间'
-  }
+  const time = parseConversationTimestamp(timestamp)
+  if (!time) return '无效时间'
+  return new Date(time).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
 }
 
 </script>

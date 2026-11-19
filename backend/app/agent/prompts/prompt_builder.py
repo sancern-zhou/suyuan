@@ -27,7 +27,11 @@ from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
 from .enforcement_exam_prompt import build_enforcement_exam_prompt
 from .custom_prompt import build_custom_prompt
-from .project_prompt import load_project_audience_contract, load_project_mode_prompt
+from .project_prompt import (
+    load_project_audience_contract,
+    load_project_mode_prompt,
+    load_project_prompt_switches,
+)
 from app.utils.path_config import format_agent_path, resolve_agent_path
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
@@ -47,8 +51,8 @@ FILESYSTEM_PATH_CONTRACT = (
     "backend 内的相对路径必须包含 `backend/` 前缀。工具返回的项目内相对路径也遵循同一格式。"
     "报告包内 `assets/...` 等内部逻辑路径不属于文件系统路径。"
     "生成工具返回的 `file_path` 是真实归档路径，产物会自动登记到会话资源目录；"
-    "必须原样复用该路径或通过 `list_session_resources` 使用资源 ID，禁止自行拼接 `sessions/...` 路径，"
-    "也禁止对已自动发布的产物再次调用 `publish_session_file`。"
+    "必须原样复用该路径或使用会话资源 ID，禁止自行拼接 `sessions/...` 路径，"
+    "也禁止对已自动发布的产物重复发布。"
 )
 
 MANUAL_FEEDBACK_CONTRACT = (
@@ -86,12 +90,12 @@ def _with_platform_contracts(prompt: str) -> str:
     # 受众契约按项目解析；项目未声明时回退共享中性默认。解析失败按配置
     # 错误抛出（与 mode_prompt_files 同策略）：配了文件但缺失属于部署错误。
     audience = load_project_audience_contract() or AUDIENCE_CONTRACT
-    return (
-        f"{prompt.rstrip()}\n\n"
-        f"{audience}\n\n"
-        f"{AIR_QUALITY_STANDARD_TRANSITION_CONTRACT}\n\n"
-        f"{FILESYSTEM_PATH_CONTRACT}\n\n{MANUAL_FEEDBACK_CONTRACT}"
-    ).rstrip()
+    _, air_quality_transition = load_project_prompt_switches()
+    sections = [prompt.rstrip(), audience]
+    if air_quality_transition:
+        sections.append(AIR_QUALITY_STANDARD_TRANSITION_CONTRACT)
+    sections.extend([FILESYSTEM_PATH_CONTRACT, MANUAL_FEEDBACK_CONTRACT])
+    return "\n\n".join(sections).rstrip()
 
 
 def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:
@@ -102,7 +106,7 @@ def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> 
         "## 长期记忆（两层定位，不得混淆）\n"
         f"- 常驻长期记忆 `MEMORY.md`：路径 `{memory_file_path}`，每次会话全量注入。"
         "由你主动维护：用户明确要求记住、纠正长期偏好，或形成可跨会话复用的稳定口径/规则/方法时，"
-        "直接使用 edit_file 增、改、删其中条目；保持精炼，只留长期有效的信息，过时内容及时删除。\n"
+        "直接在该文件中增、改、删条目；保持精炼，只留长期有效的信息，过时内容及时删除。\n"
         "- 事实层记忆 `facts/*.md`：由后台整合器自动维护，带来源、适用条件和有效期，过期自动遗忘。"
         "上下文中的\"已整理事实索引\"是其只读清单：需要核实时沿索引链接读取原文；"
         "不要直接编辑 facts 文件，也不要把事实批量回写到 MEMORY.md。\n"
@@ -144,6 +148,9 @@ DATA_SOURCE_MAP_MODES = {"query", "query_monitoring", "query_monitoring_station"
 
 def _with_data_source_map(prompt: str, mode: str) -> str:
     if mode not in DATA_SOURCE_MAP_MODES:
+        return prompt
+    data_source_map_enabled, _ = load_project_prompt_switches()
+    if not data_source_map_enabled:
         return prompt
     source_map = render_data_source_map()
     if not source_map:

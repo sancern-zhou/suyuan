@@ -297,6 +297,9 @@ import { useReactStore } from '@/stores/reactStore'
 import {
   CONVERSATION_LIST_LAYOUT,
   CONVERSATION_LIST_VIEW,
+  compareConversationRecency,
+  localConversationFallback,
+  parseConversationTimestamp,
   filterSidebarConversations,
   groupSidebarConversationsByMode,
   readSidebarConversationLayout,
@@ -389,7 +392,6 @@ const mergedRecentSessions = computed(() => {
     .filter(session => session.sessionId)
     .map(session => {
       const firstUser = session.messages?.find(m => m.type === 'user')
-      const lastMessage = session.messages?.[session.messages.length - 1]
 
       // 获取会话标题：优先使用文本内容，其次使用附件名称，最后使用默认标题
       let queryTitle = '新对话'
@@ -403,7 +405,10 @@ const mergedRecentSessions = computed(() => {
       return {
         session_id: session.sessionId,
         query: queryTitle,
-        updated_at: lastMessage?.timestamp || new Date().toISOString(),
+        // 本地会话用首条消息时间做稳定兜底（服务端记录优先覆盖）。绝不能用
+        // “当前时刻”或最后一条消息时间，否则切换对话会把旧会话顶到最前。
+        // 消息时间可能是库里的本地 CST，统一转成 UTC ISO 再参与比较。
+        updated_at: localConversationFallback(firstUser?.timestamp),
         is_running: !!session.isAnalyzing,
         is_local: true,
         ...(session.mode ? { mode: session.mode } : {}),
@@ -426,15 +431,12 @@ const mergedRecentSessions = computed(() => {
     byId.set(session.session_id, {
       ...existing,
       ...session,
+      updated_at: existing.updated_at || session.updated_at,
       ...(Object.keys(metadata).length ? { metadata } : {})
     })
   }
 
-  return Array.from(byId.values())
-    .sort((a, b) => {
-      if (a.is_running !== b.is_running) return a.is_running ? -1 : 1
-      return new Date(b.updated_at) - new Date(a.updated_at)
-    })
+  return Array.from(byId.values()).sort(compareConversationRecency)
 })
 
 const displayedRecentSessions = computed(() => {
@@ -450,9 +452,9 @@ const caseLibrarySessions = computed(() => {
     CONVERSATION_LIST_VIEW.CASES
   )
     .sort((a, b) => {
-      const aMarked = a.metadata?.case_marked_at || a.updated_at || 0
-      const bMarked = b.metadata?.case_marked_at || b.updated_at || 0
-      return new Date(bMarked) - new Date(aMarked)
+      const aMarked = a.metadata?.case_marked_at || a.updated_at
+      const bMarked = b.metadata?.case_marked_at || b.updated_at
+      return parseConversationTimestamp(bMarked) - parseConversationTimestamp(aMarked)
     })
 })
 
@@ -829,9 +831,7 @@ const refreshRecentSessions = async (options = {}) => {
     if (!response.ok) throw new Error('Failed to fetch sessions')
     const data = await response.json()
     // 按更新时间排序，取最近会话
-    const sessions = (data.sessions || []).sort((a, b) => {
-      return new Date(b.updated_at) - new Date(a.updated_at)
-    })
+    const sessions = (data.sessions || []).sort(compareConversationRecency)
     recentSessions.value = sessions.slice(0, SESSION_FETCH_LIMIT)
   } catch (error) {
     console.error('Failed to fetch recent sessions:', error)
@@ -864,11 +864,13 @@ const truncateQuery = (query, maxLength = 30) => {
 // 格式化时间
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
-  // 修正时区：数据库存储的是UTC时间，需要+8小时转换为北京时间
-  const date = new Date(timestamp)
-  const beijingDate = new Date(date.getTime() + 8 * 60 * 60 * 1000)
-  const now = new Date()
-  const diff = now - beijingDate
+  // updated_at 为无时区的 UTC，统一按 UTC 解析后再按浏览器时区展示，
+  // 不能再手工 +8 小时，否则带时区的运行期时间会被二次偏移。
+  const time = parseConversationTimestamp(timestamp)
+  if (!time) return ''
+  const date = new Date(time)
+  const now = Date.now()
+  const diff = now - time
 
   if (diff < 60000) return '刚刚'
   if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
@@ -876,7 +878,7 @@ const formatTime = (timestamp) => {
   const days = Math.floor(diff / 86400000)
   if (days < 7) return `${days}天前`
 
-  return beijingDate.toLocaleDateString('zh-CN', {
+  return date.toLocaleDateString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

@@ -66,7 +66,10 @@ class Finalizer:
         for index in range(0, len(text), size):
             yield text[index:index + size]
 
-    async def timeout(self, state: RunState) -> AsyncGenerator[dict, None]:
+    async def timeout(self, state: RunState, reason: Optional[str] = None) -> AsyncGenerator[dict, None]:
+        # reason 取自时间预算终态（extended_timeout / stalled_no_progress）；
+        # 缺省维持历史语义 max_iterations_reached（轮次预算模式）。
+        reason = reason or "max_iterations_reached"
         state.response_text = "分析任务较复杂，在限定步骤内未完成，是否继续？"
         state.task_completed = False
         if not state.assistant_message_written:
@@ -75,14 +78,47 @@ class Finalizer:
         if self.agent_logger:
             self.agent_logger.end_run(
                 status="timeout",
-                metadata={"iterations": state.iteration, "reason": "max_iterations_reached"},
+                metadata={"iterations": state.iteration, "reason": reason},
             )
         async for event in self._stream_response(state):
             yield event
-        yield self.events.complete(state, status="incomplete", reason="max_iterations_reached")
+        yield self.events.complete(state, status="incomplete", reason=reason)
+
+    async def no_progress(self, state: RunState) -> AsyncGenerator[dict, None]:
+        """无进展熔断：连续多轮无成功工具结果与正文输出，判定任务停摆。
+
+        无步数上限模式下接管原迭代上限的失控保护职能；会话上下文保留，
+        用户可补充指示后继续。
+        """
+        state.response_text = (
+            "任务已连续多轮没有新的进展（无成功的工具调用或有效输出），"
+            "为避免无效消耗已停止。请补充说明或调整任务后重试。"
+        )
+        state.task_completed = False
+        if not state.assistant_message_written:
+            self.writer.session.add_assistant_response(state.response_text)
+            state.assistant_message_written = True
+        if self.agent_logger:
+            self.agent_logger.end_run(
+                status="timeout",
+                metadata={"iterations": state.iteration, "reason": "no_progress_detected"},
+            )
+        async for event in self._stream_response(state):
+            yield event
+        yield self.events.complete(state, status="incomplete", reason="no_progress_detected")
 
     async def fatal_error(self, state: RunState, error: Exception) -> AsyncGenerator[dict, None]:
         if self.agent_logger:
             self.agent_logger.log_error(error=str(error), error_type="fatal")
             self.agent_logger.end_run(status="failed", metadata={"error": str(error)})
-        yield self.events.fatal_error(state, error)
+        yield self.events.fatal_error(state, error, user_message=self._user_message(error))
+
+    @staticmethod
+    def _user_message(error: Exception) -> str | None:
+        """重试链耗尽时给用户友好文案，而不是把网关堆栈直接糊到对话区。"""
+        from app.services.llm_failover import (
+            TRANSIENT_FAILURE_USER_MESSAGE,
+            is_transient_failure,
+        )
+
+        return TRANSIENT_FAILURE_USER_MESSAGE if is_transient_failure(error) else None

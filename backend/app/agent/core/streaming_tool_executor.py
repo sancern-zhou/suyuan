@@ -178,24 +178,8 @@ class StreamingToolExecutor:
             logger.warning("streaming_tool_executor_discarded", tool_name=tool_name)
             return
 
+        # 循环守卫只观察不拦截（对齐 ZCode）：重复调用照常执行，提醒另行注入
         guarded = self.loop_guard.before_call(tool_name, tool_input) if self.loop_guard else None
-        if guarded and guarded.get("severity") == "block":
-            execution = ToolExecution(
-                tool_use_id=tool_use_id,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                is_concurrency_safe=True,
-            )
-            execution.mark_completed(guarded)
-            self._executions.append(execution)
-            logger.warning(
-                "streaming_tool_blocked_by_loop_guard",
-                tool_name=tool_name,
-                tool_use_id=tool_use_id[:12],
-                summary=guarded.get("summary") if isinstance(guarded, dict) else None,
-                total_executions=len(self._executions),
-            )
-            return
         if guarded:
             logger.warning(
                 "streaming_tool_loop_guard_warning",

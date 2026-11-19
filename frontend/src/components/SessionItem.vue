@@ -74,6 +74,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import { parseConversationTimestamp } from './conversationListPolicy.js'
 
 const props = defineProps({
   session: {
@@ -106,11 +107,11 @@ const toggleExpand = () => {
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '-'
-  // 修正时区：数据库存储的是UTC时间，需要+8小时转换为北京时间
-  const date = new Date(timestamp)
-  const beijingDate = new Date(date.getTime() + 8 * 60 * 60 * 1000)
-  const now = new Date()
-  const diff = now - beijingDate
+  // 无时区的 server 时间按 UTC 解析，带时区的按自身偏移解析。
+  const time = parseConversationTimestamp(timestamp)
+  if (!time) return '-'
+  const date = new Date(time)
+  const diff = Date.now() - time
 
   // 小于1分钟
   if (diff < 60000) {
@@ -133,7 +134,7 @@ const formatTime = (timestamp) => {
   }
 
   // 超过7天显示日期
-  return beijingDate.toLocaleDateString('zh-CN', {
+  return date.toLocaleDateString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -143,10 +144,9 @@ const formatTime = (timestamp) => {
 
 const formatFullTime = (timestamp) => {
   if (!timestamp) return '-'
-  // 修正时区：数据库存储的是UTC时间，需要+8小时转换为北京时间
-  const date = new Date(timestamp)
-  const beijingDate = new Date(date.getTime() + 8 * 60 * 60 * 1000)
-  return beijingDate.toLocaleString('zh-CN', {
+  const time = parseConversationTimestamp(timestamp)
+  if (!time) return '-'
+  return new Date(time).toLocaleString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

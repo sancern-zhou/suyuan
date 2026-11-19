@@ -16,6 +16,10 @@ from typing import Iterable, Optional
 import structlog
 
 from config.settings import settings
+from app.services.chat_completions_adapter import (
+    EmptyCompletionError,
+    ToolCallArgumentsError,
+)
 
 logger = structlog.get_logger()
 
@@ -57,8 +61,6 @@ class LLMResponseRejectedError(Exception):
         self.reason = reason
         self.attempts = attempts or []
         super().__init__(reason)
-
-
 _pool_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _pool_semaphore_limits: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _cooldowns: dict[str, tuple[float, LLMFailure]] = {}
@@ -143,6 +145,14 @@ def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
             "llm_cooldown_skipped_for_format",
             provider=provider,
             status=failure.status,
+        )
+        return
+    if failure.reason == "invalid_response" and failure.status is None:
+        # 空响应/参数截断是单次请求的偶然结果（同一 provider 下一条通常正常），
+        # 打 cooldown 反而会把主候选整体跳过。
+        logger.info(
+            "llm_cooldown_skipped_for_invalid_response",
+            provider=provider,
         )
         return
     now = time.time()
@@ -263,15 +273,33 @@ def classify_llm_failure(err: object) -> LLMFailure:
 
     if isinstance(err, LLMResponseRejectedError):
         return LLMFailure("invalid_response", None, None, err.reason)
+    if isinstance(err, (EmptyCompletionError, ToolCallArgumentsError)):
+        # 上游流被截断/零内容块：本轮没有可用输出，换候选重放即可，
+        # 不该把它当成 provider 级故障（不打 cooldown）。
+        return LLMFailure("invalid_response", None, None, message)
     if is_context_overflow_message(message):
         return LLMFailure("context_overflow", status, code, message)
     if is_media_fetch_failure_message(message):
         return LLMFailure("media_fetch", status, code, message)
     if status == 429 or "rate limit" in lower or "too many requests" in lower or "throttl" in lower:
         return LLMFailure("rate_limit", status or 429, code, message)
-    if status in {500, 502, 503, 504, 521, 522, 523, 524, 529} or "overloaded" in lower:
+    if (
+        status in {500, 502, 503, 504, 521, 522, 523, 524, 529}
+        or "overloaded" in lower
+        or "gateway time-out" in lower
+        or "gateway timeout" in lower
+        or "504 gateway" in lower
+        or "502 bad gateway" in lower
+        or "503 service unavailable" in lower
+    ):
         return LLMFailure("overloaded", status, code, message)
-    if "timeout" in lower or "ReadTimeout" in name or "APITimeout" in name or name == "TimeoutError":
+    if (
+        "timeout" in lower
+        or "timed out" in lower
+        or "ReadTimeout" in name
+        or "APITimeout" in name
+        or name == "TimeoutError"
+    ):
         return LLMFailure("timeout", status or 408, code, message)
     if status in {401, 403} or "unauthorized" in lower or "invalid api key" in lower:
         return LLMFailure("auth", status, code, message)
@@ -287,6 +315,15 @@ def classify_llm_failure(err: object) -> LLMFailure:
     if status == 400:
         return LLMFailure("format", status, code, message)
     return LLMFailure("unknown", status, code, message)
+
+
+TRANSIENT_FAILURE_REASONS = frozenset({"rate_limit", "overloaded", "timeout"})
+TRANSIENT_FAILURE_USER_MESSAGE = "模型服务暂时不可用（网关超时或过载），请稍后重试。"
+
+
+def is_transient_failure(err: object) -> bool:
+    """限流/过载/超时属于运行时会自动重试的瞬时失败，不应作为可见错误上屏。"""
+    return classify_llm_failure(err).reason in TRANSIENT_FAILURE_REASONS
 
 
 def should_fallback(failure: LLMFailure) -> bool:

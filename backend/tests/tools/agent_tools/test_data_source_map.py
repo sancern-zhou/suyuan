@@ -122,17 +122,40 @@ def test_config_baseline_covers_key_routing_domains():
         str(item.get("domain") or "")
         for item in load_data_source_catalog(refresh=True)
     }
+    # 共享基准目录面向空气质量项目（国控站点/城市历史、发布历史、气象与预报）；
+    # 声环境等项目经 project.yaml 的 data_source_map_enabled=false 显式关闭地图注入，
+    # 其路由契约写在专属 SQL 工具 schema 与项目提示词中，不进共享目录。
     assert any("国控" in d for d in domains)
     assert any("预报" in d for d in domains)
     assert any("气象" in d for d in domains)
 
 
-def test_granularity_is_injected_into_agent_system_prompt():
+def test_granularity_is_injected_into_agent_system_prompt(monkeypatch):
     from app.agent.prompts.prompt_builder import build_react_system_prompt
+    from config.settings import settings
+
+    # 地图注入受项目开关控制（如声环境项目显式关闭），此处固定引用基准目录的默认项目。
+    monkeypatch.setattr(settings, "project_id", "default")
 
     prompt = build_react_system_prompt("query_monitoring")
 
-    assert "粒度：逐小时/逐日/逐年" in prompt
+    assert "粒度：逐小时/3小时间隔/逐日" in prompt
+
+
+def test_project_can_disable_data_source_map_injection(monkeypatch):
+    """项目显式关闭地图时，系统提示词不得出现"域 → 工具名"路由表。"""
+    from app.agent.prompts import prompt_builder
+    from app.agent.prompts.prompt_builder import build_react_system_prompt
+
+    # 直接打到开关消费点：项目清单声明 data_source_map_enabled=false 的效果
+    # 等价于 switches 返回 False（项目 yaml 的真实声明由 project_config 测试覆盖）。
+    monkeypatch.setattr(
+        prompt_builder, "load_project_prompt_switches", lambda *a, **k: (False, True)
+    )
+
+    prompt = build_react_system_prompt("query_monitoring")
+
+    assert "## 数据源地图" not in prompt
 
 
 def test_project_scoped_entries_render_only_for_matching_project(tmp_path, monkeypatch):

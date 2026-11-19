@@ -441,7 +441,13 @@ class OpsAuditRunRulesTool(LLMTool):
             category=ToolCategory.ANALYSIS,
             function_schema={
                 "name": "ops_audit_run_rules",
-                "description": "基于已抽取数据集按开关执行非视觉规则和图片视觉审核，并生成 final_issue_list 供报告消费。",
+                "description": (
+                    "基于已抽取数据集按开关执行非视觉规则和图片视觉审核，并生成 final_issue_list 供报告消费。"
+                    "组织审核报告前先 view_skill: ops_work_order_audit。"
+                    "返回值里的 artifact_readability 说明每个 *_path 的用途："
+                    "只有 report_input_path 可直接读取消费，其余均为工具内部中间产物（体量大、未筛选），"
+                    "禁止 read_file/execute_python 分页读取；需要核查命中原因时用 ops_audit_inspect。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {

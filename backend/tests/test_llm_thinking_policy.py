@@ -190,3 +190,60 @@ def test_go_provider_payload_follows_policy(monkeypatch):
         assert "enable_thinking" not in build()
     finally:
         reset_request_tier(tier_token)
+
+
+def test_openai_compatible_deepseek_model_disables_thinking(monkeypatch):
+    """openai 兼容网关暴露 DeepSeek 时也必须关思考。
+
+    2026-11-13 事故：provider=openai、模型名 MDDEEPSEEK...，上游实为
+    DeepSeek-V4.1-Flash；网关默认开思考，长上下文 + 23 工具时流在 tool_call
+    参数中途被截断，最终以空回答 complete。
+    """
+    from config.settings import settings
+    from app.services.llm_service import LLMService
+
+    def build(provider: str, model: str) -> dict:
+        service = LLMService.__new__(LLMService)
+        service.provider = provider
+        service.model = model
+        service.api_mode = "chat_completions"
+        return service._build_chat_completions_payload(
+            messages=[{"role": "user", "content": "x"}],
+            tools=None,
+            max_tokens=1000,
+            temperature=0.3,
+            system=None,
+            stream=False,
+        )
+
+    assert build("openai", "MDDEEPSEEKB9D44FA457FF")["enable_thinking"] is False
+    assert build("openai", "deepseek-chat")["enable_thinking"] is False
+    assert "enable_thinking" not in build("openai", "gpt-4.1-mini")
+    assert "enable_thinking" not in build("agnes", "agnes-2.0-flash")
+
+
+def test_payload_requests_parallel_tool_calls(monkeypatch):
+    from config.settings import settings
+    from app.services.llm_service import LLMService
+
+    service = LLMService.__new__(LLMService)
+    service.provider = "glm"
+    service.model = "glm-4.7"
+    service.api_mode = "chat_completions"
+    payload = service._build_chat_completions_payload(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "t", "description": "d", "input_schema": {"type": "object", "properties": {}}}],
+        max_tokens=1000,
+        temperature=0.3,
+        system=None,
+        stream=True,
+    )
+    assert payload["parallel_tool_calls"] is True
+    assert "parallel_tool_calls" not in service._build_chat_completions_payload(
+        messages=[{"role": "user", "content": "x"}],
+        tools=None,
+        max_tokens=1000,
+        temperature=0.3,
+        system=None,
+        stream=True,
+    )

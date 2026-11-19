@@ -8,6 +8,7 @@ from app.agent.session.session_manager_db import SessionManagerDB
 class FakeSessionRepository:
     def __init__(self):
         self.session_id = "assistant_session_1"
+        self.exists = True
         self.full_messages = [
             {
                 "type": "user",
@@ -18,6 +19,26 @@ class FakeSessionRepository:
             }
             for index in range(4)
         ]
+
+    async def get_session(self, session_id):
+        assert session_id == self.session_id
+        return object() if self.exists else None
+
+    async def update_session(self, session_id, **kwargs):
+        assert session_id == self.session_id
+        return True
+
+    async def create_session(self, session_id, **kwargs):
+        assert session_id == self.session_id
+        return True
+
+    async def sync_conversation_history_incremental(self, session_id, messages):
+        assert session_id == self.session_id
+        return True
+
+    async def save_conversation_history(self, session_id, messages):
+        assert session_id == self.session_id
+        return True
 
     def _session_dict(self, include_messages):
         return {
@@ -194,3 +215,72 @@ async def test_delete_session_rejects_unsafe_session_id(tmp_path, monkeypatch):
     assert work_dir.exists()
     assert content_dir.exists()
     assert (sessions_dir / "outside" / "keep.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_save_session_refreshes_catalog_recency(monkeypatch):
+    from app.agent.session.models import Session
+
+    touched = []
+
+    class FakeCatalogRepository:
+        async def touch(self, session_id):
+            touched.append(session_id)
+            return True
+
+    monkeypatch.setattr(
+        "app.conversations.repository.ConversationCatalogRepository",
+        FakeCatalogRepository,
+    )
+
+    repository = FakeSessionRepository()
+    manager = make_session_manager(repository)
+    session = Session(session_id=repository.session_id, query="q")
+    session.conversation_history = [{"type": "user", "content": "hi", "timestamp": "t"}]
+
+    assert await manager.append_session_transcript(session) is True
+    assert touched == [repository.session_id]
+
+
+@pytest.mark.asyncio
+async def test_save_session_skips_catalog_touch_without_timestamp_update(monkeypatch):
+    from app.agent.session.models import Session
+
+    touched = []
+
+    class FakeCatalogRepository:
+        async def touch(self, session_id):
+            touched.append(session_id)
+            return True
+
+    monkeypatch.setattr(
+        "app.conversations.repository.ConversationCatalogRepository",
+        FakeCatalogRepository,
+    )
+
+    repository = FakeSessionRepository()
+    manager = make_session_manager(repository)
+    session = Session(session_id=repository.session_id, query="q")
+
+    assert await manager.save_session_metadata(session, update_timestamp=False) is True
+    assert touched == []
+
+
+@pytest.mark.asyncio
+async def test_catalog_touch_failure_does_not_break_save(monkeypatch):
+    from app.agent.session.models import Session
+
+    class BrokenCatalogRepository:
+        async def touch(self, session_id):
+            raise RuntimeError("catalog_unavailable")
+
+    monkeypatch.setattr(
+        "app.conversations.repository.ConversationCatalogRepository",
+        BrokenCatalogRepository,
+    )
+
+    repository = FakeSessionRepository()
+    manager = make_session_manager(repository)
+    session = Session(session_id=repository.session_id, query="q")
+
+    assert await manager.save_session_metadata(session) is True

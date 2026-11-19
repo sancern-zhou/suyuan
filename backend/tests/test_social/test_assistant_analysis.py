@@ -310,8 +310,8 @@ async def test_adapter_uses_fixed_tools_memory_off_and_observed_evidence(db, mon
     import app.social.assistant_analysis_agent as module
 
     claimed = await claim(db)
-    claimed["trigger"]["schedule"]["tool_names"] = ["execute_sql_query"]
-    monkeypatch.setattr(module, "available_analysis_tools", lambda: ["execute_sql_query"])
+    claimed["trigger"]["schedule"]["tool_names"] = ["execute_postgres_sql_query"]
+    monkeypatch.setattr(module, "available_analysis_tools", lambda: ["execute_postgres_sql_query"])
     monkeypatch.setattr(module, "verify_analysis_owner", AsyncMock())
     tool = AsyncMock(return_value={"success": True, "summary": "Observed station data"})
     factory_args, analyze_args = {}, {}
@@ -319,7 +319,7 @@ async def test_adapter_uses_fixed_tools_memory_off_and_observed_evidence(db, mon
     class Agent:
         async def analyze(self, prompt, **kwargs):
             analyze_args.update(kwargs)
-            observed = await factory_args["tool_registry"]["execute_sql_query"](sql="SELECT 1")
+            observed = await factory_args["tool_registry"]["execute_postgres_sql_query"](sql="SELECT 1")
             assert "tool:1" in observed["summary"]
             yield {
                 "type": "complete",
@@ -333,9 +333,9 @@ async def test_adapter_uses_fixed_tools_memory_off_and_observed_evidence(db, mon
         return Agent()
 
     output = await analyze_claim(
-        claimed, agent_factory=factory, registry_builder=lambda names: {"execute_sql_query": tool}
+        claimed, agent_factory=factory, registry_builder=lambda names: {"execute_postgres_sql_query": tool}
     )
-    assert set(factory_args["tool_registry"]) == {"execute_sql_query"}
+    assert set(factory_args["tool_registry"]) == {"execute_postgres_sql_query"}
     assert not factory_args["enable_memory"] and factory_args["max_iterations"] == 12
     assert analyze_args["manual_mode"] == "custom" and analyze_args["user_identifier"] == OWNER
     assert output["observations"][0]["id"] == "tool:1"
@@ -478,7 +478,7 @@ async def test_adapter_limits_tool_calls_and_rejects_incomplete_or_fabricated_fi
     import app.social.assistant_analysis_agent as module
 
     claimed = await claim(db)
-    monkeypatch.setattr(module, "available_analysis_tools", lambda: ["execute_sql_query"])
+    monkeypatch.setattr(module, "available_analysis_tools", lambda: ["execute_postgres_sql_query"])
     monkeypatch.setattr(module, "verify_analysis_owner", AsyncMock())
     tool = AsyncMock(return_value={"success": True, "summary": "data"})
 
@@ -488,14 +488,14 @@ async def test_adapter_limits_tool_calls_and_rejects_incomplete_or_fabricated_fi
 
         async def analyze(self, *args, **kwargs):
             for _ in range(13):
-                await self.tools["execute_sql_query"](sql="SELECT 1")
+                await self.tools["execute_postgres_sql_query"](sql="SELECT 1")
             yield {"type": "complete", "data": {"answer": "{}"}}
 
     with pytest.raises(RuntimeError, match="预算"):
         await analyze_claim(
             claimed,
             agent_factory=lambda **kwargs: Agent(kwargs["tool_registry"]),
-            registry_builder=lambda names: {"execute_sql_query": tool},
+            registry_builder=lambda names: {"execute_postgres_sql_query": tool},
         )
     assert tool.await_count == 12
 
@@ -516,7 +516,7 @@ def test_runtime_registry_refuses_expanded_or_non_read_only_tools(monkeypatch):
     import app.social.assistant_analysis_agent as module
     import app.tools as tools_module
 
-    monkeypatch.setattr(module, "available_analysis_tools", lambda: ["execute_sql_query"])
+    monkeypatch.setattr(module, "available_analysis_tools", lambda: ["execute_postgres_sql_query"])
     monkeypatch.setattr(
         tools_module,
         "global_tool_registry",
@@ -528,12 +528,12 @@ def test_runtime_registry_refuses_expanded_or_non_read_only_tools(monkeypatch):
 
     unsafe.is_read_only = lambda: False
     monkeypatch.setattr(
-        adapter, "get_react_agent_tool_registry", lambda: {"execute_sql_query": unsafe}
+        adapter, "get_react_agent_tool_registry", lambda: {"execute_postgres_sql_query": unsafe}
     )
     with pytest.raises(PermissionError):
         module.build_analysis_registry(["bash"])
     with pytest.raises(PermissionError):
-        module.build_analysis_registry(["execute_sql_query"])
+        module.build_analysis_registry(["execute_postgres_sql_query"])
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,20 @@ class ConversationWriter:
             thinking_blocks=planner_result.raw_thinking_blocks,
         )
 
+    def add_truncated_tool_call_recovery(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        error_message: str,
+        received_chars: int = 0,
+    ) -> None:
+        self.session.add_truncated_tool_call_recovery(
+            tool_use_id=tool_use_id,
+            tool_name=tool_name,
+            error_message=error_message,
+            received_chars=received_chars,
+        )
+
     def add_iteration(self, thought: Any, action: Dict[str, Any], observation: Dict[str, Any]) -> None:
         self.memory.add_iteration(thought=thought, action=action, observation=observation)
 

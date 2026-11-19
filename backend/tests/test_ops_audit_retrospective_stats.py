@@ -350,3 +350,60 @@ def test_recheck_ledger_records_append_validly(tmp_path: Path) -> None:
     assert len(written) == 2
     assert {r["outcome"] for r in written} == {"verified"}
     assert written[0]["feedback_id"] == "db_recheck:2026-10"
+
+
+# ---------------------------------------------------------------- task scoping
+
+def test_task_id_scope_excludes_other_tasks() -> None:
+    """台账为全部审核任务共用；分任务复盘必须只统计自己的执行。"""
+
+    records = [
+        _record(rule="SUP_RANGE_OUT_OF_SPEC", execution_ref="gd_sup_station_work_order_audit/exec_a"),
+        _record(rule="SUP_ABNORMAL_NO_REMARK", execution_ref="gd_sup_station_work_order_audit/exec_b"),
+        _record(rule="RF_RANGE_OUT_OF_SPEC", execution_ref="gd_routine_work_order_audit/exec_c"),
+    ]
+
+    scoped = build_retrospective_stats(
+        month="2026-10",
+        records=records,
+        metrics_history=[],
+        task_id="gd_sup_station_work_order_audit",
+    )
+    assert scoped["record_count"] == 2
+    assert scoped["scope"]["task_id"] == "gd_sup_station_work_order_audit"
+
+    unscoped = build_retrospective_stats(month="2026-10", records=records, metrics_history=[])
+    assert unscoped["record_count"] == 3
+
+
+def test_rule_prefix_scope_combines_with_task_id() -> None:
+    records = [
+        _record(rule="SUP_RANGE_OUT_OF_SPEC", execution_ref="gd_sup_station_work_order_audit/exec_a"),
+        _record(rule="RF_RANGE_OUT_OF_SPEC", execution_ref="gd_sup_station_work_order_audit/exec_b"),
+    ]
+
+    stats = build_retrospective_stats(
+        month="2026-10",
+        records=records,
+        metrics_history=[],
+        task_id="gd_sup_station_work_order_audit",
+        rule_prefix="SUP_",
+    )
+    assert stats["record_count"] == 1
+    assert {row["rule_id"] for row in stats["by_rule"]} == {"SUP_RANGE_OUT_OF_SPEC"}
+
+
+def test_scoped_stats_ignores_metrics_history_of_other_tasks() -> None:
+    """指标历史按 task_id 归属；无归属的历史条目不计入分任务口径。"""
+
+    history = [
+        {"kind": "checklist_reconciliation", "task_id": "gd_routine_work_order_audit", "metrics": {}, "full_review_declared": True},
+        {"kind": "checklist_reconciliation", "metrics": {}, "full_review_declared": True},
+    ]
+    stats = build_retrospective_stats(
+        month="2026-10",
+        records=[],
+        metrics_history=history,
+        task_id="gd_sup_station_work_order_audit",
+    )
+    assert stats["checklist_metrics"]["reconciliation_count"] == 0

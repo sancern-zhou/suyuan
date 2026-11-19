@@ -78,15 +78,33 @@ def build_retrospective_stats(
     metrics_history: list[dict[str, Any]] | None = None,
     rolling_weeks: int = DEFAULT_ROLLING_WEEKS,
     today: date | None = None,
+    task_id: str | None = None,
+    rule_prefix: str | None = None,
 ) -> dict[str, Any]:
     """Aggregate the ledger + metrics time-series into the stats JSON.
 
     Pure function (data injected); the caller decides what to persist.
+
+    ``task_id`` / ``rule_prefix`` scope the stats to one audit stream.  The
+    ledger is shared by every audit task, so a per-task retrospective
+    (e.g. 组分站) must filter or it would report every task's feedback.
+    ``task_id`` matches the ``<task_id>/<execution_id>`` execution reference
+    prefix; ``rule_prefix`` matches the rule id (e.g. ``SUP_``).
     """
 
     resolved = resolve_month(month, today=today)
     start, end = month_bounds(resolved)
     all_records = records if records is not None else feedback_ledger.read_records()
+    history = (
+        metrics_history
+        if metrics_history is not None
+        else feedback_ledger.read_metrics_history()
+    )
+    if task_id or rule_prefix:
+        all_records = [
+            record for record in all_records if _record_in_scope(record, task_id, rule_prefix)
+        ]
+        history = [entry for entry in history if _entry_in_scope(entry, task_id, rule_prefix)]
     period_records = [
         record
         for record in all_records
@@ -96,9 +114,7 @@ def build_retrospective_stats(
     counts = _channel_outcome_counts(period_records)
     checklist_metrics = _checklist_metrics(
         period_records,
-        history=metrics_history
-        if metrics_history is not None
-        else feedback_ledger.read_metrics_history(),
+        history=history,
         start=start,
         end=end,
     )
@@ -109,6 +125,7 @@ def build_retrospective_stats(
         "month": resolved,
         "period_start": start,
         "period_end": end,
+        "scope": {"task_id": task_id, "rule_prefix": rule_prefix},
         "record_count": len(period_records),
         "counts_by_channel_outcome": counts,
         "checklist_metrics": checklist_metrics,
@@ -118,6 +135,37 @@ def build_retrospective_stats(
         "calibration": _calibration(period_records),
         "rolling": _rolling(all_records, weeks=rolling_weeks, today=today),
     }
+
+
+def _matches_prefix(value: Any, prefix: str) -> bool:
+    return str(value or "").startswith(prefix)
+
+
+def _record_in_scope(
+    record: dict[str, Any], task_id: str | None, rule_prefix: str | None
+) -> bool:
+    if task_id and not _matches_prefix(record.get("execution_ref"), f"{task_id}/"):
+        return False
+    if rule_prefix and not _matches_prefix(record.get("rule_id"), rule_prefix):
+        return False
+    return True
+
+
+def _entry_in_scope(
+    entry: dict[str, Any], task_id: str | None, rule_prefix: str | None
+) -> bool:
+    """Metrics-history entries are scoped by their own recorded task, if any.
+
+    Reconciliation entries written before task scoping existed carry no task
+    marker; they are attributed to the unfiltered stream, so a scoped
+    retrospective treats them as out of scope rather than counting them twice.
+    """
+
+    if task_id and str(entry.get("task_id") or "") != task_id:
+        return False
+    if rule_prefix and not _matches_prefix(entry.get("rule_prefix"), rule_prefix):
+        return False
+    return True
 
 
 def _channel_outcome_counts(records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:

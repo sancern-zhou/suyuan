@@ -101,6 +101,7 @@ def _call_vision_model(source: str, *, target: dict[str, str], mode: str, prompt
             base_url=target["base_url"],
             model=model,
             timeout=_request_timeout_seconds(mode),
+            extra_headers=_gateway_headers(provider_id),
         )
     except Exception as exc:
         return _error_result(source, model, f"OCR 请求失败：{exc}")
@@ -128,6 +129,25 @@ def _call_vision_model(source: str, *, target: dict[str, str], mode: str, prompt
     return result
 
 
+def _gateway_headers(provider_id: str) -> dict[str, str]:
+    """OpenCode Go 网关要求专属 User-Agent 与稳定会话头（缺失返回 400 MissingSessionID）。"""
+
+    if str(provider_id or "").strip().lower() not in {"go", "go2"}:
+        return {}
+    session_id = None
+    try:
+        from app.services import llm_service
+
+        session_id = getattr(llm_service, "_llm_opencode_session_id", None)
+        session_id = session_id.get() if session_id is not None else None
+    except Exception:
+        session_id = None
+    return {
+        "User-Agent": "suyuan-agent/1.0",
+        "x-opencode-session": session_id or f"suyuan-ops-audit-{os.getpid()}",
+    }
+
+
 def _call_openai_vision_sync(
     *,
     image_url: str,
@@ -136,15 +156,18 @@ def _call_openai_vision_sync(
     base_url: str,
     model: str,
     timeout: float,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Call the optional Mimo visual fallback through its OpenAI endpoint."""
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        **(extra_headers or {}),
+    }
     response = requests.post(
         f"{base_url.rstrip('/')}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         json={
             "model": model,
             "messages": [

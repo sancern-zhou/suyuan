@@ -2,6 +2,7 @@ import pytest
 
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
+    EmptyCompletionError,
     ToolCallArgumentsError,
     convert_anthropic_messages_to_chat,
     convert_anthropic_tools_to_chat,
@@ -580,3 +581,84 @@ def test_tool_call_arguments_error_message_is_truncated():
 
     assert len(str(exc_info.value)) < 2500
     assert len(exc_info.value.raw) > 2000  # raw 属性保留全文供调试
+
+
+def test_stream_adapter_raises_on_empty_stream_instead_of_completing_blank():
+    """上游只回 role/空 delta 就收流时必须抛错，而不是产出空回答。
+
+    2026-11-13 事故：23 个工具 + 46k prompt tokens 时网关在 tool_call 参数
+    中途截断流，adapter 静默丢弃残缺参数，planner 看到零内容块，最终以空
+    回答 complete。
+    """
+    adapter = ChatCompletionsStreamAdapter(model="MDDEEPSEEK")
+
+    adapter.feed_chunk({"choices": [{"delta": {"role": "assistant", "content": ""}}]})
+    adapter.feed_chunk({"choices": [{"delta": {}}]})
+    adapter.feed_chunk({"choices": [{"delta": {}}]})
+
+    with pytest.raises(EmptyCompletionError):
+        adapter.finish()
+
+
+def test_stream_adapter_raises_on_truncated_tool_arguments_at_finish():
+    """参数被截断且无 finish_reason 时也必须抛错，不能静默丢弃该 tool_call。"""
+    adapter = ChatCompletionsStreamAdapter(model="MDDEEPSEEK")
+
+    adapter.feed_chunk(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_cut",
+                                "function": {
+                                    "name": "execute_echarts_python",
+                                    "arguments": '{"code": "',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(ToolCallArgumentsError) as exc_info:
+        adapter.finish()
+
+    # 无 finish_reason 收流即上游掐流，必须是可自愈的 truncated，而非畸形 JSON。
+    assert exc_info.value.truncated is True
+
+
+def test_stream_adapter_marks_malformed_arguments_without_truncation():
+    """有 finish_reason 的畸形参数是模型自身问题，不应被标为可自愈截断。"""
+    adapter = ChatCompletionsStreamAdapter(model="MDDEEPSEEK")
+
+    adapter.feed_chunk(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_bad",
+                                "function": {
+                                    "name": "execute_python",
+                                    "arguments": '{"code": ',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    adapter.feed_chunk({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
+
+    with pytest.raises(ToolCallArgumentsError) as exc_info:
+        adapter.finish()
+
+    assert exc_info.value.truncated is False

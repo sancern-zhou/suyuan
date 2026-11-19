@@ -206,6 +206,7 @@ backend/app/agent/executors/quick_trace_executor.py
 !projects/guangdong/prompts/operations_analysis.md
 !projects/guangdong/prompts/internal/gd_ops_regular_analysis.md
 !projects/guangdong/prompts/internal/gd_ops_risk_analysis.md
+!projects/jiangxi/prompts/internal/noise_expert_analysis.md
 *_summary.md
 *_report.md
 *_solution.md
@@ -362,3 +363,4 @@ deploy/nginx/templates-local/
 # 维护守护进程本地配置与缰绳状态
 deploy/maintenance/maintenance.env
 deploy/maintenance/maintenance_state.json
+frontend/npm-cache/

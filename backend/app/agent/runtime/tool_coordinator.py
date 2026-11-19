@@ -262,26 +262,15 @@ class ToolCoordinator:
             })
             tool_events.append(self.events.tool_result(state, tool_call_id, preparation_error, True, tool_name))
             return preparation_error, tool_records, tool_events
+        # 循环守卫只观察不拦截（对齐 ZCode）：重复调用照常执行，提醒另行注入
         guarded = self.loop_guard.before_call(tool_name, tool_args)
-        if guarded and guarded.get("severity") == "block":
-            observation = guarded
-        elif guarded:
+        if guarded:
             logger.warning(
                 "tool_loop_guard_warning",
                 tool_name=tool_name,
                 summary=guarded.get("summary") if isinstance(guarded, dict) else None,
             )
-            observation = await self.executor.execute_tool_with_retry(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                tool_call_id=action.get("tool_call_id", f"fallback_{tool_name}"),
-                iteration=state.iteration,
-            ) if action.get("tool_call_id") else await self.executor.execute_tool(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                iteration=state.iteration,
-            )
-        elif action.get("tool_call_id"):
+        if action.get("tool_call_id"):
             observation = await self.executor.execute_tool_with_retry(
                 tool_name=tool_name,
                 tool_args=tool_args,

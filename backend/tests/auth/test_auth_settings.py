@@ -4,6 +4,29 @@ from pydantic import ValidationError
 from config.settings import Settings
 
 
+@pytest.fixture(autouse=True)
+def _isolate_settings_environment(monkeypatch):
+    """Settings(_env_file=None) 仍会读取 os.environ。
+
+    其他模块导入时 load_dotenv() 会把 backend/.env 灌进进程环境，
+    这里清空与配置字段同名（含 validation_alias）的变量，
+    保证断言的是代码默认值而不是部署机的 .env。
+    """
+    names = set()
+    for name, field in Settings.model_fields.items():
+        names.add(name.upper())
+        alias = field.validation_alias
+        choices = getattr(alias, "choices", None)
+        if choices is None and isinstance(alias, str):
+            choices = (alias,)
+        for choice in choices or ():
+            if isinstance(choice, str):
+                names.add(choice.upper())
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    yield
+
+
 def test_company_auth_contract_defaults(monkeypatch):
     monkeypatch.delenv("AUTH_MODE", raising=False)
     value = Settings(_env_file=None)

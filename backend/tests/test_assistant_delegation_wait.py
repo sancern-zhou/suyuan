@@ -228,21 +228,24 @@ async def test_wait_task_waits_for_delegation(monkeypatch):
 # ToolLoopGuard 改道指引
 # --------------------------------------------------------------------- #
 
-def test_loop_guard_block_carries_redirection_hint():
+def test_loop_guard_reminder_carries_redirection_hint():
+    """重复调用不拦截：改道指引随注入提醒带回（对齐 ZCode 提醒注入）。"""
     from app.agent.runtime.tool_loop_guard import ToolLoopGuard
 
     guard = ToolLoopGuard()
     args = {"action": "get", "run_id": "delegation_g1"}
-    result = None
-    for _ in range(10):
-        outcome = guard.before_call("manage_assistant_runs", args)
-        if outcome is not None and outcome["severity"] == "block":
-            result = outcome
-            break
-    assert result is not None
-    assert result["severity"] == "block"
-    assert "wait_seconds" in result["summary"]
-    assert "改道" in result["summary"]
+    assert guard.before_call("manage_assistant_runs", args) is None
+    assert guard.before_call("manage_assistant_runs", args) is None
+    warning = guard.before_call("manage_assistant_runs", args)
+    assert warning is not None
+    assert warning["severity"] == "warning"
+    assert warning["reminder_injected"] is True
+
+    reminders = guard.drain_pending_reminders()
+    assert len(reminders) == 1
+    assert "wait_seconds" in reminders[0]
+    assert "改道" in reminders[0]
+    assert guard.drain_pending_reminders() == []
 
 
 def test_loop_guard_warning_also_carries_hint():

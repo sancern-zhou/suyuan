@@ -143,13 +143,3 @@ export function buildComposerPayload({
     knowledgeBaseIds: knowledgeBaseIds || []
   }
 }
-
-export function shouldClearAcceptedComposer(sent, current) {
-  if (!sent || !current) return false
-  const sentFiles = Array.isArray(sent.fileIds) ? sent.fileIds : []
-  const currentFiles = Array.isArray(current.fileIds) ? current.fileIds : []
-  return sent.query === current.query &&
-    sent.skillId === current.skillId &&
-    sentFiles.length === currentFiles.length &&
-    sentFiles.every((id, index) => id === currentFiles[index])
-}

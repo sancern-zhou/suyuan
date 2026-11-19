@@ -145,6 +145,9 @@ class SessionManagerDB:
                         f"conversation_history_save_failed:{session.session_id}"
                     )
 
+            if update_timestamp:
+                await self._touch_catalog_recency(session.session_id)
+
             logger.info(
                 "session_saved_to_db",
                 session_id=session.session_id,
@@ -164,6 +167,26 @@ class SessionManagerDB:
                 traceback=traceback.format_exc()
             )
             return False
+
+    async def _touch_catalog_recency(self, session_id: str) -> None:
+        """Refresh catalog recency so the session list reflects new activity.
+
+        ``conversation_catalog.updated_at`` used to be written only at
+        registration, so lists sorted by it never moved a continued
+        conversation to the top. Fail-soft on purpose: list recency must never
+        break transcript persistence, and non-catalogued (channel) sessions
+        simply have no row to touch.
+        """
+        from app.conversations.repository import ConversationCatalogRepository
+
+        try:
+            await ConversationCatalogRepository().touch(session_id)
+        except Exception as exc:
+            logger.warning(
+                "catalog_recency_touch_failed",
+                session_id=session_id,
+                error=str(exc),
+            )
 
     async def save_session_metadata(
         self,
