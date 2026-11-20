@@ -179,6 +179,25 @@ def evaluate_gate(
     return None
 
 
+def renotify_due(
+    state: dict[str, Any],
+    *,
+    rule_type: str,
+    pollutant: str,
+    now: datetime,
+    config: AirAlertRuleConfig,
+) -> bool:
+    """滞回心跳：未恢复但距上次推送已满一个冷却窗口（窗口值=规则总表
+    冷却期列）→ 强制再报一条"持续提醒"，避免同一过程长时间静默抑制。"""
+    if not config.hysteresis_renotify:
+        return False
+    cooldown = config.cooldown_for(rule_type, pollutant)
+    if cooldown <= 0:
+        return False
+    last_ts = _parse_ts(state.get("last_push_ts"))
+    return last_ts is not None and now - last_ts >= timedelta(minutes=cooldown)
+
+
 def quota_reason(
     store: AlertStateStore, station_id: str, day: str, config: AirAlertRuleConfig
 ) -> str | None:
@@ -399,6 +418,12 @@ def apply_push_chain(
                 suppressed.append({"alert": alert, "reason": "quiet_hours"})
                 _log(alert, "suppress", "quiet_hours")
                 continue
+            # MR 低幅度档（涉事站全为优档且主站幅度不足全阈值）→ 摘要口径，不推送。
+            if rule_type == "multi_station_rise" and (alert.get("detail") or {}).get("mr_tier") == "digest":
+                alert["suppress_reason"] = "mr_digest"
+                suppressed.append({"alert": alert, "reason": "mr_digest"})
+                _log(alert, "suppress", "mr_digest")
+                continue
             reason = evaluate_gate(
                 state,
                 rule_type=rule_type,
@@ -407,6 +432,14 @@ def apply_push_chain(
                 now=now,
                 config=config,
             )
+            if reason == "hysteresis" and renotify_due(
+                state, rule_type=rule_type, pollutant=pollutant, now=now, config=config,
+            ):
+                # 滞回心跳放行：同一偏离过程的持续提醒（非新事件）。
+                alert["is_renotify"] = True
+                alert["renotify_of_event_id"] = state.get("first_event_id")
+                alert["renotify_window_minutes"] = config.cooldown_for(rule_type, pollutant)
+                reason = None
             if reason:
                 alert["suppress_reason"] = reason
                 suppressed.append({"alert": alert, "reason": reason})
@@ -454,6 +487,7 @@ def apply_push_chain(
             None,
             is_primary=alert.get("event_id") in primary_ids,
             is_upgrade=bool(alert.get("is_upgrade")),
+            is_renotify=bool(alert.get("is_renotify")),
         )
 
     store.save()

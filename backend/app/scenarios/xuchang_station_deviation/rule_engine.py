@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -568,6 +568,202 @@ def _reset_missing_streaks(states: Any, grain: str, pollutant: str, present_stat
             state["streak_cnt"] = 0
 
 
+def modified_z_score(values: dict[str, float], station_id: str) -> float:
+    """单站 modified z-score（Iglewicz–Hoaglin，基于六站中位数与 MAD）。
+
+    区分"统计意义上的孤立离群"（wz >= 3.5）与"分布整体分散/双簇"（wz 小）；
+    MAD=0（其余站同值）时任何偏离视为极端（inf）。
+    """
+    med = median(values.values())
+    mad = median(sorted(abs(v - med) for v in values.values()))
+    x = values[station_id]
+    if mad == 0:
+        return float("inf") if x != med else 0.0
+    return 0.6745 * (x - med) / mad
+
+
+def evaluate_multi_station_rise(
+    outcome: CycleOutcome,
+    *,
+    grain: str,
+    slot: datetime,
+    pollutant: str,
+    values: dict[str, float],
+    levels: dict[tuple[str, str], str],
+    ds_context: dict[str, dict[str, Any]],
+    series_by_station: dict[str, list[tuple[datetime, float]]],
+    names: dict[str, str],
+    config: AirAlertRuleConfig,
+) -> None:
+    """多站同步抬升（MR）：双站缝隙与片区一致偏好的正向告警（优先级最高）。
+
+    路径 A（co_rise，时间维度）：同槽 >=mr_min_sites 站各自较自身基线的抬升
+    达 mr_amplitude_ratio×DS 阈值且过绝对下限；反弹守卫拦截低洼基线的微反弹。
+    路径 B（co_deviation，空间维度）：OL 触发站 wz<mr_wz_max 且存在同向伴生站。
+    触发后覆盖涉事站点的单站 DS/CL/OL 候选（进 region_merged 抑制流水，指回
+    MR 事件）；全部涉事站为优档且主站幅度不足全阈值时降级 digest。
+    """
+    if not config.mr_enabled:
+        return
+    cap = (config.mr_plausibility_cap or {}).get(pollutant)
+    if cap and any(v > float(cap) for v in values.values()):
+        return  # 平台数据故障形态（多站同刻超物理上限），不判 MR
+    if len(values) < max(int(config.mr_min_sites), 2):
+        return
+    med_all = median(values.values())
+
+    def _level(sid: str) -> str | None:
+        return levels.get((sid, pollutant))
+
+    def _ol_threshold(sid: str) -> float | None:
+        level = _level(sid)
+        if level is None:
+            return None
+        peers = {k: x for k, x in values.items() if k != sid}
+        if not peers:
+            return None
+        ratio, absolute = config.thresholds(pollutant, "spatial_outlier", level)
+        return max(mean(peers.values()) * ratio, absolute)
+
+    def _ol_delta(sid: str) -> float:
+        peers = {k: x for k, x in values.items() if k != sid}
+        return values[sid] - mean(peers.values())
+
+    involved: dict[str, dict[str, Any]] = {}
+    path: str | None = None
+    wz_map: dict[str, float] = {}
+
+    # ---- 路径 A：共升（对各站 DS 上下文放宽到 amplitude_ratio）----
+    passed: dict[str, dict[str, Any]] = {}
+    for sid in sorted(values):
+        ctx = ds_context.get(sid)
+        if not ctx:
+            continue
+        level = ctx.get("level")
+        base = float(ctx["baseline"])
+        rise = float(ctx["delta"])
+        if rise <= 0 or level is None:
+            continue
+        ratio, absolute = config.thresholds(pollutant, "sudden_rise", level)
+        threshold = max(base * ratio, absolute)
+        floor = float((config.mr_absolute_floor or {}).get(pollutant, 0.0))
+        if rise < max(float(config.mr_amplitude_ratio) * threshold, floor):
+            continue
+        history = [v for t, v in (series_by_station.get(sid) or []) if t < slot]
+        pct = (100.0 * sum(1 for v in history if v <= base) / len(history)) if history else 50.0
+        if pct < float(config.mr_rebound_pct) and not (values[sid] >= med_all or rise >= threshold):
+            continue  # 反弹守卫：低洼基线的微反弹不构成"同步抬升"
+        passed[sid] = {
+            "station_id": sid, "station_name": names.get(sid, sid), "station_value": values[sid],
+            "baseline": round(base, 3), "rise": round(rise, 3),
+            "threshold": round(threshold, 3), "baseline_day_percentile": round(pct),
+            "air_quality_level": level,
+        }
+    if len(passed) >= int(config.mr_min_sites):
+        path, involved = "co_rise", passed
+
+    # ---- 路径 B：共偏（OL 触发站 wz 有效 + 同向伴生）----
+    if path is None:
+        for sid in sorted(values):
+            thr = _ol_threshold(sid)
+            if thr is None:
+                continue
+            delta = _ol_delta(sid)
+            if delta <= 0 or delta < thr:
+                continue
+            wz = modified_z_score(values, sid)
+            wz_map[sid] = wz
+            if wz >= float(config.mr_wz_max):
+                continue  # 统计意义上的孤立离群 → 交给 OL 单站告警
+            companions = []
+            for pid in sorted(values):
+                if pid == sid:
+                    continue
+                thr_p = _ol_threshold(pid)
+                if thr_p is None:
+                    continue
+                delta_p = _ol_delta(pid)
+                if delta_p > 0 and delta_p >= float(config.mr_companion_ratio) * thr_p:
+                    companions.append(pid)
+            if not companions:
+                continue
+            path = "co_deviation"
+            involved[sid] = {
+                "station_id": sid, "station_name": names.get(sid, sid), "station_value": values[sid],
+                "peer_mean": round(mean({k: x for k, x in values.items() if k != sid}.values()), 3),
+                "delta": round(delta, 3), "threshold": round(thr, 3),
+                "modified_z_score": round(wz, 2) if wz != float("inf") else None,
+                "air_quality_level": _level(sid),
+            }
+            for pid in companions:
+                thr_p = _ol_threshold(pid)
+                involved[pid] = {
+                    "station_id": pid, "station_name": names.get(pid, pid), "station_value": values[pid],
+                    "peer_mean": round(mean({k: x for k, x in values.items() if k != pid}.values()), 3),
+                    "delta": round(_ol_delta(pid), 3), "threshold": round(thr_p, 3),
+                    "air_quality_level": _level(pid),
+                }
+            break
+    if path is None or not involved:
+        return
+
+    def _amplitude(entry: dict[str, Any]) -> float:
+        threshold = float(entry.get("threshold") or 0)
+        gained = float(entry.get("rise") if "rise" in entry else entry.get("delta") or 0)
+        return (gained / threshold) if threshold > 0 else 0.0
+
+    primary_sid = max(sorted(involved), key=lambda s: (_amplitude(involved[s]), s))
+    primary = involved[primary_sid]
+    # 低基线反弹不报送（2026-11-20 需求方定版）：主站基线处当日低分位时，
+    # 幅度比会被绝对门槛在低基线上放大（如 5→14 相对阈值 6 达 1.5×），
+    # 属低谷回升而非真实抬升 → digest（不推送，流水与日摘要可审计）。
+    # 真实抬升会在后续槽（基线回升后、分位脱离低洼区）正常推送。
+    primary_rebound = (
+        path == "co_rise"
+        and float(primary.get("baseline_day_percentile") or 50.0) < float(config.mr_rebound_pct)
+    )
+    all_excellent = all(entry.get("air_quality_level") == "优" for entry in involved.values())
+    tier = "digest" if all_excellent and _amplitude(primary) < 1.0 else "push"
+    if primary_rebound:
+        tier = "digest"
+
+    others = [involved[s] for s in sorted(involved) if s != primary_sid]
+    detail: dict[str, Any] = {
+        "path": path,
+        "involved_stations": [involved[s] for s in sorted(involved)],
+        "region_stations": others,
+        "primary_amplitude": round(_amplitude(primary), 3),
+        "mr_tier": tier,
+        "threshold": float(primary.get("threshold") or 0),
+        "wz": (
+            {names.get(k, k): (None if wz_map[k] == float("inf") else round(wz_map[k], 2)) for k in sorted(wz_map)}
+            or None
+        ),
+        "recovery_threshold": float(primary.get("threshold") or 0),
+    }
+    candidate = _candidate(
+        rule_type="multi_station_rise", slot=slot, grain=grain,
+        station_id=primary_sid, station_name=names.get(primary_sid),
+        pollutant=pollutant, value=float(primary["station_value"]),
+        level_name=primary["air_quality_level"], detail=detail,
+    )
+    outcome.candidates.append(candidate)
+    outcome.recovery_metrics[(grain, primary_sid, pollutant, "multi_station_rise")] = float(
+        primary.get("rise") if "rise" in primary else primary.get("delta") or 0
+    )
+
+    # 覆盖涉事站点的单站候选（共偏路径不覆盖 CL：CL 是时间维度抬升）。
+    covered_rules = {"sudden_rise", "spatial_outlier"} | ({"continuous_rise"} if path == "co_rise" else set())
+    kept: list[dict[str, Any]] = []
+    for alert in outcome.candidates:
+        if alert.get("station_id") in involved and str(alert.get("rule_type")) in covered_rules:
+            alert["merged_into_event_id"] = candidate["event_id"]
+            outcome.region_merged.append(alert)
+        else:
+            kept.append(alert)
+    outcome.candidates = kept
+
+
 def _peer_mean(
     values: dict[str, float],
     station_id: str,
@@ -597,6 +793,7 @@ def evaluate_five_minute_cycle(
     step = SLOT_STEP[grain]
     # 污染等级按该污染物 1 小时平均定档：5 分钟规则使用上一完整小时。
     levels = hourly_levels(rows, slot_of(target_slot, GRANULARITY_HOUR) - timedelta(hours=1), station_allowlist)
+    mr_snapshots: list[dict[str, Any]] = []
 
     for pollutant in FIVE_MIN_POLLUTANTS:
         column = POLLUTANT_COLUMNS[pollutant]
@@ -705,8 +902,26 @@ def evaluate_five_minute_cycle(
                     ))
 
         _reset_missing_streaks(states, grain, pollutant, set(current))
+        mr_snapshots.append({
+            "pollutant": pollutant,
+            "values": all_values,
+            "ds_context": ds_context,
+            "series": series_by_station,
+            "names": {
+                sid: (row.get("name") or row.get("station_name") or sid)
+                for sid, (_value, row) in current.items()
+            },
+        })
 
-    outcome.candidates, outcome.region_merged = merge_regional_rises(outcome.candidates, config)
+    for snapshot in mr_snapshots:
+        evaluate_multi_station_rise(
+            outcome, grain=grain, slot=target_slot, pollutant=snapshot["pollutant"],
+            values=snapshot["values"], levels=levels, ds_context=snapshot["ds_context"],
+            series_by_station=snapshot["series"], names=snapshot["names"], config=config,
+        )
+    mr_covered = outcome.region_merged  # MR 覆盖的单站候选（merge 只返回 CL 合并抑制）
+    outcome.candidates, suppressed = merge_regional_rises(outcome.candidates, config)
+    outcome.region_merged = mr_covered + suppressed
     return outcome
 
 
@@ -729,6 +944,7 @@ def evaluate_pm25_hourly_cycle(
     levels = hourly_levels(rows, target_hour, station_allowlist)
     current = _current_slot_values(rows, target_hour, column, grain, station_allowlist)
     history = _history_series(rows, column, target_hour, grain, station_allowlist)
+    mr_snapshots: list[dict[str, Any]] = []
     available = len(current)
     outcome.checks.append({
         "time": target_hour.isoformat(),
@@ -828,5 +1044,23 @@ def evaluate_pm25_hourly_cycle(
                 ))
 
     _reset_missing_streaks(states, grain, pollutant, set(current))
-    outcome.candidates, outcome.region_merged = merge_regional_rises(outcome.candidates, config)
+    mr_snapshots.append({
+        "pollutant": pollutant,
+        "values": all_values,
+        "ds_context": ds_context,
+        "series": series_by_station,
+        "names": {
+            sid: (row.get("name") or row.get("station_name") or sid)
+            for sid, (_value, row) in current.items()
+        },
+    })
+    for snapshot in mr_snapshots:
+        evaluate_multi_station_rise(
+            outcome, grain=grain, slot=target_hour, pollutant=snapshot["pollutant"],
+            values=snapshot["values"], levels=levels, ds_context=snapshot["ds_context"],
+            series_by_station=snapshot["series"], names=snapshot["names"], config=config,
+        )
+    mr_covered = outcome.region_merged  # MR 覆盖的单站候选（merge 只返回 CL 合并抑制）
+    outcome.candidates, suppressed = merge_regional_rises(outcome.candidates, config)
+    outcome.region_merged = mr_covered + suppressed
     return outcome

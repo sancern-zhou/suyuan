@@ -42,11 +42,13 @@ LEVEL_ALIASES = {
     "严重": "严重污染",
 }
 RULE_LABELS = {
+    "multi_station_rise": "多站同步抬升",
     "sudden_rise": "单点突升",
     "continuous_rise": "连续抬升",
     "spatial_outlier": "站点离群",
 }
-RULE_PRIORITY = {"sudden_rise": 1, "continuous_rise": 2, "spatial_outlier": 3}
+# MR 优先级最高：多站同步抬升触发时覆盖涉事站点的单站告警。
+RULE_PRIORITY = {"multi_station_rise": 0, "sudden_rise": 1, "continuous_rise": 2, "spatial_outlier": 3}
 POLLUTANT_ORDER = {"PM2.5": 0, "PM10": 1, "SO2": 2, "NO2": 3, "CO": 4}
 
 # 规则总表（判据修订）逐条转写；等级顺序：优、良、轻度、中度、重度、严重。
@@ -126,6 +128,7 @@ RULE_MATRIX: dict[str, dict[str, dict[str, tuple[float, float]]]] = {
 
 # 冷却期按规则类型 + 因子分组：PM2.5 单独一档，其余四因子共用一档。
 COOLDOWN_MINUTES: dict[str, dict[str, int]] = {
+    "multi_station_rise": {"PM2.5": 120, "default": 60},
     "sudden_rise": {"PM2.5": 60, "default": 30},
     "continuous_rise": {"PM2.5": 120, "default": 60},
     "spatial_outlier": {"PM2.5": 60, "default": 30},
@@ -144,6 +147,29 @@ class AirAlertRuleConfig:
     """全部可调参数；字段名即 JSON 覆盖文件中的键名。"""
 
     city: str = "许昌市"
+
+    # 多站同步抬升（MR，2026-11-20 新增；回测 11-13~11-18 定参）：
+    # - 路径 A（共升）：同槽 >=mr_min_sites 站各自 rise >= mr_amplitude_ratio × 自身
+    #   DS 阈值且 >= 绝对下限（mr_absolute_floor）；
+    # - 路径 B（共偏）：OL 触发站 wz < mr_wz_max（Iglewicz–Hoaglin modified
+    #   z-score）且存在 >=1 个伴生站正向偏离 >= mr_companion_ratio × 自身 OL 阈值；
+    # - 反弹守卫：基线当日分位 < mr_rebound_pct 时，要求抬升后进六站中位数以上
+    #   或幅度 >= 全阈值；
+    # - 物理上限（mr_plausibility_cap）：任一站超限视为平台数据故障，本槽不判 MR；
+    # - 档位：全部涉事站 优 且主站幅度 < 全阈值 → digest（不推送，进摘要口径）；
+    # - MR 触发时覆盖涉事站点的单站 DS/CL/OL 候选（suppressed，流水指回 MR）。
+    mr_enabled: bool = True
+    mr_min_sites: int = 2
+    mr_amplitude_ratio: float = 0.5
+    mr_absolute_floor: dict[str, float] = field(default_factory=lambda: {
+        "PM2.5": 3.0, "PM10": 3.0, "SO2": 3.0, "NO2": 3.0, "CO": 0.1,
+    })
+    mr_rebound_pct: float = 30.0
+    mr_companion_ratio: float = 0.5
+    mr_wz_max: float = 3.5
+    mr_plausibility_cap: dict[str, float] = field(default_factory=lambda: {
+        "PM2.5": 800.0, "PM10": 1000.0, "SO2": 800.0, "NO2": 500.0, "CO": 10.0,
+    })
 
     # 90 条规则矩阵：污染物 → 规则类型 → 污染等级 → (比例, 绝对增量)。
     rule_matrix: dict[str, dict[str, dict[str, tuple[float, float]]]] = field(
@@ -183,13 +209,17 @@ class AirAlertRuleConfig:
     # 恢复防抖（沿用既有推送链，不属于规则总表）。
     recover_ratio: float = 0.90
     recover_periods: int = 3
+    # 滞回心跳（2026-11-20 运营层决议）：未恢复但距上次推送已满一个冷却
+    # 窗口时强制再报一条"持续提醒"，避免同一过程长时间静默。窗口值直接
+    # 沿用冷却期查表；置 False 可整体关闭（回到无上限滞回抑制）。
+    hysteresis_renotify: bool = True
 
     # 运营限额与免打扰（规则总表未定义；按规则类型执行，见下方方法）。
     site_daily_quota: int = 8
     global_daily_cap: int = 40
     quiet_hours_start: int = 22
     quiet_hours_end: int = 6
-    quiet_suppress_rules: tuple[str, ...] = ("spatial_outlier",)
+    quiet_suppress_rules: tuple[str, ...] = ("spatial_outlier", "multi_station_rise")
 
     def thresholds(self, pollutant: str, rule_type: str, level_name: str | None) -> tuple[float, float]:
         """返回 (比例阈值, 绝对增量阈值)。"""

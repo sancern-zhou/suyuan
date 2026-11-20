@@ -436,6 +436,9 @@ class XuchangStationDeviationAlertService:
     # dispatchers enough lead-in context without turning a minute alert into
     # a daily trend chart.
     MINUTE_TREND_LOOKBACK_MINUTES = 60
+    # PM2.5 hourly alert charts span the past six hours (alert hour
+    # inclusive), mirroring the minute charts' "lead-in + alert slot" shape.
+    HOUR_TREND_LOOKBACK_HOURS = 6
 
     def __init__(self, config: StationDeviationConfig | None = None, output_root: Path | None = None) -> None:
         self.config = config or StationDeviationConfig(city_area_code=os.getenv("XUCHANG_STATION_CITY_AREA_CODE", "411000"))
@@ -564,6 +567,17 @@ class XuchangStationDeviationAlertService:
             if row.get("data_source") == "minute"
             and row.get("data_time") is not None
             and window_start <= _slot(row["data_time"], "minute") < window_end
+        ]
+
+    def _hour_trend_rows(self, rows: list[dict[str, Any]], target_hour: datetime) -> list[dict[str, Any]]:
+        """Return the six-hour hourly window used by PM2.5 alert charts."""
+        window_start = target_hour - timedelta(hours=self.HOUR_TREND_LOOKBACK_HOURS)
+        window_end = target_hour + timedelta(hours=1)
+        return [
+            row for row in rows
+            if row.get("data_source") == "hour"
+            and row.get("data_time") is not None
+            and window_start <= _slot(row["data_time"], "hour") < window_end
         ]
 
     def write_timeseries_chart(self, alert: dict[str, Any], rows: list[dict[str, Any]]) -> Path | None:
@@ -944,11 +958,16 @@ class XuchangStationDeviationAlertService:
                 )] = str(alert.get("event_id"))
         for alert in region_merged:
             alert["suppress_reason"] = "regional_merge"
-            alert["merged_into_event_id"] = merged_into.get((
-                str(alert.get("measurement_granularity")),
-                str(alert.get("station_id")),
-                str(alert.get("target_pollutant")),
-            ))
+            # MR 覆盖的单站候选在引擎层已直接指回 MR 事件（其站点不在主告警
+            # region_stations 清单内），这里只在映射命中时回填，不覆盖引擎值。
+            alert["merged_into_event_id"] = (
+                merged_into.get((
+                    str(alert.get("measurement_granularity")),
+                    str(alert.get("station_id")),
+                    str(alert.get("target_pollutant")),
+                ))
+                or alert.get("merged_into_event_id")
+            )
         suppressed_pre = [{"alert": alert, "reason": "regional_merge"} for alert in region_merged]
 
         pushed, suppressed, window_summary = apply_push_chain(
@@ -962,6 +981,7 @@ class XuchangStationDeviationAlertService:
         )
 
         minute_trend_rows = self._minute_trend_rows(rows, target_slot) if granularity == "5min" else []
+        hour_trend_rows = self._hour_trend_rows(rows, _hour(target_slot) - timedelta(hours=1))
         events = []
         alerts_by_station: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for alert in pushed:
@@ -986,6 +1006,8 @@ class XuchangStationDeviationAlertService:
             chart_rows = rows
             if granularity == "5min" and alert.get("measurement_granularity") == "5min":
                 chart_rows = minute_trend_rows
+            elif alert.get("measurement_granularity") == "hour":
+                chart_rows = hour_trend_rows
             chart_path = self.write_timeseries_chart(alert, chart_rows)
             if chart_path is not None:
                 alert["timeseries_chart_path"] = format_agent_path(chart_path)

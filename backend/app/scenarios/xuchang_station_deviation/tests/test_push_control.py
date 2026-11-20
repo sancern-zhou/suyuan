@@ -54,7 +54,8 @@ def _alert(station_id: str = "a", rule_type: str = "sudden_rise",
 def _chain(candidates, store, tmp_path, now, **kwargs):
     kwargs.setdefault("log_store", PushLogStore(tmp_path))
     kwargs.setdefault("recovery_metrics", {})
-    return apply_push_chain(candidates, store=store, config=AirAlertRuleConfig(), now=now, **kwargs)
+    kwargs.setdefault("config", AirAlertRuleConfig())
+    return apply_push_chain(candidates, store=store, config=kwargs.pop("config"), now=now, **kwargs)
 
 
 def test_first_alert_pushes_and_disarms(tmp_path):
@@ -281,6 +282,61 @@ def test_push_log_records_push_and_suppress(tmp_path):
     actions = [_json.loads(line)["action"] for line in lines]
     assert actions == ["push", "suppress"]
     assert _json.loads(lines[1])["reason"] == "hysteresis"
+
+
+def test_hysteresis_renotify_after_full_window(tmp_path):
+    # 滞回心跳（窗口值=总表冷却期）：未恢复但距上次推送满 30 分钟（DS-PM10）
+    # → 强制再报一条持续提醒；心跳后窗口重新计时，期间仍照常滞回抑制。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    again29 = _alert(occurred_at="2026-11-02T09:29:00+08:00")
+    again29["event_id"] = "e-again29"
+    pushed, suppressed, _summary = _chain([again29], store, tmp_path, datetime(2026, 11, 2, 9, 29, tzinfo=TZ))
+    assert pushed == []
+    assert suppressed[0]["reason"] == "hysteresis"
+
+    again30 = _alert(occurred_at="2026-11-02T09:30:00+08:00")
+    again30["event_id"] = "e-again30"
+    pushed, suppressed, _summary = _chain([again30], store, tmp_path, datetime(2026, 11, 2, 9, 30, tzinfo=TZ))
+    assert len(pushed) == 1 and suppressed == []
+    assert pushed[0]["is_renotify"] is True
+    assert pushed[0]["renotify_of_event_id"] == "e-a-sudden_rise-PM10"
+    assert pushed[0]["renotify_window_minutes"] == 30
+    state = store.instance("5min", "a", "PM10", "sudden_rise")
+    assert state["armed"] is False
+    assert state["first_event_id"] == "e-a-sudden_rise-PM10"
+
+    again59 = _alert(occurred_at="2026-11-02T09:59:00+08:00")
+    again59["event_id"] = "e-again59"
+    pushed, suppressed, _summary = _chain([again59], store, tmp_path, datetime(2026, 11, 2, 9, 59, tzinfo=TZ))
+    assert pushed == []
+    assert suppressed[0]["reason"] == "hysteresis"
+
+
+def test_hysteresis_renotify_still_respects_quiet_hours(tmp_path):
+    # 心跳不穿透免打扰：夜间未恢复的 OL 即使满窗口也照常静默。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert(rule_type="spatial_outlier")], store, tmp_path, datetime(2026, 11, 2, 21, 30, tzinfo=TZ))
+    night = _alert(rule_type="spatial_outlier", occurred_at="2026-11-02T23:30:00+08:00")
+    night["event_id"] = "e-ol-night-renotify"
+    pushed, suppressed, _summary = _chain([night], store, tmp_path, datetime(2026, 11, 2, 23, 30, tzinfo=TZ))
+    assert pushed == []
+    assert suppressed[0]["reason"] == "quiet_hours"
+
+
+def test_hysteresis_renotify_can_be_disabled(tmp_path):
+    # 运营层开关：hysteresis_renotify=False 回到无上限滞回抑制。
+    store = AlertStateStore(tmp_path)
+    config = AirAlertRuleConfig()
+    config.hysteresis_renotify = False
+    _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    later = _alert(occurred_at="2026-11-02T10:30:00+08:00")
+    later["event_id"] = "e-later-1030"
+    pushed, suppressed, _summary = _chain(
+        [later], store, tmp_path, datetime(2026, 11, 2, 10, 30, tzinfo=TZ), config=config,
+    )
+    assert pushed == []
+    assert suppressed[0]["reason"] == "hysteresis"
 
 
 def test_state_survives_restart(tmp_path):

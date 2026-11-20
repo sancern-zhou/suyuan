@@ -551,6 +551,8 @@ def test_pm25_hourly_ol_single_window():
 
 
 # ---- CL 区域合并（>=4 站同因子同窗口命中 → 最大站主告警 + 全站清单）----
+# 2026-11-20 起 ≥2 站共升由 MR 接管（覆盖涉事 CL），本节用 mr_enabled=False
+# 测试 CL 合并作为 MR 关闭时的兜底路径。
 
 def _regional_cl_run(rising: dict[str, float], config: AirAlertRuleConfig | None = None):
     """6 站 CL 区域场景：前 3 个槽全部 40（基线垫底），后 4 个槽按
@@ -573,7 +575,7 @@ def _regional_cl_run(rising: dict[str, float], config: AirAlertRuleConfig | None
 def test_regional_rise_merged_to_single_primary():
     # 4 个站同时抬升（各段 10、累计 30 ≥ 25）→ 合并为一条，
     # detail.region_stations 带 3 站，其余进 region_merged。
-    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 40.0, "f": 40.0})
+    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 40.0, "f": 40.0}, config=AirAlertRuleConfig(mr_enabled=False))
     rises = [c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]
     assert len(rises) == 1
     primary = rises[0]
@@ -587,7 +589,7 @@ def test_regional_rise_merged_to_single_primary():
 def test_regional_merge_suppressed_candidates_logged_to_push_log(tmp_path):
     # 被合并站点的通报内容由主告警（region_stations 清单）承载，但流水必须
     # 可审计：reason=regional_merge，且 merged_into_event_id 指回主告警。
-    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 40.0, "f": 40.0})
+    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 40.0, "f": 40.0}, config=AirAlertRuleConfig(mr_enabled=False))
     primary = next(c for c in outcome.candidates if c["rule_type"] == "continuous_rise")
     pre = []
     for alert in outcome.region_merged:
@@ -613,7 +615,7 @@ def test_regional_merge_suppressed_candidates_logged_to_push_log(tmp_path):
 
 def test_regional_rise_not_triggered_below_threshold_sites():
     # 只有 3 个站命中 → 不合并，各自保留候选。
-    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 40.0, "e": 40.0, "f": 40.0})
+    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 40.0, "e": 40.0, "f": 40.0}, config=AirAlertRuleConfig(mr_enabled=False))
     rises = [c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]
     assert len(rises) == 3
     assert outcome.region_merged == []
@@ -623,7 +625,7 @@ def test_regional_rise_merge_can_be_disabled():
     # cl_region_merge_sites=0：不合并，6 站全部各自保留。
     outcome = _regional_cl_run(
         {"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 70.0, "f": 70.0},
-        config=AirAlertRuleConfig(cl_region_merge_sites=0),
+        config=AirAlertRuleConfig(cl_region_merge_sites=0, mr_enabled=False),
     )
     assert len([c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]) == 6
 
@@ -631,6 +633,8 @@ def test_regional_rise_merge_can_be_disabled():
 # ---- DS 区域合并（2026-11-18 缝隙修复）----
 # 恰好 2 站同窗口双命中 DS 时，彼此的邻站同向抑制（阈值 2）都不到门槛，
 # 会推出两条互相矛盾的"单点突升"；ds_region_merge_sites=2 收口为一条。
+# 2026-11-20 起 MR（多站同步抬升）默认接管双站共升场景，本节用
+# mr_enabled=False 测试 DS 合并作为 MR 关闭时的兜底路径。
 
 def _dual_ds_run(config: AirAlertRuleConfig | None = None):
     """两站同窗口双命中 DS：a 40→55（Δ15）、b 40→57（Δ17），其余 4 站走平。
@@ -653,7 +657,7 @@ def _dual_ds_run(config: AirAlertRuleConfig | None = None):
 def test_dual_sudden_rise_merged_to_single_primary():
     # 两站双命中 DS → 合并为一条：跳变增量最大的站（b，Δ17）做主告警，
     # a 进 region_stations 清单与 region_merged 抑制流水。
-    outcome = _dual_ds_run()
+    outcome = _dual_ds_run(config=AirAlertRuleConfig(mr_enabled=False))
     rises = [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"]
     assert len(rises) == 1
     primary = rises[0]
@@ -670,7 +674,7 @@ def test_dual_sudden_rise_merged_to_single_primary():
 
 def test_dual_sudden_rise_merge_can_be_disabled():
     # ds_region_merge_sites=0：不合并，两站各自保留候选（旧行为）。
-    outcome = _dual_ds_run(config=AirAlertRuleConfig(ds_region_merge_sites=0))
+    outcome = _dual_ds_run(config=AirAlertRuleConfig(ds_region_merge_sites=0, mr_enabled=False))
     rises = [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"]
     assert len(rises) == 2
     assert {c["station_id"] for c in rises} == {"a", "b"}
@@ -680,7 +684,7 @@ def test_dual_sudden_rise_merge_can_be_disabled():
 def test_dual_sudden_rise_merge_audited_in_push_log(tmp_path):
     # 被合并站以 regional_merge 抑制入库：不推送、流水 merged_into_event_id
     # 指回主告警，与 CL 区域合并同一管线。
-    outcome = _dual_ds_run()
+    outcome = _dual_ds_run(config=AirAlertRuleConfig(mr_enabled=False))
     primary = next(c for c in outcome.candidates if c["rule_type"] == "sudden_rise")
     loser = outcome.region_merged[0]
     loser["suppress_reason"] = "regional_merge"
@@ -701,6 +705,201 @@ def test_dual_sudden_rise_merge_audited_in_push_log(tmp_path):
     assert len(merge_entries) == 1
     assert merge_entries[0]["station_id"] == "a"
     assert merge_entries[0]["merged_into_event_id"] == primary["event_id"]
+
+
+# ---- MR 多站同步抬升（2026-11-20 新增）----
+# 与 DS 并列的规则类型且优先级最高（0）：双站共升/片区一致偏好正向告警，
+# 触发即覆盖涉事站点的单站 DS/CL/OL 候选。参数经 11-13~11-18 全槽位回测校准。
+
+def test_mr_co_rise_covers_dual_sudden_rise():
+    # 默认配置：双站同窗口共升 → MR 接管（不再是两条"单点突升"）。
+    outcome = _dual_ds_run()
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    mr = outcome.candidates[0]
+    assert mr["station_id"] == "b"  # 幅度最大站做主告警（17/15 > 15/15）
+    assert mr["rule_priority"] == 0
+    assert mr["rule_label"] == "多站同步抬升"
+    assert mr["detail"]["path"] == "co_rise"
+    assert mr["detail"]["mr_tier"] == "push"
+    assert {s["station_id"] for s in mr["detail"]["involved_stations"]} == {"a", "b"}
+    assert {s["station_id"] for s in mr["detail"]["region_stations"]} == {"a"}
+    covered = {item["station_id"]: item for item in outcome.region_merged}
+    assert set(covered) == {"a", "b"}  # 主站自己的 DS 候选同样被覆盖
+    assert all(item["merged_into_event_id"] == mr["event_id"] for item in covered.values())
+
+
+def test_mr_co_rise_pushed_single_regional_notice(tmp_path):
+    # 推送链：MR 推一条，被覆盖的单站候选以 regional_merge 抑制并指回 MR。
+    outcome = _dual_ds_run()
+    mr = outcome.candidates[0]
+    store = AlertStateStore(tmp_path)
+    log_store = PushLogStore(tmp_path)
+    pushed, suppressed, summary = apply_push_chain(
+        list(outcome.candidates), store=store, config=AirAlertRuleConfig(),
+        now=datetime(2026, 9, 12, 8, 10, tzinfo=TZ), log_store=log_store,
+        recovery_metrics=outcome.recovery_metrics,
+        pre_suppressed=[{"alert": item, "reason": "regional_merge"} for item in outcome.region_merged],
+    )
+    assert len(pushed) == 1 and pushed[0]["rule_type"] == "multi_station_rise"
+    assert [item["reason"] for item in suppressed] == ["regional_merge", "regional_merge"]
+    log_file = next(iter((tmp_path / "push_log").glob("*.jsonl")))
+    entries = [json.loads(line) for line in log_file.read_text(encoding="utf-8").strip().splitlines()]
+    merge_entries = [e for e in entries if e["reason"] == "regional_merge"]
+    assert {e["station_id"] for e in merge_entries} == {"a", "b"}
+    assert all(e["merged_into_event_id"] == mr["event_id"] for e in merge_entries)
+    assert summary is not None and "多站同步抬升" in summary
+
+
+def test_mr_rebound_guard_blocks_low_baseline_micro_rebound():
+    # 低洼基线微反弹：基线当日分位 27% <30%、抬升后低于六站中位、幅度不足
+    # 全阈值（6 < 10）→ 反弹守卫拦截，不产生任何候选（18 时双反弹场景）。
+    slot = datetime(2026, 9, 12, 8, 35, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        if sid in {"a", "b"}:
+            history = [30.0] * 8 + [5.0] * 3  # 基线=mean(5,5,5)=5，分位 3/11≈27%
+        else:
+            history = [12.0] * 6 + [13.0] * 5
+        rows.extend(_history_rows(sid, history, slot))
+        value = 11.0 if sid in {"a", "b"} else (12.0 if sid in {"c", "d"} else 13.0)
+        rows.append(_row(sid, slot, {"pm10": value}))
+    outcome = _cycle(rows, slot)
+    assert outcome.candidates == []
+    assert outcome.region_merged == []
+
+
+def test_mr_absolute_floor_blocks_co_micro_drift():
+    # CO 微漂移：rise 0.18 过 0.5×阈值(0.15) 但低于绝对下限 → 不触发。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    config = AirAlertRuleConfig(mr_absolute_floor={
+        "PM2.5": 3.0, "PM10": 3.0, "SO2": 3.0, "NO2": 3.0, "CO": 0.2,
+    })
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"co": 0.5}, source="hour"))
+        rows.extend(_history_rows(sid, [0.2] * 4, slot, column="co"))
+    current = {"a": 0.38, "b": 0.38, "c": 0.2, "d": 0.2, "e": 0.2, "f": 0.2}
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {"co": current[sid]}))
+    outcome = _cycle(rows, slot, config=config)
+    assert outcome.candidates == []
+
+
+def test_mr_plausibility_cap_blocks_multi_station_data_glitch():
+    # SO2 三站同刻 ~1000μg 平台故障（超物理上限）→ 本槽不产生任何候选
+    # （三站 DS 会被邻站同向抑制，MR 被上限拦截）。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"so2": 20.0}, source="hour"))
+        rows.extend(_history_rows(sid, [8.0] * 4, slot, column="so2"))
+    current = {"a": 1000.0, "b": 990.0, "c": 1010.0, "d": 8.0, "e": 8.0, "f": 8.0}
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {"so2": current[sid]}))
+    outcome = _cycle(rows, slot)
+    assert outcome.candidates == []
+
+
+def test_mr_path_b_district_outlier_merges_single_outlier():
+    # 16:45 形态（连跑两槽建立 OL streak）：第二槽 a=38 离群成立但 wz≈1.2、
+    # 伴生 f=37 达 0.5×阈值 → MR 一致偏高接管，孤立"站点离群"不再单独推。
+    # 其余站基线与现值持平（b/f 本来就高、cde 本来就低），路径 A（共升）
+    # 只有 a 一站达标 → 落入路径 B。
+    slot0 = datetime(2026, 9, 12, 8, 40, tzinfo=TZ)
+    states = MemStates()
+    baseline_by_station = {"a": 20.0, "b": 31.0, "c": 18.0, "d": 19.0, "e": 20.0, "f": 37.0}
+    current = {"a": 38.0, "b": 31.0, "c": 18.0, "d": 19.0, "e": 20.0, "f": 37.0}
+    outcome = None
+    for index in range(2):
+        slot = slot0 + timedelta(minutes=5 * index)
+        rows = []
+        for sid in STATIONS:
+            rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+            rows.extend(_history_rows(sid, [baseline_by_station[sid]] * (4 + index), slot))
+            rows.append(_row(sid, slot, {"pm10": current[sid]}))
+        outcome = _cycle(rows, slot, states=states)
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    mr = outcome.candidates[0]
+    assert mr["detail"]["path"] == "co_deviation"
+    assert mr["station_id"] == "a"
+    assert mr["detail"]["mr_tier"] == "push"
+    assert {s["station_id"] for s in mr["detail"]["involved_stations"]} == {"a", "f"}
+    assert mr["detail"]["wz"] is not None and mr["detail"]["wz"]["a"] == pytest.approx(1.2, abs=0.1)
+    assert {item["station_id"] for item in outcome.region_merged} == {"a"}
+    assert outcome.region_merged[0]["merged_into_event_id"] == mr["event_id"]
+
+
+def test_mr_genuine_outlier_keeps_single_station_alerts():
+    # 单站真离群（wz≈5.9 ≥3.5）→ 不触发 MR，DS/OL 照常各自成报。
+    slot0 = datetime(2026, 9, 12, 8, 40, tzinfo=TZ)
+    states = MemStates()
+    outcome = None
+    for index in range(2):
+        slot = slot0 + timedelta(minutes=5 * index)
+        rows = []
+        for sid in STATIONS:
+            rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 110.0 if sid == "a" else 60.0}, source="hour"))
+            rows.extend(_history_rows(sid, [55.0] * (4 + index), slot))
+        current = {"a": 78.0, "b": 53.0, "c": 48.0, "d": 55.0, "e": 57.0, "f": 58.0}
+        for sid in STATIONS:
+            rows.append(_row(sid, slot, {"pm10": current[sid]}))
+        outcome = _cycle(rows, slot, states=states)
+    types = {c["rule_type"] for c in outcome.candidates}
+    assert "multi_station_rise" not in types
+    assert "sudden_rise" in types and "spatial_outlier" in types
+
+
+def test_mr_digest_tier_suppressed_by_push_chain(tmp_path):
+    # 涉事站全为优档且主站幅度不足全阈值 → mr_tier=digest，推送链以
+    # mr_digest 抑制（夜间免打扰之外的日报摘要口径）。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        rows.extend(_history_rows(sid, [20.0] * 4, slot))
+    current = {"a": 26.0, "b": 26.0, "c": 20.0, "d": 20.0, "e": 20.0, "f": 20.0}
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {"pm10": current[sid]}))
+    outcome = _cycle(rows, slot)
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    assert outcome.candidates[0]["detail"]["mr_tier"] == "digest"
+    store = AlertStateStore(tmp_path)
+    log_store = PushLogStore(tmp_path)
+    pushed, suppressed, _summary = apply_push_chain(
+        list(outcome.candidates), store=store, config=AirAlertRuleConfig(),
+        now=datetime(2026, 9, 12, 8, 10, tzinfo=TZ), log_store=log_store,
+        recovery_metrics=outcome.recovery_metrics,
+    )
+    assert pushed == []
+    assert [item["reason"] for item in suppressed] == ["mr_digest"]
+
+
+def test_mr_low_baseline_rebound_digest_even_with_full_amplitude(tmp_path):
+    # 低基线反弹不报送（2026-11-20 定版）：主站基线当日分位 27% <30%，
+    # 即使幅度达全阈值 1.5×（绝对门槛在低基线放大）也降级 digest。
+    slot = datetime(2026, 9, 12, 8, 35, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        if sid in {"a", "b"}:
+            history = [30.0] * 8 + [5.0] * 3  # 基线=mean(5,5,5)=5，分位 3/11≈27%
+        else:
+            history = [12.0] * 6 + [13.0] * 5
+        rows.extend(_history_rows(sid, history, slot))
+        value = 15.0 if sid == "a" else (14.0 if sid == "b" else (12.0 if sid in {"c", "d"} else 13.0))
+        rows.append(_row(sid, slot, {"pm10": value}))
+    outcome = _cycle(rows, slot)
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    assert outcome.candidates[0]["detail"]["mr_tier"] == "digest"
+    store = AlertStateStore(tmp_path)
+    pushed, suppressed, _summary = apply_push_chain(
+        list(outcome.candidates), store=store, config=AirAlertRuleConfig(),
+        now=datetime(2026, 9, 12, 8, 40, tzinfo=TZ), log_store=PushLogStore(tmp_path),
+        recovery_metrics=outcome.recovery_metrics,
+    )
+    assert pushed == []
+    assert [item["reason"] for item in suppressed] == ["mr_digest"]
 
 
 # ---- 推送链协同（引擎产物 → 管控）----
