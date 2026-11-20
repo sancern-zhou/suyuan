@@ -4,11 +4,11 @@
       class="map-layer"
       :stations="store.stations"
       :alerts="store.alerts"
+      @tilt-change="onTiltChange"
     />
 
     <ScreenHeader
       :header="store.header"
-      :minute="store.minute"
       :data-cutoff-hour="store.snapshot?.data_cutoff_hour || ''"
       :generated-at="store.snapshot?.generated_at || ''"
       :loading="store.loading"
@@ -24,7 +24,7 @@
     >{{ leftOpen ? '‹' : '›' }}</button>
 
     <aside v-show="leftOpen" class="side-panel panel-left">
-      <RealtimePanel :header="store.header" :minute="store.minute" />
+      <RealtimePanel :header="store.header" />
       <TrendPanel :trend="store.cityTrend" :forecast="store.forecast" />
       <RankingPanel
         title="国控站实时排名"
@@ -79,6 +79,21 @@ const store = useBigScreenStore()
 const viewportEl = ref(null)
 const leftOpen = ref(true)
 const rightOpen = ref(true)
+// 2.5D 视角切换：切入时收起两侧数据面板（视野更干净、便于截图），切回时恢复原状态
+const panelsBeforeTilt = ref(null)
+const onTiltChange = tilted => {
+  if (tilted) {
+    panelsBeforeTilt.value = { left: leftOpen.value, right: rightOpen.value }
+    leftOpen.value = false
+    rightOpen.value = false
+  } else {
+    if (panelsBeforeTilt.value) {
+      leftOpen.value = panelsBeforeTilt.value.left
+      rightOpen.value = panelsBeforeTilt.value.right
+      panelsBeforeTilt.value = null
+    }
+  }
+}
 
 // 国控站行映射为排名表字段（RankingPanel 期望 nameKey/aqi/pm25/quality/primary）
 const nationalRows = computed(() =>

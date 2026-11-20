@@ -44,14 +44,6 @@
         <strong>{{ item.value }}</strong>
       </div>
     </div>
-
-    <div class="minute-chip" v-if="minute?.station">
-      <small>中大 5 分钟 · {{ minute.station.station_name || '—' }}</small>
-      <span v-for="item in minuteCells" :key="item.label">
-        <i>{{ item.label }}</i><strong>{{ item.value }}</strong>
-      </span>
-      <small>{{ String(minute.station?.data_time || '').slice(11, 16) }}</small>
-    </div>
   </section>
 </template>
 
@@ -60,8 +52,7 @@ import { computed } from 'vue'
 import { aqiColor, aqiLevelName, windDirectionLabel } from './aqiLevels.js'
 
 const props = defineProps({
-  header: { type: Object, default: null },
-  minute: { type: Object, default: null }
+  header: { type: Object, default: null }
 })
 
 const fmt = (value, digits = 0) => {
@@ -100,18 +91,6 @@ const metCells = computed(() => [
   { label: '风向', value: windDirectionLabel(props.header?.met?.wind_direction) },
   { label: '风速m/s', value: fmt(props.header?.met?.wind_speed, 1) }
 ])
-
-const minuteCells = computed(() => {
-  const s = props.minute?.station || {}
-  return [
-    { label: 'PM2.5', value: fmt(s.pm25) },
-    { label: 'PM10', value: fmt(s.pm10) },
-    { label: 'SO₂', value: fmt(s.so2) },
-    { label: 'NO₂', value: fmt(s.no2) },
-    { label: 'O₃', value: fmt(s.o3) },
-    { label: 'CO', value: fmt(s.co, 1) }
-  ]
-})
 </script>
 
 <style lang="scss" scoped>
@@ -244,28 +223,5 @@ const minuteCells = computed(() => {
 
   span { font-size: 11px; color: #8ab6c2; }
   strong { margin-top: 2px; font-size: 17px; color: #eaf6f8; }
-}
-
-.minute-chip {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  margin-top: 10px;
-  padding: 6px 10px;
-  border: 1px solid rgba(63, 200, 212, 0.35);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
-
-  small { font-size: 11px; color: #8ab6c2; }
-  small:last-child { margin-left: auto; }
-
-  > span {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
-    i { font-style: normal; font-size: 10px; color: #8ab6c2; }
-    strong { font-size: 13px; color: #eaf6f8; }
-  }
 }
 </style>

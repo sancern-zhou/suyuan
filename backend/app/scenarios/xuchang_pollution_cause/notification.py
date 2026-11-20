@@ -70,6 +70,8 @@ def build_llm_evidence(
             key: evidence.get(key)
             for key in (
                 "city", "target_date", "rule_description", "ratio_threshold",
+                "default_ratio_threshold", "light_pollution_ratio_threshold",
+                "light_pollution_pm25_limit", "pollution_level_tier",
                 "neighbor_cities", "xuchang_pm25", "neighbor_mean_pm25",
                 "deviation_percent", "triggered", "streak_days",
                 "city_rank", "city_count", "data_source",
@@ -92,6 +94,22 @@ def build_llm_evidence(
     return payload
 
 
+def _threshold_clause(evidence: dict[str, Any]) -> str:
+    """按证据包生成触发阈值表述（不硬编码档位，兼容 v1 证据缺档位字段）。"""
+    ratio = evidence.get("ratio_threshold")
+    if ratio is None:
+        return "达到分级触发阈值"
+    tier = str(evidence.get("pollution_level_tier") or "")
+    clause = f"超过{_fmt(float(ratio) * 100, 0)}%触发阈值"
+    if tier == "light_pollution_or_above":
+        limit = evidence.get("light_pollution_pm25_limit")
+        light_ratio = evidence.get("light_pollution_ratio_threshold")
+        limit_text = _fmt(limit, 0) if limit is not None else "60"
+        light_text = _fmt(float(light_ratio) * 100, 0) if light_ratio is not None else "20"
+        clause += f"（许昌PM2.5日均≥{limit_text}微克/立方米属轻度污染及以上，按{light_text}%档判定）"
+    return clause
+
+
 def compose_fallback_message(evidence: dict[str, Any]) -> str:
     """确定性兜底通报：只引用触发证据与回顾 manifest 中已有的数字。"""
     target_date = str(evidence.get("target_date") or "")
@@ -107,7 +125,7 @@ def compose_fallback_message(evidence: dict[str, Any]) -> str:
         (
             f"{target_date}许昌市PM2.5日均浓度{_fmt(evidence.get('xuchang_pm25'))}微克/立方米，"
             f"高于相邻五市（{neighbor_names}）均值{_fmt(evidence.get('neighbor_mean_pm25'))}"
-            f"的{_fmt(deviation_percent)}%，超过20%触发阈值"
+            f"的{_fmt(deviation_percent)}%，{_threshold_clause(evidence)}"
             + (f"，已连续{streak}天高于阈值" if streak > 1 else "")
             + "。"
         ),

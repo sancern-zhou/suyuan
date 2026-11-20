@@ -427,7 +427,7 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
         super().__init__(
             name="xuchang_station_daily_pollution_fetcher",
             description="许昌昨日污染回顾：小时快速抬升过程为主，场景一分钟告警为线索",
-            schedule="5 2 * * *",
+            schedule="0 8 * * *",
             version="5.0.0",
         )
         self.now_factory = now_factory

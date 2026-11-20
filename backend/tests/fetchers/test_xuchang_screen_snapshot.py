@@ -79,6 +79,7 @@ def _default_handlers() -> dict[str, Any]:
         }),
         "SsfbCountyHour.maxAqi": _cube_rows("SsfbCountyHour", {
             "county": "建安区", "maxAqi": 79, "avgPm25": 55,
+            "avgPm10": 96, "avgO3": 102, "avgSo2": 8, "avgNo2": 28, "avgCo": 0.6,
             "quality": "良", "primaryPollutant": "PM2.5",
         }),
         # 168 城全国排名（累计期次）
@@ -160,7 +161,8 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
         lambda self, alert_names: [{
             "station_id": "1008A", "station_name": "许昌学院", "type": "national",
             "lon": 113.8611, "lat": 34.0443, "data_time": CUTOFF,
-            "aqi": 85, "pm25": 60, "pm10": 100, "o3": 110, "alerting": False,
+            "aqi": 85, "pm25": 60, "pm10": 100, "o3": 110,
+            "so2": 9, "no2": 31, "co": 0.7, "alerting": False,
         }],
     )
     monkeypatch.setattr(
@@ -259,11 +261,23 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert townships[0]["aqi"] == int(round(est_aqi))
     assert townships[0]["data_time"] == TOWN_SLOT
     assert townships[0]["lon"] == 113.531
+    # 六参数齐全（前端大屏图标支持按污染物切换显示）
+    assert townships[0]["pm25"] == 61
+    assert townships[0]["pm10"] == 90
+    assert townships[0]["o3"] == 100
+    assert townships[0]["so2"] == 10
+    assert townships[0]["no2"] == 30
+    assert townships[0]["co"] == 0.7
     # 区县代表点：仅内置坐标表中的区县 + 最新小时值
     counties = snapshot["stations"]["counties"]
     assert counties and counties[0]["station_name"] == "建安区"
     assert counties[0]["type"] == "county"
     assert counties[0]["aqi"] == 79
+    assert counties[0]["pm10"] == 96
+    assert counties[0]["o3"] == 102
+    assert counties[0]["so2"] == 8
+    assert counties[0]["no2"] == 28
+    assert counties[0]["co"] == 0.6
     # 轮播素材段
     assert snapshot["assets"][0]["kind"] == "transport"
     assert "xuchang_transport_analysis" in snapshot["assets"][0]["asset_path"]

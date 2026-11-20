@@ -810,7 +810,12 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         if not latest_time:
             return []
         rows = await cube_load({
-            "measures": ["SsfbCountyHour.maxAqi", "SsfbCountyHour.avgPm25"],
+            "measures": [
+                "SsfbCountyHour.maxAqi", "SsfbCountyHour.avgPm25",
+                "SsfbCountyHour.avgPm10", "SsfbCountyHour.avgO3",
+                "SsfbCountyHour.avgSo2", "SsfbCountyHour.avgNo2",
+                "SsfbCountyHour.avgCo",
+            ],
             "dimensions": [
                 "SsfbCountyHour.county", "SsfbCountyHour.quality",
                 "SsfbCountyHour.primaryPollutant",
@@ -842,6 +847,11 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "lat": coord["lat"],
                 "aqi": _int_or_none(item.get("maxAqi")),
                 "pm25": _number(item.get("avgPm25")),
+                "pm10": _number(item.get("avgPm10")),
+                "o3": _number(item.get("avgO3")),
+                "so2": _number(item.get("avgSo2")),
+                "no2": _number(item.get("avgNo2")),
+                "co": _number(item.get("avgCo")),
                 "quality": _text(item.get("quality")),
                 "primary": _text(item.get("primaryPollutant")),
             })
@@ -931,6 +941,9 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "pm25": conc["pm25"],
                 "pm10": conc["pm10"],
                 "o3": conc["o3"],
+                "so2": conc["so2"],
+                "no2": conc["no2"],
+                "co": conc["co"],
                 "primary": primary,
                 "aqi_estimated": estimated,
                 "alerting": name_key in alert_keys,
@@ -1007,6 +1020,11 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "aqi_estimated": est_aqi is not None,
                 "primary": est_primary,
                 "pm25": conc["pm25"],
+                "pm10": conc["pm10"],
+                "o3": conc["o3"],
+                "so2": conc["so2"],
+                "no2": conc["no2"],
+                "co": conc["co"],
             })
         return stations
 

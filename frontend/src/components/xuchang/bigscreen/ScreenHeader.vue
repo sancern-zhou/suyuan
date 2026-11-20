@@ -5,16 +5,6 @@
       <p class="brand-sub">空气质量 · 排名 · 告警 · 达标态势</p>
     </div>
 
-    <div class="minute-chip" v-if="minute?.station">
-      <small>中大 5 分钟 · {{ minute.station.station_name || '—' }}</small>
-      <div class="minute-grid">
-        <span v-for="item in minuteCells" :key="item.label">
-          <i>{{ item.label }}</i><strong>{{ item.value }}</strong>
-        </span>
-      </div>
-      <small>{{ String(minute.station?.data_time || '').slice(11, 16) }}</small>
-    </div>
-
     <div class="meta-block">
       <p>数据截止 <strong>{{ formatDateTime(dataCutoffHour) }}</strong></p>
       <p class="status-line" :class="{ stale: error }">
@@ -25,33 +15,14 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
 import { formatDateTime } from './aqiLevels.js'
 
 const props = defineProps({
   header: { type: Object, default: null },
-  minute: { type: Object, default: null },
   dataCutoffHour: { type: String, default: '' },
   generatedAt: { type: String, default: '' },
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' }
-})
-
-const fmtVal = (value, digits = 0) => {
-  const num = Number(value)
-  return Number.isFinite(num) ? num.toFixed(digits) : '—'
-}
-
-const minuteCells = computed(() => {
-  const s = props.minute?.station || {}
-  return [
-    { label: 'PM2.5', value: fmtVal(s.pm25) },
-    { label: 'PM10', value: fmtVal(s.pm10) },
-    { label: 'SO₂', value: fmtVal(s.so2) },
-    { label: 'NO₂', value: fmtVal(s.no2) },
-    { label: 'O₃', value: fmtVal(s.o3) },
-    { label: 'CO', value: fmtVal(s.co, 1) }
-  ]
 })
 </script>
 
@@ -88,38 +59,11 @@ const minuteCells = computed(() => {
   }
 }
 
-.minute-chip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  margin-left: auto;
-  padding: 5px 10px;
-  border: 1px solid rgba(63, 200, 212, 0.4);
-  border-radius: 6px;
-  background: rgba(7, 41, 59, 0.8);
-
-  small { font-size: 10px; color: #8ab6c2; }
-}
-
-.minute-grid {
-  display: grid;
-  grid-template-columns: repeat(6, auto);
-  gap: 2px 8px;
-
-  > span {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
-    i { font-style: normal; font-size: 10px; color: #8ab6c2; }
-    strong { font-size: 12px; color: #d8ecf1; }
-  }
-}
-
 .meta-block {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  margin-left: auto;
   font-size: 12px;
   color: #8ab6c2;
   text-align: right;

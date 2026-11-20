@@ -1,8 +1,9 @@
 """④污染原因分析触发抓取器（日度，微信群+APP 推送链路的判定源）。
 
-业务规则（2026-11 定版）：昨日许昌市 PM2.5 日均浓度高于相邻五市（郑州、
-开封、平顶山、漯河、周口）均值 20% 以上时，触发污染原因分析通报推送
-（微信群【污染原因分析】+ APP 广播科长/局长）。
+业务规则（2026-11-19 分级定版）：昨日许昌市 PM2.5 日均浓度高于相邻五市
+（郑州、开封、平顶山、漯河、周口）均值 30% 以上时触发污染原因分析通报
+推送（微信群【污染原因分析】+ APP 广播科长/局长）；许昌 PM2.5 日均达到
+轻度污染及以上（新标准评价口径日均 ≥ 60 μg/m³）时降档为 20%。
 
 数据口径：河南实时发布平台采集的 SsfbCityDay（18 城含济源，PM2.5 为
 发布口径日值）；昨日日值尚未入库时回退 SsfbCityHour 逐小时算术平均
@@ -26,9 +27,11 @@ from app.fetchers.base.fetcher_interface import DataFetcher
 from app.scenarios.xuchang_pollution_cause.constants import (
     EVIDENCE_SCHEMA_VERSION,
     EVENT_TYPE,
+    LIGHT_POLLUTION_PM25_DAILY_LIMIT,
     NEIGHBOR_CITIES,
     STREAK_LOOKBACK_DAYS,
     TRIGGER_RATIO_THRESHOLD,
+    TRIGGER_RATIO_THRESHOLD_LIGHT_POLLUTION,
     XUCHANG_CITY,
 )
 from app.scheduled_tasks.models import TaskEvent
@@ -122,16 +125,23 @@ def read_streak_days(evidence_dir: Path, target_date: date) -> int:
     return streak
 
 
+def resolve_threshold_tier(xuchang_pm25: float | None) -> tuple[float, str]:
+    """按许昌 PM2.5 日均判档：轻度污染及以上（≥60，新标准口径）用 20% 档，
+    其余用默认 30% 档。返回 (生效阈值, 档位标识)。"""
+    if xuchang_pm25 is not None and xuchang_pm25 >= LIGHT_POLLUTION_PM25_DAILY_LIMIT:
+        return TRIGGER_RATIO_THRESHOLD_LIGHT_POLLUTION, "light_pollution_or_above"
+    return TRIGGER_RATIO_THRESHOLD, "normal"
+
+
 def evaluate_trigger(
     target_date: date,
     rows: list[dict[str, Any]],
     *,
-    threshold: float = TRIGGER_RATIO_THRESHOLD,
     streak_days: int | None = None,
     data_source: str = "ssfb_city_day",
     evaluated_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """纯函数：按相邻五市规则评估，输出触发证据包（触发与否都返回）。"""
+    """纯函数：按相邻五市分级阈值规则评估，输出触发证据包（触发与否都返回）。"""
     by_city: dict[str, float] = {}
     for row in rows:
         city = str(row.get("city") or "").strip()
@@ -155,11 +165,12 @@ def evaluate_trigger(
         else None
     )
 
+    ratio_threshold, pollution_level_tier = resolve_threshold_tier(xuchang)
     deviation_ratio = None
     triggered = False
     if xuchang is not None and neighbor_mean:
         deviation_ratio = round((xuchang - neighbor_mean) / neighbor_mean, 3)
-        triggered = deviation_ratio >= threshold
+        triggered = deviation_ratio >= ratio_threshold
 
     ranked = sorted(by_city.items(), key=lambda item: item[1], reverse=True)
     city_rank = next(
@@ -179,9 +190,13 @@ def evaluate_trigger(
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "city": XUCHANG_CITY,
         "target_date": target_date.isoformat(),
-        "rule": "pm25_daily_above_neighbor_mean",
-        "rule_description": "许昌市PM2.5日均浓度高于相邻五市均值20%以上",
-        "ratio_threshold": threshold,
+        "rule": "pm25_daily_above_neighbor_mean_tiered",
+        "rule_description": "许昌市PM2.5日均浓度高于相邻五市均值30%以上（轻度污染及以上为20%）",
+        "ratio_threshold": ratio_threshold,
+        "default_ratio_threshold": TRIGGER_RATIO_THRESHOLD,
+        "light_pollution_ratio_threshold": TRIGGER_RATIO_THRESHOLD_LIGHT_POLLUTION,
+        "light_pollution_pm25_limit": LIGHT_POLLUTION_PM25_DAILY_LIMIT,
+        "pollution_level_tier": pollution_level_tier,
         "neighbor_cities": list(NEIGHBOR_CITIES),
         "xuchang_pm25": xuchang,
         "neighbor_mean_pm25": neighbor_mean,
@@ -202,7 +217,10 @@ class XuchangPollutionCauseTriggerFetcher(DataFetcher):
     def __init__(self, now_factory=None) -> None:
         super().__init__(
             name="xuchang_pollution_cause_trigger_fetcher",
-            description="许昌市PM2.5日均高于相邻五市均值20%时触发污染原因分析推送（微信群+APP）",
+            description=(
+                "许昌市PM2.5日均高于相邻五市均值30%（轻度污染及以上为20%）时"
+                "触发污染原因分析推送（微信群+APP）"
+            ),
             schedule="30 7 * * *",
             version="1.0.0",
         )
@@ -261,6 +279,8 @@ class XuchangPollutionCauseTriggerFetcher(DataFetcher):
             "xuchang_pm25": evidence["xuchang_pm25"],
             "neighbor_mean_pm25": evidence["neighbor_mean_pm25"],
             "deviation_percent": evidence["deviation_percent"],
+            "pollution_level_tier": evidence["pollution_level_tier"],
+            "ratio_threshold": evidence["ratio_threshold"],
             "streak_days": evidence["streak_days"],
             "city_rank": evidence["city_rank"],
             "event_published": published,
@@ -281,6 +301,7 @@ class XuchangPollutionCauseTriggerFetcher(DataFetcher):
                 "target_date": target_date,
                 "triggered": True,
                 "deviation_percent": evidence.get("deviation_percent"),
+                "pollution_level_tier": evidence.get("pollution_level_tier"),
             },
             payload=payload,
         )

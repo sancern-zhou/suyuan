@@ -28,13 +28,46 @@ BELOW_ROWS = _rows({
     "平顶山市": 75.0, "漯河市": 65.0, "周口市": 80.0,
 })
 
+# 许昌 55 < 60（normal 档 30%）；相邻五市均值 42.4 → 偏差 29.7%，
+# 超过 20% 但未达 30%，按新规则不触发
+NORMAL_TIER_BELOW_ROWS = _rows({
+    "许昌市": 55.0, "郑州市": 40.0, "开封市": 45.0,
+    "平顶山市": 42.0, "漯河市": 44.0, "周口市": 41.0,
+})
+
+NORMAL_TIER_TRIGGER_ROWS = _rows({
+    "许昌市": 58.0, "郑州市": 40.0, "开封市": 45.0,
+    "平顶山市": 42.0, "漯河市": 44.0, "周口市": 41.0,
+})
+
+
+def test_resolve_threshold_tier():
+    # 轻度污染及以上（新标准日均 ≥ 60）：20% 档
+    assert trigger.resolve_threshold_tier(60.0) == (
+        constants.TRIGGER_RATIO_THRESHOLD_LIGHT_POLLUTION, "light_pollution_or_above"
+    )
+    assert trigger.resolve_threshold_tier(96.0)[1] == "light_pollution_or_above"
+    # 未达界限：默认 30% 档
+    assert trigger.resolve_threshold_tier(59.9) == (
+        constants.TRIGGER_RATIO_THRESHOLD, "normal"
+    )
+    assert trigger.resolve_threshold_tier(None) == (
+        constants.TRIGGER_RATIO_THRESHOLD, "normal"
+    )
+
 
 def test_evaluate_trigger_triggered_above_threshold():
     evidence = trigger.evaluate_trigger(date(2026, 11, 10), TRIGGER_ROWS, streak_days=1)
-    # 均值 (80+70+75+65+80)/5 = 74 → 偏差约 29.7% ≥ 20% 触发
+    # 均值 (80+70+75+65+80)/5 = 74 → 偏差约 29.7%；许昌 96 ≥ 60 属轻度
+    # 污染及以上，按 20% 档判定 → 触发
     assert evidence["neighbor_mean_pm25"] == 74.0
     assert evidence["deviation_percent"] == pytest.approx(29.7, abs=0.2)
     assert evidence["triggered"] is True
+    assert evidence["pollution_level_tier"] == "light_pollution_or_above"
+    assert evidence["ratio_threshold"] == pytest.approx(0.20)
+    assert evidence["default_ratio_threshold"] == pytest.approx(0.30)
+    assert evidence["light_pollution_pm25_limit"] == 60.0
+    assert "30%以上" in evidence["rule_description"]
     assert evidence["streak_days"] == 2
     # 本数据集内许昌浓度最高，排第 1
     assert evidence["city_rank"] == 1
@@ -51,6 +84,27 @@ def test_evaluate_trigger_below_threshold():
     evidence = trigger.evaluate_trigger(date(2026, 11, 10), BELOW_ROWS)
     assert evidence["triggered"] is False
     assert evidence["streak_days"] == 0
+
+
+def test_evaluate_trigger_normal_tier_between_thresholds_not_triggered():
+    """许昌 < 60 时用 30% 档：偏差 20~30% 区间不触发（旧 20% 规则会触发）。"""
+    evidence = trigger.evaluate_trigger(date(2026, 11, 10), NORMAL_TIER_BELOW_ROWS)
+    # 均值 (40+45+42+44+41)/5 = 42.4 → 偏差约 29.7%
+    assert evidence["neighbor_mean_pm25"] == pytest.approx(42.4, abs=0.1)
+    assert evidence["deviation_percent"] == pytest.approx(29.7, abs=0.2)
+    assert evidence["pollution_level_tier"] == "normal"
+    assert evidence["ratio_threshold"] == pytest.approx(0.30)
+    assert evidence["triggered"] is False
+
+
+def test_evaluate_trigger_normal_tier_triggered_above_30():
+    """许昌 < 60 且偏差 ≥ 30%：按默认档触发。"""
+    evidence = trigger.evaluate_trigger(date(2026, 11, 10), NORMAL_TIER_TRIGGER_ROWS)
+    # 均值 42.4 → 偏差约 36.8%
+    assert evidence["deviation_percent"] == pytest.approx(36.8, abs=0.2)
+    assert evidence["pollution_level_tier"] == "normal"
+    assert evidence["ratio_threshold"] == pytest.approx(0.30)
+    assert evidence["triggered"] is True
 
 
 def test_evaluate_trigger_missing_neighbors():
@@ -113,12 +167,15 @@ def test_fetch_and_store_publishes_event_once(patched_registry, monkeypatch):
 
     summary = asyncio.run(fetcher.fetch_and_store())
     assert summary["status"] == "triggered"
+    assert summary["pollution_level_tier"] == "light_pollution_or_above"
+    assert summary["ratio_threshold"] == pytest.approx(0.20)
     assert summary["event_published"] is True
     assert len(service.events) == 1
     event = service.events[0]
     assert event.event_id == "xuchang-pollution-cause-20261110"
     assert event.event_type == constants.EVENT_TYPE
     assert event.attributes["target_date"] == "2026-11-10"
+    assert event.attributes["pollution_level_tier"] == "light_pollution_or_above"
     assert event.payload["evidence_package_path"]
     assert event.payload["triggered"] is True
 

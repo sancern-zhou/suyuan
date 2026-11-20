@@ -1,7 +1,7 @@
 {
   "task_id": "task_xuchang_pollution_cause_analysis",
   "name": "污染原因分析通报",
-  "description": "许昌市PM2.5日均高于相邻五市（郑州、开封、平顶山、漯河、周口）均值20%以上时，生成污染原因分析通报并推送微信群与APP（科长/局长受众组）。",
+  "description": "许昌市PM2.5日均高于相邻五市（郑州、开封、平顶山、漯河、周口）均值30%以上（轻度污染及以上为20%）时，生成污染原因分析通报并推送微信群与APP（科长/局长受众组）。",
   "execution_mode": "workflow",
   "workflow_name": "xuchang_pollution_cause_analysis",
   "workflow_args": {},

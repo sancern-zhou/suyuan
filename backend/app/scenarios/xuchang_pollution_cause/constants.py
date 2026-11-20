@@ -7,10 +7,14 @@ EVENT_TYPE = "xuchang.pollution_cause_analysis.triggered"
 XUCHANG_CITY = "许昌市"
 NEIGHBOR_CITIES = ("郑州市", "开封市", "平顶山市", "漯河市", "周口市")
 
-# 触发规则：许昌 PM2.5 日均 > 相邻五市均值 × (1 + 20%)
-TRIGGER_RATIO_THRESHOLD = 0.20
+# 触发规则（2026-11-19 分级定版）：许昌 PM2.5 日均 > 相邻五市均值 ×
+# (1 + 默认档 30%)；轻度污染及以上（新标准评价口径 PM2.5 日均 ≥ 60
+# μg/m³）时降档为 20%。
+TRIGGER_RATIO_THRESHOLD = 0.30
+TRIGGER_RATIO_THRESHOLD_LIGHT_POLLUTION = 0.20
+LIGHT_POLLUTION_PM25_DAILY_LIMIT = 60.0
 
-EVIDENCE_SCHEMA_VERSION = "xuchang_pollution_cause_trigger/v1"
+EVIDENCE_SCHEMA_VERSION = "xuchang_pollution_cause_trigger/v2"
 WECHAT_MESSAGE_PREFIX = "【污染原因分析】"
 
 # 连续触发天数回看的证据文件窗口（天），避免长期缺文件时无限扫描
