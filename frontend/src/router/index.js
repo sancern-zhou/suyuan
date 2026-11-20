@@ -18,6 +18,12 @@ const routes = [
       meta: { public: true, title: '登录' }
     },
     {
+      path: '/sso',
+      name: 'sso',
+      component: SsoView,
+      meta: { public: true, title: '平台免登录' }
+    },
+    {
       path: '/bigscreen',
       name: 'bigscreen',
       component: () => import('@/views/xuchang/BigScreenView.vue'),
@@ -38,12 +44,6 @@ const routes = [
         allowDashboardToken: true,
         adminOnly: true
       }
-    },
-    {
-      path: '/sso',
-      name: 'sso',
-      component: SsoView,
-      meta: { public: true, title: '平台免登录' }
     },
     {
       path: '/',
