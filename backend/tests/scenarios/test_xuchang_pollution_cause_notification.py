@@ -1,8 +1,13 @@
-"""④污染原因分析通报工作流兜底模板单元测试。"""
+"""④污染原因分析通报工作流兜底模板与投递链路单元测试。"""
 
 from __future__ import annotations
 
+import asyncio
+import json
+from types import SimpleNamespace
+
 from app.scenarios.xuchang_pollution_cause import notification
+from app.scenarios.xuchang_station_deviation import wechat_push_queue
 
 
 def _evidence(**overrides):
@@ -117,8 +122,8 @@ def test_fallback_message_without_review_manifest(tmp_path, monkeypatch):
 
 def test_build_llm_evidence_folds_review():
     evidence = _evidence()
-    manifest = {"episode_count": 3, "meteorology_intervals": {"nmc": {"valid_hours": 20}}}
-    payload = notification.build_llm_evidence(evidence, manifest)
+    brief = {"episode_count": 3, "meteorology_intervals": {"nmc": {"valid_hours": 20}}}
+    payload = notification.build_llm_evidence(evidence, brief)
     assert payload["trigger_evidence"]["deviation_percent"] == 29.7
     assert payload["trigger_evidence"]["pollution_level_tier"] == "light_pollution_or_above"
     assert payload["trigger_evidence"]["light_pollution_pm25_limit"] == 60.0
@@ -128,3 +133,153 @@ def test_build_llm_evidence_folds_review():
 
     payload_empty = notification.build_llm_evidence(evidence, None)
     assert "daily_review" not in payload_empty
+
+
+def test_load_review_brief_prefers_report_brief_file(tmp_path):
+    review_dir = tmp_path / "xuchang_station_daily_reviews" / "20261110"
+    review_dir.mkdir(parents=True)
+    brief_path = review_dir / "report_brief.json"
+    brief_path.write_text(json.dumps({
+        "episode_count": 2,
+        "alert_list": [{"station_name": "许昌学院"}],
+        "meteorology_intervals": {"nmc": {"valid_hours": 24}},
+    }, ensure_ascii=False), encoding="utf-8")
+    manifest = {
+        "schema_version": "xuchang_station_daily_review/v3",
+        "episode_count": 99,
+        "evidence_files": {"report_brief": str(brief_path)},
+    }
+
+    brief = notification.load_review_brief(manifest)
+
+    assert brief is not None
+    assert brief["episode_count"] == 2
+    assert brief["alert_list"] == [{"station_name": "许昌学院"}]
+    assert brief["meteorology_intervals"]["nmc"]["valid_hours"] == 24
+
+    legacy = notification.load_review_brief({"episode_count": 1, "alert_list": []})
+    assert legacy == {"episode_count": 1, "alert_list": []}
+    assert notification.load_review_brief(None) is None
+
+
+def _prepare_workflow(monkeypatch, tmp_path):
+    evidence_path = tmp_path / "trigger-evidence.json"
+    evidence_path.write_text(
+        json.dumps(_evidence(), ensure_ascii=False), encoding="utf-8"
+    )
+    review_dir = tmp_path / "xuchang_station_daily_reviews" / "20261110"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = review_dir / "report_brief.json"
+    brief_path.write_text(json.dumps({
+        "episode_count": 1,
+        "alert_list": [{"station_name": "许昌学院", "target_pollutant": "PM2.5"}],
+        "meteorology_intervals": {"nmc": {"valid_hours": 24}},
+    }, ensure_ascii=False), encoding="utf-8")
+    (review_dir / "manifest.json").write_text(json.dumps({
+        "schema_version": "xuchang_station_daily_review/v3",
+        "episode_count": 1,
+        "evidence_files": {"report_brief": str(brief_path)},
+    }, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(notification, "get_data_registry", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.scenarios.xuchang_station_deviation.wechat_push_queue.get_data_registry",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(notification, "resolve_audience_accounts", lambda roles: [])
+
+    delivered = {}
+
+    class _FakeDelivery:
+        async def resolve_recipients(self, user_ids):
+            delivered["user_ids"] = list(user_ids)
+            return [{"user_id": user_ids[0], "sent": True}]
+
+        async def deliver(self, *, task, event, execution, output, recipients):
+            delivered["message"] = output.broadcast.message
+            delivered["media"] = output.broadcast.media
+            return [{"user_id": recipients[0]["user_id"], "sent": True}]
+
+    monkeypatch.setattr(notification, "EventTaskDelivery", _FakeDelivery)
+
+    async def _fake_message(evidence, review_brief, task, history_section=None):
+        return "【污染原因分析】一、触发情况\n许昌PM2.5偏高。"
+
+    monkeypatch.setattr(notification, "_generate_cause_message", _fake_message)
+
+    task = SimpleNamespace(
+        target_user_ids=["app:android:android_demo"],
+        prompt="执行指令测试",
+        timeout_seconds=600,
+    )
+    execution = SimpleNamespace(execution_id="exec-report-1")
+    event = SimpleNamespace(payload={"evidence_package_path": str(evidence_path)})
+    return task, execution, event, delivered
+
+
+def test_workflow_generates_report_and_delivers_docx_attachment(tmp_path, monkeypatch):
+    task, execution, event, delivered = _prepare_workflow(monkeypatch, tmp_path)
+    docx_path = tmp_path / "reports" / "xuchang_pollution_cause" / "report.docx"
+    docx_path.parent.mkdir(parents=True, exist_ok=True)
+    docx_path.write_bytes(b"fake-docx")
+    report_payload = {
+        "report_id": "xuchang_pollution_cause_20261110_exec_report_1",
+        "docx_path": str(docx_path),
+        "html_path": str(docx_path.with_name("report.html")),
+        "agent_path": str(docx_path),
+        "attachment": {
+            "path": str(docx_path),
+            "filename": "污染原因分析通报_20261110.docx",
+            "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+    }
+
+    async def _fake_report(evidence, review_brief, message, *, task, execution):
+        assert review_brief is not None and review_brief["episode_count"] == 1
+        return report_payload
+
+    monkeypatch.setattr(
+        notification, "generate_pollution_cause_report", _fake_report
+    )
+
+    result = asyncio.run(
+        notification.run_pollution_cause_workflow(
+            task=task, execution=execution, event=event
+        )
+    )
+
+    assert result["success"] is True
+    assert result["report_generated"] is True
+    assert result["final_message"].endswith("报告全文见附件。")
+    assert delivered["media"] == [str(docx_path)]
+    assert result["tool_call_details"]["media"] == [str(docx_path)]
+    pending = wechat_push_queue.list_pending_messages(root=tmp_path)
+    assert len(pending) == 1
+    assert pending[0]["media"] == []
+    assert pending[0]["attachments"] == [report_payload["attachment"]]
+
+
+def test_workflow_fails_open_when_report_generation_fails(tmp_path, monkeypatch):
+    task, execution, event, delivered = _prepare_workflow(monkeypatch, tmp_path)
+
+    async def _broken_report(evidence, review_brief, message, *, task, execution):
+        raise RuntimeError("quarto missing")
+
+    monkeypatch.setattr(
+        notification, "generate_pollution_cause_report", _broken_report
+    )
+
+    result = asyncio.run(
+        notification.run_pollution_cause_workflow(
+            task=task, execution=execution, event=event
+        )
+    )
+
+    assert result["success"] is True
+    assert result["report_generated"] is False
+    assert "报告未生成" in result["summary"]
+    assert "报告全文见附件。" not in result["final_message"]
+    assert delivered["media"] == []
+    pending = wechat_push_queue.list_pending_messages(root=tmp_path)
+    assert len(pending) == 1
+    assert pending[0]["attachments"] == []

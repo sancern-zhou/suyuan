@@ -1,14 +1,17 @@
-"""④污染原因分析通报工作流：LLM 生成通报 → 微信群队列 + APP 广播。
+"""④污染原因分析通报工作流：LLM 通报 + 报告包 → 微信群附件 + APP 广播。
 
 触发链：XuchangPollutionCauseTriggerFetcher 判定达标后发布
 ``xuchang.pollution_cause_analysis.triggered`` 事件 → 本 workflow（注册名
 ``xuchang_pollution_cause_analysis``）读取触发证据包：
 
-1. 折入场景2昨日回顾 manifest（气象区间、站点告警清单、区域对比，若存在）
+1. 折入场景2昨日回顾 manifest 指向的 report_brief（气象区间、站点告警清单、
+   区域对比，若存在）
 2. LLM 生成污染原因分析通报（失败/超时回退确定性模板）
-3. 微信群：enqueue_wechat_message(kind="pollution_cause"，文案自带
-   【污染原因分析】前缀，RPA agent 识别首行前缀不叠加全局前缀)
-4. APP：EventTaskDelivery 投递 task.target_user_ids ∪ 受众组(科长/局长)
+3. 确定性生成报告包（HTML+DOCX，报告模块见 report.py；失败降级纯文本）
+4. 微信群：enqueue_wechat_message(kind="pollution_cause"，文案自带
+   【污染原因分析】前缀，DOCX 走 attachments 由 RPA agent 以文件消息发送)
+5. APP：EventTaskDelivery 投递 task.target_user_ids ∪ 受众组(科长/局长)，
+   DOCX 作为广播附件
 """
 
 from __future__ import annotations
@@ -29,6 +32,9 @@ from app.scenarios.xuchang_pollution_cause.constants import (
 )
 from app.scenarios.xuchang_push_common.audiences import (
     resolve_audience_accounts,
+)
+from app.scenarios.xuchang_pollution_cause.report import (
+    generate_pollution_cause_report,
 )
 from app.scenarios.xuchang_station_deviation.wechat_push_queue import (
     enqueue_wechat_message,
@@ -61,8 +67,42 @@ def load_review_manifest(target_date_iso: str) -> dict[str, Any] | None:
     return record if isinstance(record, dict) else None
 
 
+def load_review_brief(review_manifest: dict[str, Any] | None) -> dict[str, Any] | None:
+    """解析回顾 manifest 指向的 report_brief；兼容旧扁平 manifest 字段。
+
+    现产 manifest 只含 episode_count 与 evidence_files 索引，气象区间、
+    站点告警与区域统计实际在 evidence_files.report_brief 指向的
+    report_brief.json；早期扁平 manifest（测试/历史数据）直接带这些字段。
+    """
+    if not review_manifest:
+        return None
+    evidence_files = review_manifest.get("evidence_files") or {}
+    brief_path = str(evidence_files.get("report_brief") or "").strip() if isinstance(evidence_files, dict) else ""
+    if brief_path:
+        try:
+            record = json.loads(
+                resolve_agent_path(brief_path).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            record = None
+        if isinstance(record, dict):
+            return record
+    legacy = {
+        key: review_manifest.get(key)
+        for key in (
+            "episode_count",
+            "alert_list",
+            "station_pm25_statistics",
+            "regional_city_pm25_statistics",
+            "meteorology_intervals",
+        )
+        if review_manifest.get(key) is not None
+    }
+    return legacy or None
+
+
 def build_llm_evidence(
-    evidence: dict[str, Any], review_manifest: dict[str, Any] | None
+    evidence: dict[str, Any], review_brief: dict[str, Any] | None
 ) -> dict[str, Any]:
     """触发证据 + 场景2回顾摘要合成可信证据包（缺的章节直接不出现）。"""
     payload: dict[str, Any] = {
@@ -79,9 +119,9 @@ def build_llm_evidence(
         },
         "city_rows": evidence.get("city_rows") or [],
     }
-    if review_manifest:
+    if review_brief:
         payload["daily_review"] = {
-            key: review_manifest.get(key)
+            key: review_brief.get(key)
             for key in (
                 "episode_count",
                 "alert_list",
@@ -89,7 +129,7 @@ def build_llm_evidence(
                 "regional_city_pm25_statistics",
                 "meteorology_intervals",
             )
-            if review_manifest.get(key) is not None
+            if review_brief.get(key) is not None
         }
     return payload
 
@@ -110,8 +150,10 @@ def _threshold_clause(evidence: dict[str, Any]) -> str:
     return clause
 
 
-def compose_fallback_message(evidence: dict[str, Any]) -> str:
-    """确定性兜底通报：只引用触发证据与回顾 manifest 中已有的数字。"""
+def compose_fallback_message(
+    evidence: dict[str, Any], review_brief: dict[str, Any] | None = None
+) -> str:
+    """确定性兜底通报：只引用触发证据与回顾 brief 中已有的数字。"""
     target_date = str(evidence.get("target_date") or "")
     deviation_percent = evidence.get("deviation_percent")
     rank = evidence.get("city_rank")
@@ -141,8 +183,10 @@ def compose_fallback_message(evidence: dict[str, Any]) -> str:
     if rank:
         lines.append(f"许昌当日PM2.5在全省{evidence.get('city_count')}市中列第{rank}位（1为浓度最高）。")
 
-    manifest = load_review_manifest(target_date)
-    meteorology = ((manifest or {}).get("meteorology_intervals") or {}).get("nmc") or {}
+    brief = review_brief
+    if brief is None:
+        brief = load_review_brief(load_review_manifest(target_date))
+    meteorology = ((brief or {}).get("meteorology_intervals") or {}).get("nmc") or {}
     lines.append("三、气象概况")
     if meteorology.get("valid_hours"):
         humidity = meteorology.get("relative_humidity_2m") or {}
@@ -159,8 +203,8 @@ def compose_fallback_message(evidence: dict[str, Any]) -> str:
         lines.append("昨日气象观测数据暂缺，气象因素待补充分析。")
 
     lines.append("四、站点告警情况")
-    episode_count = int((manifest or {}).get("episode_count") or 0)
-    alert_list = (manifest or {}).get("alert_list") or []
+    episode_count = int((brief or {}).get("episode_count") or 0)
+    alert_list = (brief or {}).get("alert_list") or []
     if episode_count:
         stations = "、".join(
             str(item.get("station_name") or item.get("station_id") or "")
@@ -194,7 +238,7 @@ def _extract_response_text(response: Any) -> str:
 
 async def _generate_cause_message(
     evidence: dict[str, Any],
-    review_manifest: dict[str, Any] | None,
+    review_brief: dict[str, Any] | None,
     task: Any,
     history_section: str | None = None,
 ) -> str:
@@ -202,7 +246,7 @@ async def _generate_cause_message(
     from app.services.llm_service import llm_service
 
     evidence_json = json.dumps(
-        build_llm_evidence(evidence, review_manifest),
+        build_llm_evidence(evidence, review_brief),
         ensure_ascii=False, indent=2, default=str,
     )
     task_prompt = str(getattr(task, "prompt", "") or "").strip()
@@ -271,32 +315,60 @@ async def run_pollution_cause_workflow(
     )
     target_date = str(evidence.get("target_date") or "")
     review_manifest = await asyncio.to_thread(load_review_manifest, target_date)
+    review_brief = await asyncio.to_thread(load_review_brief, review_manifest)
 
-    notice_timeout = max(1, int(getattr(task, "timeout_seconds", 180) or 180) - 30)
+    # LLM 预算封顶 150s，为 Quarto 报告渲染与投递留出确定性余量。
+    notice_timeout = max(1, min(150, int(getattr(task, "timeout_seconds", 180) or 180) - 30))
     try:
         message = await asyncio.wait_for(
-            _generate_cause_message(evidence, review_manifest, task, history_section),
+            _generate_cause_message(evidence, review_brief, task, history_section),
             timeout=notice_timeout,
         )
     except asyncio.TimeoutError:
         logger.warning("xuchang_pollution_cause_llm_timeout", timeout_seconds=notice_timeout)
-        message = compose_fallback_message(evidence)
+        message = compose_fallback_message(evidence, review_brief)
     except Exception as exc:
         logger.warning(
             "xuchang_pollution_cause_llm_failed",
             reason=type(exc).__name__,
             error=str(exc)[:300],
         )
-        message = compose_fallback_message(evidence)
+        message = compose_fallback_message(evidence, review_brief)
+
+    # 报告生成 fail-open：任何失败只降级为纯文本通报，不阻断既有投递。
+    report: dict[str, Any] | None = None
+    report_error = ""
+    try:
+        report = await asyncio.wait_for(
+            generate_pollution_cause_report(
+                evidence, review_brief, message, task=task, execution=execution
+            ),
+            timeout=180,
+        )
+    except asyncio.TimeoutError:
+        report_error = "报告渲染超时"
+        logger.warning("xuchang_pollution_cause_report_timeout", timeout_seconds=180)
+    except Exception as exc:
+        report_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        logger.warning(
+            "xuchang_pollution_cause_report_failed",
+            reason=type(exc).__name__,
+            error=str(exc)[:300],
+        )
+    report_attachments = [report["attachment"]] if report else []
+    broadcast_media = [report["agent_path"]] if report else []
+    if report and not message.rstrip().endswith("报告全文见附件。"):
+        message = f"{message.rstrip()}\n报告全文见附件。"
 
     # 微信群推送：先于 App 投递入队；失败不影响 App 主流程
     wechat_enqueued = False
     try:
         enqueued = enqueue_wechat_message(
-            "pollution_cause", message, media=[], metadata={
+            "pollution_cause", message, media=[], attachments=report_attachments, metadata={
                 "scenario": "pollution_cause_analysis",
                 "target_date": target_date,
                 "deviation_percent": evidence.get("deviation_percent"),
+                "report_id": (report or {}).get("report_id"),
             }
         )
         if enqueued:
@@ -307,7 +379,7 @@ async def run_pollution_cause_workflow(
 
     output = EventTaskOutput(
         success=True,
-        broadcast=BroadcastPayload(message=message, media=[]),
+        broadcast=BroadcastPayload(message=message, media=broadcast_media),
     )
     delivery = EventTaskDelivery()
     recipient_ids = list(task.target_user_ids or [])
@@ -327,10 +399,15 @@ async def run_pollution_cause_workflow(
         )
     sent_count = sum(1 for row in delivery_results if row.get("sent"))
 
+    report_summary = (
+        f"报告已生成并随附件投递（{(report or {}).get('report_id')}）"
+        if report else f"报告未生成（{report_error or '未知原因'}），已降级为纯文本通报"
+    )
     summary = (
         f"污染原因分析通报已生成并投递：{target_date}许昌PM2.5日均"
         f"{_fmt(evidence.get('xuchang_pm25'))}较相邻五市均值高"
         f"{_fmt(evidence.get('deviation_percent'))}%，"
+        f"{report_summary}，"
         f"微信群{'已入队' if wechat_enqueued else '未入队'}，"
         f"APP接收对象{len(recipients)}个、投递成功{sent_count}个。"
     )
@@ -338,8 +415,16 @@ async def run_pollution_cause_workflow(
     return {
         "success": True,
         "summary": summary,
+        "final_message": message,
         "message": message,
         "wechat_enqueued": wechat_enqueued,
+        "report_generated": report is not None,
+        "report_id": (report or {}).get("report_id"),
         "app_recipients": len(recipients),
         "app_sent": sent_count,
+        "tool_call_details": {
+            "media": broadcast_media,
+            "attachments": report_attachments,
+            "report_id": (report or {}).get("report_id"),
+        },
     }

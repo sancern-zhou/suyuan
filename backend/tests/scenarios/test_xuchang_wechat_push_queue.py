@@ -113,3 +113,58 @@ def test_cleanup_archive_keeps_recent_files(tmp_path):
 
     assert removed == 1
     assert not archived.exists()
+
+
+def test_enqueue_normalizes_attachments_and_keeps_media_semantics(tmp_path):
+    record = queue.enqueue_wechat_message(
+        "pollution_cause",
+        "【污染原因分析】正文",
+        media=["backend_data_registry/xuchang_alerts/chart.png"],
+        attachments=[
+            {
+                "path": "backend/backend_data_registry/reports/r1/report.docx",
+                "filename": "污染原因分析通报_20261120.docx",
+                "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            },
+            {"path": "  ", "filename": "blank.docx"},
+            "backend/backend_data_registry/reports/r2/report.pdf",
+        ],
+        metadata={"target_date": "2026-11-20"},
+        root=tmp_path,
+    )
+
+    assert record is not None
+    assert record["media"] == ["backend_data_registry/xuchang_alerts/chart.png"]
+    assert record["attachments"] == [
+        {
+            "path": "backend/backend_data_registry/reports/r1/report.docx",
+            "filename": "污染原因分析通报_20261120.docx",
+            "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+        {"path": "backend/backend_data_registry/reports/r2/report.pdf"},
+    ]
+    stored = json.loads(
+        (_status_path(tmp_path, queue.PENDING_DIR) / f"{record['id']}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert stored["attachments"] == record["attachments"]
+
+
+def test_list_pending_holds_attachments_for_agents_without_capability(tmp_path):
+    plain = queue.enqueue_wechat_message("station_alert", "纯文本", root=tmp_path)
+    with_attachment = queue.enqueue_wechat_message(
+        "pollution_cause",
+        "【污染原因分析】带附件",
+        attachments=[{"path": "backend/backend_data_registry/reports/r/report.docx"}],
+        root=tmp_path,
+    )
+    assert plain is not None and with_attachment is not None
+
+    legacy_messages = queue.list_pending_messages(
+        root=tmp_path, supports_attachments=False
+    )
+    assert [item["id"] for item in legacy_messages] == [plain["id"]]
+
+    capable_messages = queue.list_pending_messages(root=tmp_path)
+    assert [item["id"] for item in capable_messages] == [plain["id"], with_attachment["id"]]

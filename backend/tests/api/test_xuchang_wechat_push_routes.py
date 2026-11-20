@@ -316,3 +316,122 @@ def test_queue_extract_skips_blank_message(tmp_path):
         queue.enqueue_station_alert_wechat_message({"alerts": []}, "  ", root=tmp_path)
         is None
     )
+
+
+def _patch_attachment_paths(monkeypatch, tmp_path, registry_root=None):
+    monkeypatch.setattr(
+        "app.api.xuchang_wechat_push_routes.resolve_agent_path",
+        lambda p: tmp_path / p,
+    )
+    monkeypatch.setattr(
+        "app.api.xuchang_wechat_push_routes.get_data_registry",
+        lambda: registry_root or tmp_path,
+    )
+
+
+def test_attachment_endpoint_serves_report_docx(token_client, tmp_path, monkeypatch):
+    _patch_attachment_paths(monkeypatch, tmp_path)
+    client, registry = token_client
+    docx_rel = "reports/pollution/report.docx"
+    docx_file = tmp_path / docx_rel
+    docx_file.parent.mkdir(parents=True, exist_ok=True)
+    docx_file.write_bytes(b"fake-docx-bytes")
+    record = queue.enqueue_wechat_message(
+        "pollution_cause",
+        "【污染原因分析】正文",
+        attachments=[{
+            "path": docx_rel,
+            "filename": "污染原因分析通报_20261120.docx",
+            "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }],
+        root=registry,
+    )
+    assert record is not None
+
+    ok = client.get(
+        f"/api/xuchang-wechat-push/attachment/{record['id']}/0", headers=_headers()
+    )
+    assert ok.status_code == 200
+    assert ok.content == b"fake-docx-bytes"
+    assert ok.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert "filename" in ok.headers.get("content-disposition", "")
+
+    out_of_range = client.get(
+        f"/api/xuchang-wechat-push/attachment/{record['id']}/5", headers=_headers()
+    )
+    assert out_of_range.status_code == 404
+    assert out_of_range.json()["detail"] == "attachment_index_out_of_range"
+    negative = client.get(
+        f"/api/xuchang-wechat-push/attachment/{record['id']}/-1", headers=_headers()
+    )
+    assert negative.status_code == 400
+    missing_msg = client.get(
+        "/api/xuchang-wechat-push/attachment/wx-none/0", headers=_headers()
+    )
+    assert missing_msg.status_code == 404
+
+
+def test_attachment_rejects_unsupported_and_outside_registry(
+    token_client, tmp_path, monkeypatch
+):
+    client, registry = token_client
+    exe_rel = "reports/pollution/tool.exe"
+    exe_file = tmp_path / exe_rel
+    exe_file.parent.mkdir(parents=True, exist_ok=True)
+    exe_file.write_bytes(b"binary")
+    unsupported = queue.enqueue_wechat_message(
+        "pollution_cause",
+        "【污染原因分析】正文",
+        attachments=[{"path": exe_rel, "filename": "tool.exe"}],
+        root=registry,
+    )
+    assert unsupported is not None
+    _patch_attachment_paths(monkeypatch, tmp_path)
+
+    rejected = client.get(
+        f"/api/xuchang-wechat-push/attachment/{unsupported['id']}/0",
+        headers=_headers(),
+    )
+    assert rejected.status_code == 404
+    assert rejected.json()["detail"] == "unsupported_attachment_type"
+
+    outside_rel = "outside_secret.docx"
+    (tmp_path / outside_rel).write_bytes(b"secret")
+    outside = queue.enqueue_wechat_message(
+        "pollution_cause",
+        "【污染原因分析】正文",
+        attachments=[{"path": outside_rel, "filename": outside_rel}],
+        root=registry,
+    )
+    assert outside is not None
+    _patch_attachment_paths(monkeypatch, tmp_path, registry_root=tmp_path / "registry")
+
+    response = client.get(
+        f"/api/xuchang-wechat-push/attachment/{outside['id']}/0", headers=_headers()
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "attachment_outside_registry"
+
+
+def test_pending_caps_hold_attachments_for_legacy_agent(token_client):
+    client, registry = token_client
+    queue.enqueue_wechat_message(
+        "pollution_cause",
+        "【污染原因分析】带附件",
+        attachments=[{"path": "backend/backend_data_registry/reports/r/report.docx"}],
+        root=registry,
+    )
+
+    legacy = client.get("/api/xuchang-wechat-push/pending", headers=_headers())
+    assert legacy.status_code == 200
+    assert legacy.json()["count"] == 0
+    assert queue.list_pending_messages(root=registry)
+
+    capable = client.get(
+        "/api/xuchang-wechat-push/pending?caps=attachments", headers=_headers()
+    )
+    assert capable.status_code == 200
+    assert capable.json()["count"] == 1
+    assert capable.json()["messages"][0]["attachments"][0]["path"].endswith(".docx")

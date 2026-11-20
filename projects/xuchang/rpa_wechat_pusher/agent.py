@@ -8,12 +8,14 @@
     python agent.py --once         # 只跑一轮
     python agent.py --dry-run      # 轮询但只打印不实发（验证链路）
     python agent.py --test "文本"  # 手动发一条到配置的群（验证微信环境）
+    python agent.py --test-file x.docx  # 手动发一份文件到配置的群（验收附件链路）
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import socket
 import sys
 import time
@@ -37,6 +39,7 @@ SENT_MARKERS_LIMIT = 500
 PENDING_PATH = "/api/xuchang-wechat-push/pending"
 ACK_PATH = "/api/xuchang-wechat-push/ack"
 MEDIA_PATH = "/api/xuchang-wechat-push/media"
+ATTACHMENT_PATH = "/api/xuchang-wechat-push/attachment"
 
 # 单实例守卫：双 agent 会同时拉取同一消息导致重复发群，用本地端口占位互斥
 INSTANCE_LOCK_PORT = 47615
@@ -50,6 +53,18 @@ _MEDIA_EXTS = {
     "image/bmp": ".bmp",
 }
 MEDIA_FETCH_RETRIES = 2
+
+
+def safe_attachment_filename(item: dict, index: int) -> str:
+    """从附件记录取展示文件名并净化，保留原扩展名供微信识别文件类型。"""
+    raw = str(item.get("filename") or "").strip()
+    if not raw:
+        raw = Path(str(item.get("path") or "").replace("\\", "/")).name
+    name = Path(raw.replace("\\", "/")).name
+    name = re.sub(r'["\r\n\t]+', "", name).strip(" .")
+    if not name:
+        name = f"attachment_{index}.docx"
+    return name[:120]
 
 
 def log(message: str) -> None:
@@ -137,13 +152,14 @@ class WeChatSender:
     def __init__(self) -> None:
         ensure_winsdk_shim()
         try:
-            from wechatauto.guia import quick_send, quick_send_image
+            from wechatauto.guia import quick_send, quick_send_file, quick_send_image
         except ImportError as exc:
             raise RuntimeError(
                 "未安装 wechatauto-replica，请先运行 install.bat"
             ) from exc
         self._send = quick_send
         self._send_image = quick_send_image
+        self._send_file = quick_send_file
 
     def send_text(self, group_name: str, text: str) -> None:
         result = self._send(text, group_name)
@@ -157,6 +173,12 @@ class WeChatSender:
         if "成功" not in status and "ok" not in status.lower():
             raise RuntimeError(f"图片发送未确认：{result}")
 
+    def send_file(self, group_name: str, file_path: str) -> None:
+        result = self._send_file(file_path, group_name)
+        status = str((result or {}).get("status") or "")
+        if "成功" not in status and "ok" not in status.lower():
+            raise RuntimeError(f"文件发送未确认：{result}")
+
 
 def http_headers(cfg: dict) -> dict:
     return {"Authorization": f"Bearer {cfg['token']}"}
@@ -166,7 +188,11 @@ def fetch_pending(cfg: dict) -> list[dict] | None:
     try:
         response = httpx.get(
             f"{cfg['base_url']}{PENDING_PATH}",
-            params={"limit": 10, "agent_id": cfg["agent_id"]},
+            params={
+                "limit": 10,
+                "agent_id": cfg["agent_id"],
+                "caps": "attachments",
+            },
             headers=http_headers(cfg),
             timeout=cfg["http_timeout_seconds"],
         )
@@ -290,6 +316,58 @@ def send_image_with_retry(cfg: dict, sender: WeChatSender, image_path: str) -> s
     return last_error
 
 
+def fetch_attachment(cfg: dict, message_id: str, index: int, item: dict) -> Path | None:
+    """下载报告等文档附件到本地缓存；扩展名来自附件文件名，不默认图片后缀。"""
+    url = f"{cfg['base_url']}{ATTACHMENT_PATH}/{message_id}/{index}"
+    timeout = max(30.0, float(cfg["http_timeout_seconds"]))
+    cache_dir = DATA_DIR / "media_cache" / f"{message_id}_{index}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # 目录承担唯一性，文件名保持后端给的展示名，微信群里的文件消息显示原名。
+    local_path = cache_dir / safe_attachment_filename(item, index)
+    temp_path = local_path.with_name(local_path.name + ".part")
+    for attempt in range(1 + MEDIA_FETCH_RETRIES):
+        try:
+            with httpx.stream(
+                "GET", url, headers=http_headers(cfg), timeout=timeout
+            ) as response:
+                if response.status_code != 200:
+                    log(
+                        f"[warn] 附件下载失败（{message_id}#{index} 第 {attempt + 1} 次）："
+                        f"HTTP {response.status_code}"
+                    )
+                else:
+                    with temp_path.open("wb") as handle:
+                        for chunk in response.iter_bytes():
+                            if chunk:
+                                handle.write(chunk)
+                    temp_path.replace(local_path)
+                    return local_path
+        except (httpx.HTTPError, OSError) as exc:
+            log(f"[warn] 附件下载失败（{message_id}#{index} 第 {attempt + 1} 次）：{exc}")
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if attempt < MEDIA_FETCH_RETRIES:
+            time.sleep(2)
+    return None
+
+
+def send_file_with_retry(cfg: dict, sender: WeChatSender, file_path: str) -> str | None:
+    """文档附件发送带轮内重试；与图片同为剪贴板文件通路，失败不重发文本。"""
+    last_error = "未知错误"
+    for attempt in range(1 + cfg["send_retry"]):
+        try:
+            sender.send_file(cfg["group_name"], file_path)
+            return None
+        except Exception as exc:
+            last_error = str(exc)
+            log(f"[warn] 附件发送失败（第 {attempt + 1} 次）：{last_error}")
+            if attempt < cfg["send_retry"]:
+                time.sleep(cfg["send_retry_delay_seconds"])
+    return last_error
+
+
 def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bool) -> None:
     messages = fetch_pending(cfg)
     if messages is None:
@@ -316,7 +394,8 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
             continue
         if dry_run:
             media = msg.get("media") or []
-            suffix = f"（附图 {len(media)} 张）" if media else ""
+            attachments = msg.get("attachments") or []
+            suffix = f"（附图 {len(media)} 张，附件 {len(attachments)} 份）" if media or attachments else ""
             log(f"[dry-run] 将发到「{cfg['group_name']}」：{text[:80]}...{suffix}")
             continue
         if sender is None:
@@ -332,7 +411,8 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
             timespec="seconds"
         )
         save_markers(markers)
-        # 逐张发附图：单张失败只记录不重发整条消息（避免文案重复刷群）
+        # 逐张发附图、逐份发文档附件：单项失败只记录，不重发整条消息
+        # （避免文案重复刷群）
         media = msg.get("media") or []
         failed_media: list[int] = []
         for index in range(len(media)):
@@ -347,12 +427,38 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
                 log(f"[info] 已发送附图 {message_id}#{index}")
             else:
                 failed_media.append(index)
-        detail = None
+        attachments = msg.get("attachments") or []
+        failed_attachments: list[str] = []
+        for index, item in enumerate(attachments):
+            if not isinstance(item, dict):
+                failed_attachments.append(f"#{index}")
+                continue
+            touch_liveness()
+            local_path = fetch_attachment(cfg, message_id, index, item)
+            if local_path is None:
+                failed_attachments.append(safe_attachment_filename(item, index))
+                continue
+            error = send_file_with_retry(cfg, sender, str(local_path))
+            if error is None:
+                log(f"[info] 已发送附件 {message_id}#{index} {local_path.name}")
+            else:
+                failed_attachments.append(local_path.name)
+        detail_parts: list[str] = []
         if media:
-            detail = f"附图 {len(media) - len(failed_media)}/{len(media)} 张成功"
+            media_detail = f"附图 {len(media) - len(failed_media)}/{len(media)} 张成功"
             if failed_media:
-                detail += f"（失败序号：{','.join(map(str, failed_media))}）"
-                log(f"[warn] {detail}")
+                media_detail += f"（失败序号：{','.join(map(str, failed_media))}）"
+            detail_parts.append(media_detail)
+        if attachments:
+            attachment_detail = (
+                f"附件 {len(attachments) - len(failed_attachments)}/{len(attachments)} 份成功"
+            )
+            if failed_attachments:
+                attachment_detail += f"（失败：{'、'.join(failed_attachments)}）"
+            detail_parts.append(attachment_detail)
+        detail = "；".join(detail_parts) if detail_parts else None
+        if detail and (failed_media or failed_attachments):
+            log(f"[warn] {message_id} {detail}")
         ack(cfg, message_id, "sent", detail=detail)
 
 
@@ -383,6 +489,9 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="只跑一轮后退出")
     parser.add_argument("--dry-run", action="store_true", help="只打印不实发、不回执")
     parser.add_argument("--test", metavar="TEXT", help="手动发一条文本到配置的群后退出")
+    parser.add_argument(
+        "--test-file", metavar="PATH", help="手动向配置的群发送一份文件后退出（验收文件发送链路）"
+    )
     args = parser.parse_args()
 
     try:
@@ -416,6 +525,20 @@ def main() -> int:
             print(f"[错误] {exc}", file=sys.stderr)
             return 1
         log(f"测试消息已发送到「{cfg['group_name']}」，请在微信里确认")
+        return 0
+
+    if args.test_file:
+        file_path = Path(args.test_file).expanduser().resolve()
+        if not file_path.is_file():
+            print(f"[错误] 文件不存在：{file_path}", file=sys.stderr)
+            return 1
+        try:
+            sender = WeChatSender()
+            sender.send_file(cfg["group_name"], str(file_path))
+        except (RuntimeError, OSError) as exc:
+            print(f"[错误] {exc}", file=sys.stderr)
+            return 1
+        log(f"测试文件已发送到「{cfg['group_name']}」：{file_path.name}")
         return 0
 
     markers = load_markers()

@@ -99,21 +99,51 @@ def _pollutants(package: dict[str, Any]) -> str:
     return "、".join(values)
 
 
+def _normalize_attachments(
+    attachments: list[dict[str, Any] | str] | None,
+) -> list[dict[str, str]]:
+    """把报告等文件附件规整为 {path, filename?, mime?} 记录。
+
+    media 语义冻结为证据附图；文档类文件一律走 attachments，避免旧 agent
+    把 docx/pdf 当图片拉取发送。入队方是 worker 受信代码，这里只做结构
+    规整与空值过滤，路径边界由 web 侧 /attachment 端点复核。
+    """
+    records: list[dict[str, str]] = []
+    for item in attachments or []:
+        if isinstance(item, dict):
+            path = str(item.get("path") or "").strip()
+            if not path:
+                continue
+            record = {"path": path}
+            filename = str(item.get("filename") or "").strip()
+            mime = str(item.get("mime") or "").strip()
+            if filename:
+                record["filename"] = filename
+            if mime:
+                record["mime"] = mime
+            records.append(record)
+        elif item is not None and str(item).strip():
+            records.append({"path": str(item).strip()})
+    return records
+
+
 def enqueue_wechat_message(
     kind: str,
     text: str,
     *,
     media: list[str] | None = None,
+    attachments: list[dict[str, Any] | str] | None = None,
     metadata: dict[str, Any] | None = None,
     root: Path | None = None,
 ) -> dict[str, Any] | None:
-    """把任意推送场景的定稿文案（及附图路径）写入待发队列。
+    """把任意推送场景的定稿文案（及附图/附件路径）写入待发队列。
 
     场景用 kind 区分（station_alert/pollution_cause/monthly_review/...），
     场景标识（如【污染原因分析】前缀）由调用方写在 text 首行——RPA agent
     对以"【"开头的文案不再叠加全局 message_prefix。空文案跳过；media 存
-    agent 可解析的项目相对路径（web 侧 /media 端点下发）。调用方负责
-    try/except：入队失败只记日志、不影响其他投递主流程。
+    agent 可解析的项目相对路径（web 侧 /media 端点下发），仅限证据附图；
+    报告等文档附件走 attachments（web 侧 /attachment 端点下发）。调用方
+    负责 try/except：入队失败只记日志、不影响其他投递主流程。
     """
     payload = str(text or "").strip()
     if not payload:
@@ -124,6 +154,7 @@ def enqueue_wechat_message(
         "kind": str(kind or "generic").strip() or "generic",
         "text": payload,
         "media": [str(p) for p in (media or [])],
+        "attachments": _normalize_attachments(attachments),
         "metadata": {
             k: v for k, v in (metadata or {}).items() if v not in (None, "")
         },
@@ -171,15 +202,25 @@ def find_message(
 
 
 def list_pending_messages(
-    limit: int = 10, *, root: Path | None = None
+    limit: int = 10,
+    *,
+    root: Path | None = None,
+    supports_attachments: bool = True,
 ) -> list[dict[str, Any]]:
-    """按入队时间返回待发消息（文件名时间戳前缀保证顺序）；坏文件跳过。"""
+    """按入队时间返回待发消息（文件名时间戳前缀保证顺序）；坏文件跳过。
+
+    supports_attachments=False 表示拉取方（旧版 RPA agent）不能发送文件
+    附件：带非空 attachments 的消息本轮不返回、留在 pending，等支持附件
+    的 agent 接手，避免文本发出后附件被静默丢弃。
+    """
     limit = max(1, min(int(limit), PENDING_FETCH_LIMIT))
     messages: list[dict[str, Any]] = []
     for path in _list_message_files(PENDING_DIR, root):
         record = _read_json(path)
         if not record or not str(record.get("text") or "").strip():
             logger.warning("xuchang_wechat_push_pending_file_invalid", file=path.name)
+            continue
+        if not supports_attachments and record.get("attachments"):
             continue
         messages.append(record)
         if len(messages) >= limit:

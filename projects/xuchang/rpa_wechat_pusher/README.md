@@ -7,8 +7,10 @@
 
 ```
 服务器后端                                  本机（Windows + 微信4.x电脑版）
-alert 通报文案 → pending/*.json   ◄────────  GET  /api/xuchang-wechat-push/pending
+通报文案/附图/附件 → pending/*.json ◄──────  GET  /api/xuchang-wechat-push/pending?caps=attachments
                                   ────────►  quick_send(文案, who=群名)
+                                  ────────►  GET  /media/{id}/{序号} → quick_send_image
+                                  ────────►  GET  /attachment/{id}/{序号} → quick_send_file
                                   ────────►  POST /api/xuchang-wechat-push/ack
 ```
 
@@ -52,9 +54,10 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
 
    ```bat
    .venv\Scripts\python agent.py --test "许昌告警推送测试消息"
+   .venv\Scripts\python agent.py --test-file C:\path\to\测试报告.docx
    ```
 
-   文件传输助手里收到即环境 OK。
+   文件传输助手里收到文本与文件即环境 OK。
 6. 把 `config.toml` 的 `group_name` 改成真实群名（在微信里置顶该群、
    确保群名唯一），再跑一次 `--test` 实发一条到群里确认。
 7. 验证后端链路（不实发）：
@@ -87,6 +90,21 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
 - 首次发送前 wechatauto 要做一次布局校准（约 2 秒），属正常。
 - 发送失败重试耗尽后回执 `failed`，后端累计 3 次即归档停发（`failed/` 目录），
   避免故障期间无限刷群；处理完故障后需人工在群里补发。
+
+## 报告附件与升级顺序
+
+- 队列消息里 `media` 仍只放证据附图；报告等文档走并列的 `attachments`
+  字段（`{path, filename, mime}`），web 侧由
+  `GET /attachment/{消息id}/{序号}` 下发（扩展名白名单 docx/pdf、
+  仅 data registry 内、单文件 ≤50MB），agent 下载后用
+  `quick_send_file` 以文件消息发群。
+- agent 拉取 `/pending` 时带 `caps=attachments` 上报能力。**旧版 agent
+  不带该参数，后端会把带附件的消息留在 pending 不下发**——文本会晚发但
+  附件不会被静默丢掉；升级新版 agent 后自动补发。
+- 双端升级顺序：**先升级本机 agent（新版对旧后端天然兼容，附件字段为空
+  即跳过），再升级后端 web/worker**，最后重启 agent 与看门狗。顺序反了
+  会出现"后端已产生附件消息、旧 agent 不能发"的积压窗口（消息不丢，
+  但通报会延迟）。
 
 ## 日常检查与排障
 
@@ -124,11 +142,12 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
 - **微信自动升级到 4.3+ 会失效吗？** wechatauto 依赖微信内部布局与无障碍
   闸门特征，大版本更新可能需要等它适配；因此**关闭微信自动更新**，
   升级前先在 `--test` 模式验证。
-- **能不能发图片/@所有人**：图片已支持——告警工作流收集的证据附图（趋势图、
-  上风向地图等）会在文本发出后逐张下载并发进群（`GET /media/{id}/{序号}`，
-  同一 Bearer 令牌鉴权，仅允许 data registry 内文件）；单张失败不影响文本
-  与其余附图，回执 detail 会记"附图 N/M 张成功"。@所有人、"快讯先行+详报
-  后补"仍为二期计划。
+- **能不能发图片/文件/@所有人**：图片与文件均已支持——证据附图走
+  `GET /media/{id}/{序号}` + `quick_send_image`；污染原因分析通报等报告
+  文档走 `GET /attachment/{id}/{序号}` + `quick_send_file`（微信按文件
+  消息展示，保留原文件名）。单项失败不影响文本与其余附图/附件，回执
+  detail 会记"附图 N/M 张成功；附件 K/L 份成功"。@所有人、"快讯先行+
+  详报后补"仍为二期计划。
 - **换一台电脑部署**：整目录拷贝 → 重跑 install.bat → 新填 config.toml →
   重复「本机部署步骤」4-8。注意同一时刻只应有一个 agent 拉同一后端。
 - **与人在用电脑冲突怎么办**：RPA 发送靠真鼠标键盘，无法后台化。三个层级：
