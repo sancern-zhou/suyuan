@@ -28,16 +28,18 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
+import { browserResourceUrl } from '@/services/resourceUrls.js'
 
 const props = defineProps({ resource: { type: Object, required: true }, group: { type: Object, default: null }, contentUrl: { type: String, required: true } })
 const loading = ref(true)
 const error = ref('')
 const retryVersion = ref(0)
 const previewVisible = ref(false)
+const imageUrl = computed(() => browserResourceUrl(props.contentUrl))
 const retryUrl = computed(() => {
-  if (!retryVersion.value) return props.contentUrl
-  const separator = props.contentUrl.includes('?') ? '&' : '?'
-  return `${props.contentUrl}${separator}retry=${retryVersion.value}`
+  if (!retryVersion.value) return imageUrl.value
+  const separator = imageUrl.value.includes('?') ? '&' : '?'
+  return `${imageUrl.value}${separator}retry=${retryVersion.value}`
 })
 const previewImages = computed(() => [{ src: retryUrl.value, alt: props.resource.label || '图片' }])
 const handleError = () => { loading.value = false; error.value = '图片加载失败'; previewVisible.value = false }

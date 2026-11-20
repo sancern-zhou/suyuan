@@ -199,9 +199,24 @@ class Settings(BaseSettings):
         description="Authentication mode; mock is restricted to non-production development",
     )
     auth_sys_code: str = Field(default="SUYUAN", description="Company system code")
+    auth_extra_sys_codes: str = Field(
+        default="",
+        description=(
+            "Comma-separated additional inbound SysCode values accepted besides "
+            "AUTH_SYS_CODE（如 NOISE：复用噪声平台登录态时浏览器携带其 SysCode）"
+        ),
+    )
     auth_platform_sys_code: str = Field(
         default="JCXT",
         description="Application code sent to the company authentication service",
+    )
+    auth_platform_sys_codes: str = Field(
+        default="",
+        description=(
+            "Comma-separated SysCode values tried in order against the platform "
+            "current-user endpoint; 留空则仅用 AUTH_PLATFORM_SYS_CODE。"
+            "复用噪声平台登录态时可配 JCXT,NOISE"
+        ),
     )
     auth_service_url: str = Field(
         default="",
@@ -249,6 +264,30 @@ class Settings(BaseSettings):
         ge=30,
         le=86400,
         description="Signed anonymous share grant lifetime",
+    )
+    # External single sign-on (noise platform session reuse).
+    sso_shared_secret: str = Field(
+        default="",
+        description=(
+            "HMAC secret shared with the external platform (e.g. 噪声平台) for "
+            "signed login tickets; 空=禁用 /api/auth/sso/exchange（默认）"
+        ),
+    )
+    sso_ticket_ttl_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=600,
+        description="Maximum age of an external SSO ticket",
+    )
+    sso_session_ttl_seconds: int = Field(
+        default=28800,
+        ge=60,
+        le=604800,
+        description="Lifetime of the local session token issued by SSO exchange",
+    )
+    sso_default_roles: str = Field(
+        default="",
+        description="Comma-separated role codes assigned to SSO identities without roles",
     )
     dashboard_api_prefix: str = Field(
         default="",
@@ -385,6 +424,25 @@ class Settings(BaseSettings):
     @property
     def auth_admin_role_codes_set(self) -> set[str]:
         return set(self._split_unique_csv(self.auth_admin_role_codes))
+
+    @property
+    def auth_accepted_sys_codes(self) -> tuple[str, ...]:
+        """Inbound SysCode values this deployment accepts (primary first)."""
+        return tuple(
+            dict.fromkeys([self.auth_sys_code.strip(), *self._split_unique_csv(self.auth_extra_sys_codes)])
+        )
+
+    @property
+    def auth_platform_sys_codes_list(self) -> List[str]:
+        """Outbound SysCode values tried in order against the platform auth service."""
+        configured = self._split_unique_csv(self.auth_platform_sys_codes)
+        if configured:
+            return configured
+        return [self.auth_platform_sys_code.strip()] if self.auth_platform_sys_code.strip() else []
+
+    @property
+    def sso_default_roles_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.sso_default_roles))
 
     @property
     def auth_mock_role_codes_set(self) -> set[str]:
@@ -761,6 +819,14 @@ class Settings(BaseSettings):
     llm_first_token_timeout_seconds: float = Field(
         default=45.0,
         description="Max silent wait for the first streaming chunk from an LLM provider; also the per-chunk idle gap for streams"
+    )
+    llm_chat_completions_stream_collect: bool = Field(
+        default=True,
+        description=(
+            "Run Chat Completions 'non-streaming' calls as streaming requests aggregated "
+            "locally. Gateways that time out on the first upstream byte (6s observed) "
+            "otherwise fail every long non-streaming generation."
+        )
     )
     llm_fresh_tool_result_budget_chars: int = Field(
         default=16_000,
@@ -1148,7 +1214,12 @@ class Settings(BaseSettings):
         description="Trust server cert without validation; set no after installing a CA-signed cert",
     )
 
-    # DataCrawler MySQL Configuration (long-history monitoring database)
+    # 遗留配置（LEGACY，待清理）：以下 crawler_mysql_* / bigdata_sqlserver_* /
+    # ops_sqlserver_* 三段原服务于已删除的 execute_crawler_sql_query /
+    # execute_bigdata_sql_query 等工具；这些工具已合并进
+    # execute_postgres_sql_query（双库 bigdata_system + sound_data），当前仓库内
+    # 无任何代码或环境变量引用。暂予保留以免影响既有部署/文档引用，后续统一删除。
+    # DataCrawler MySQL Configuration (LEGACY, unused)
     crawler_mysql_host: str = Field(
         default="127.0.0.1",
         description="DataCrawler MySQL host"
@@ -1182,7 +1253,7 @@ class Settings(BaseSettings):
             f"/{self.crawler_mysql_database}?charset=utf8mb4"
         )
 
-    # Big_Data SQL Server Configuration (企业运输管控平台，大数据局对接库)
+    # Big_Data SQL Server Configuration (LEGACY, unused；企业运输管控平台，大数据局对接库)
     bigdata_sqlserver_host: str = Field(
         default="222.143.158.143",
         description="Big_Data SQL Server host"
@@ -1247,7 +1318,7 @@ class Settings(BaseSettings):
             f"TrustServerCertificate={self.sqlserver_trust_server_certificate};"
         )
 
-    # Operations (work order) SQL Server Configuration.
+    # Operations (work order) SQL Server Configuration (LEGACY, unused).
     # 每个字段未配置时逐项回退到通用 sqlserver_* 配置；仅
     # ops_sqlserver_database 固定默认 AirPollutionAnalysis（与历史行为一致），
     # 这样在未配置 OPS_SQLSERVER_* 的部署上连接串与旧行为完全相同。

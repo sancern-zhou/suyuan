@@ -1361,6 +1361,60 @@ class SessionMemory:
             history_length=len(self.conversation_history),
         )
 
+    def add_truncated_tool_call_recovery(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        error_message: str,
+        received_chars: int = 0,
+    ) -> None:
+        """Record a tool call whose streamed arguments were cut off upstream.
+
+        Upstream gateways can close the SSE stream mid tool_call arguments
+        (observed 2026-11-14: 6.4s, no finish_reason). The payload that caused
+        it is deterministic, so replaying the identical request loops forever:
+        the 2026-11-14 Jiangxi session issued the byte-identical request 132
+        times over 28 minutes. Recording the failed exchange makes the next
+        request different and tells the model the arguments were truncated,
+        which is the only self-healing path available client-side.
+        """
+        self.conversation_history.append(
+            ConversationTurn(
+                role="assistant",
+                content=[
+                    {
+                        "type": "tool_use",
+                        "id": tool_use_id,
+                        "name": tool_name,
+                        "input": {},
+                    }
+                ],
+                timestamp=datetime.utcnow().isoformat(),
+                type="tool_use",
+                tool_use_id=tool_use_id,
+                data={"tool_use": {
+                    "type": "TOOL_CALL",
+                    "tools": [{
+                        "tool": tool_name,
+                        "args": {},
+                        "tool_call_id": tool_use_id,
+                        "truncated": True,
+                    }],
+                }},
+            )
+        )
+        self.add_tool_result_message(
+            tool_use_id,
+            {
+                "success": False,
+                "error": "tool_arguments_truncated",
+                "truncation_reason": "upstream_stream_closed_mid_arguments",
+                "received_chars": received_chars,
+                "summary": error_message,
+            },
+            is_error=True,
+        )
+
     def _display_tool_use_block(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         data = msg.get("data")
         if not isinstance(data, dict):

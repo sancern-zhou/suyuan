@@ -80,7 +80,7 @@ async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch, tar
     if target_mode == "office":
         context.manual_mode = "assistant"
         context.tool_executor.delegation_tool_registry = {
-            "execute_python": object(), "execute_sql_query": object(),
+            "execute_python": object(), "execute_postgres_sql_query": object(),
             "call_sub_agent": object(), "create_report_package": object(),
         }
     result = await tool.execute(

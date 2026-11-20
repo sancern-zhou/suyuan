@@ -44,6 +44,7 @@ class ReactAgentAPI {
       pageContext = null,
       requestKey = sessionId,
       onAccepted,
+      onRejected,
       onEvent
     } = options
 
@@ -72,12 +73,13 @@ class ReactAgentAPI {
       body,
       onEvent,
       requestKey || sessionId || `request_${Date.now()}`,
-      onAccepted
+      onAccepted,
+      onRejected
     )
   }
 
   // ✅ 新增：内部方法 - 统一的SSE流处理
-  async _streamRequest(url, body, onEvent, requestKey = 'default', onAccepted) {
+  async _streamRequest(url, body, onEvent, requestKey = 'default', onAccepted, onRejected) {
     if (this.controllers.has(requestKey)) {
       this.controllers.get(requestKey).abort()
       this.controllers.delete(requestKey)
@@ -87,6 +89,7 @@ class ReactAgentAPI {
     this.controllers.set(requestKey, controller)
     this.controller = controller
 
+    let accepted = false
     try {
       const response = await authFetch(url, {
         method: 'POST',
@@ -98,6 +101,7 @@ class ReactAgentAPI {
       })
 
       acceptStreamResponse(response, onAccepted)
+      accepted = true
 
       await this._readSseStream(response, onEvent)
     } catch (error) {
@@ -105,6 +109,7 @@ class ReactAgentAPI {
         console.log('Request was aborted')
       } else {
         console.error('Analysis failed:', error)
+        if (!accepted && typeof onRejected === 'function') onRejected(error)
         throw error
       }
     } finally {

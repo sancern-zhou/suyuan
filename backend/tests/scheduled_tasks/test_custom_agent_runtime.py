@@ -1,11 +1,18 @@
+from types import SimpleNamespace
+
+import pytest
+
+from app.agent import tool_adapter
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.tool_registry import AGENT_HIDDEN_TOOL_NAMES
-from app.agent import tool_adapter
 from app.agent.react_agent import create_react_agent
-from app.agent.runtime.agent_runtime import AgentRuntime, CustomAgentTerminalError
+from app.agent.runtime.agent_runtime import (
+    _round_progress,
+    _round_tool_signatures,
+    AgentRuntime,
+    CustomAgentTerminalError,
+)
 from app.agent.runtime.types import RunState
-import pytest
-from types import SimpleNamespace
 
 
 class FakeTool:
@@ -27,8 +34,13 @@ class FakeRegistry:
         return [{"tool": tool} for tool in self.tools]
 
 
-def test_custom_prompt_is_minimal_and_uses_no_business_role_prompt():
+def test_custom_prompt_is_minimal_and_uses_no_business_role_prompt(monkeypatch):
     from app.agent.prompts.custom_prompt import build_custom_prompt
+    from config.settings import settings
+
+    # 共享平台段落受项目开关控制（声环境项目关闭空气质量过渡段），
+    # 本用例验证的是共享默认装配，固定到默认项目。
+    monkeypatch.setattr(settings, "project_id", "default")
 
     base = build_custom_prompt(["alpha"])
     prompt = build_react_system_prompt("custom", available_tools=["alpha"])
@@ -82,35 +94,6 @@ def test_react_agent_factory_accepts_an_explicit_registry(monkeypatch):
 
     assert agent.tool_registry is explicit_registry
     assert agent.kwargs["enable_memory"] is False
-
-
-def test_custom_loop_guard_terminates_on_second_identical_block():
-    state = RunState(session_id="s", user_query="run", mode="custom")
-    action = {"type": "TOOL_CALL", "tool": "alpha", "args": {"value": 1}}
-    records = [{
-        "tool_name": "alpha",
-        "tool_input": {"value": 1},
-        "result": {"loop_guard": True, "severity": "block"},
-    }]
-
-    AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
-    with pytest.raises(CustomAgentTerminalError, match="工具循环已终止"):
-        AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
-
-
-def test_loop_block_termination_applies_to_all_modes():
-    """同签名连续两次 loop-block 对普通对话模式同样强制终止。"""
-    state = RunState(session_id="s", user_query="q", mode="assistant")
-    action = {"type": "TOOL_CALL", "tool": "alpha", "args": {"value": 1}}
-    records = [{
-        "tool_name": "alpha",
-        "tool_input": {"value": 1},
-        "result": {"loop_guard": True, "severity": "block"},
-    }]
-
-    AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
-    with pytest.raises(CustomAgentTerminalError, match="工具循环已终止"):
-        AgentRuntime._enforce_custom_tool_terminal_rules(state, action, records)
 
 
 def test_missing_tool_rule_stays_custom_only():
@@ -344,3 +327,54 @@ async def test_custom_runtime_breaks_after_two_deterministic_model_failures():
     assert calls == 2
     assert events[-1]["type"] == "fatal_error"
     assert "已熔断" in events[-1]["data"]["error"]
+
+
+# --------------------------------------------------------------------- #
+# 纯重复轮进度判定（重复成功调用型空转的兜底）
+# --------------------------------------------------------------------- #
+
+def _tool_record(tool="alpha", args=None, success=True):
+    return {
+        "tool_name": tool,
+        "tool_input": args or {"value": 1},
+        "result": {"success": success},
+    }
+
+
+def test_round_progress_new_call_counts():
+    progress, baseline = _round_progress([_tool_record()], None)
+    assert progress is True
+    assert baseline is not None
+
+
+def test_round_progress_identical_round_does_not_count_even_on_success():
+    _, baseline = _round_progress([_tool_record()], None)
+    progress, kept = _round_progress([_tool_record()], baseline)
+    assert progress is False  # 重复成功调用：无新信息，交给无进展熔断
+    assert kept == baseline
+
+
+def test_round_progress_new_signature_counts_again():
+    _, baseline = _round_progress([_tool_record()], None)
+    progress, baseline = _round_progress(
+        [_tool_record(), _tool_record(args={"value": 2})], baseline
+    )
+    assert progress is True  # 出现新调用（参数不同）即算进展
+
+
+def test_round_progress_failed_results_never_count():
+    progress, _ = _round_progress([_tool_record(success=False)], None)
+    assert progress is False
+
+
+def test_round_progress_empty_records_keep_baseline():
+    _, baseline = _round_progress([_tool_record()], None)
+    progress, kept = _round_progress([], baseline)
+    assert progress is False  # 空 records（压缩轮等）无进展
+    assert kept == baseline   # 但基准不变，后续同签名轮仍判纯重复
+
+
+def test_round_tool_signatures_ignores_key_order():
+    a = [{"tool_name": "alpha", "tool_input": {"x": 1, "y": 2}}]
+    b = [{"tool_name": "alpha", "tool_input": {"y": 2, "x": 1}}]
+    assert _round_tool_signatures(a) == _round_tool_signatures(b)

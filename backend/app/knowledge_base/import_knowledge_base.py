@@ -43,8 +43,8 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
-# 嵌入模型配置（用于验证）
-EMBEDDING_DIM = 1024  # BGE-M3 维度
+# 嵌入模型配置（用于验证）。默认按现行模型推导，切换远程模型时用环境变量覆盖。
+EMBEDDING_DIM = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "1024"))
 
 
 class KnowledgeBaseImporter:

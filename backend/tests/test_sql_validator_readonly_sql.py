@@ -1,10 +1,5 @@
-import asyncio
-
-import pyodbc
-
-from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool
+from app.tools.query.execute_postgres_sql_query.tool import ExecutePostgresSQLQueryTool
 from app.utils.sql_validator import SQLValidator
-
 
 OPS_TABLES = ["working_orders", "working_order_details"]
 
@@ -66,84 +61,32 @@ SELECT WORKINGORDERDETAILID FROM working_order_details;
     assert error == "不能执行多条SQL语句"
 
 
-def test_execute_ops_sql_query_allows_up_to_1000_rows():
-    tool = ExecuteOpsSQLQueryTool()
+def test_execute_postgres_sql_query_allows_up_to_1000_rows():
+    tool = ExecutePostgresSQLQueryTool()
 
     assert tool.sql_validator.max_limit == 1000
-    assert "最大1000" in tool.function_schema["parameters"]["properties"]["limit"]["description"]
+    assert "1000" in tool.function_schema["parameters"]["properties"]["limit"]["description"]
 
 
-def test_execute_sql_query_allows_open_meteo_air_quality_forecast_tables():
-    tool = ExecuteSQLQueryTool()
-
-    for sql in (
-        "SELECT TOP 1 forecast_time FROM OpenMeteoAirQualityForecast72h",
-        "SELECT TOP 1 forecast_time FROM dbo.OpenMeteoAirQualityForecast72h",
-    ):
-        is_valid, error = tool.sql_validator.validate(sql)
-
-        assert is_valid, error
-
-
-def test_execute_sql_query_allows_xuchang_nmc_hourly_weather_forecast_tables():
-    tool = ExecuteSQLQueryTool()
+def test_execute_postgres_sql_query_allows_app_and_sound_tables():
+    tool = ExecutePostgresSQLQueryTool()
 
     for sql in (
-        "SELECT TOP 56 forecast_time, temperature, humidity, wind_direction, wind_speed,"
-        " precipitation_probability, weather_text FROM XuchangNmcHourlyWeatherForecast"
-        " WHERE city_code = '411000' ORDER BY forecast_time",
-        "SELECT TOP 1 forecast_time FROM dbo.XuchangNmcHourlyWeatherForecast",
+        "SELECT * FROM sys_user LIMIT 1",
+        "SELECT * FROM permit_licenses LIMIT 1",
+        "SELECT * FROM dat_station_hour_2025 LIMIT 1",
+        "SELECT * FROM noise_1m_2025_1771a_src LIMIT 1",
     ):
         is_valid, error = tool.sql_validator.validate(sql)
-
-        assert is_valid, error
-
-
-def test_execute_sql_query_rejects_henan_city_accumulate_ranking_table():
-    """省APP已停服，排名走 xuchang_cube_metrics；该表已从白名单移除。"""
-    tool = ExecuteSQLQueryTool()
-
-    for sql in (
-        "SELECT TOP 30 city, city_rank, zong FROM HenanCityAccumulateRanking"
-        " WHERE period_type = 'monthly' AND period = '2026-08' ORDER BY city_rank",
-        "SELECT TOP 30 city, city_rank, zong FROM dbo.HenanCityAccumulateRanking"
-        " WHERE period_type = 'yearly' AND period = '2026' ORDER BY city_rank",
-    ):
-        is_valid, error = tool.sql_validator.validate(sql)
-
-        assert not is_valid, error
+        assert is_valid, f"{sql}: {error}"
 
 
-def test_xuchang_sql_tool_routes_crawler_station_history_before_execution():
-    tool = ExecuteSQLQueryTool(project_id="xuchang")
+def test_execute_postgres_sql_query_rejects_unknown_table():
+    tool = ExecutePostgresSQLQueryTool()
 
-    assert "dat_station_hour" not in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_station_day" not in tool.sql_validator.ALLOWED_TABLES
-    assert "dat_zhongda_station_hour" in tool.sql_validator.ALLOWED_TABLES
-
-    result = asyncio.run(
-        tool.execute(sql="SELECT TOP 1 * FROM dbo.dat_station_hour")
+    is_valid, error = tool.sql_validator.validate(
+        "SELECT * FROM HenanCityAccumulateRanking LIMIT 1"
     )
 
-    assert result["success"] is False
-    assert "execute_crawler_sql_query" in result["summary"]
-
-
-def test_missing_city_table_does_not_get_station_crawler_hint(monkeypatch):
-    tool = ExecuteSQLQueryTool(project_id="xuchang")
-
-    def _raise_missing_table(sql, database):
-        raise pyodbc.ProgrammingError(
-            "42S02",
-            "[42S02] Invalid object name 'CityAQIPublishHistory'",
-        )
-
-    monkeypatch.setattr(tool, "_execute_query", _raise_missing_table)
-    result = asyncio.run(
-        tool.execute(sql="SELECT TOP 1 * FROM dbo.CityAQIPublishHistory")
-    )
-
-    assert result["success"] is False
-    assert "SQL执行失败" in result["summary"]
-    assert "execute_crawler_sql_query" not in result["summary"]
-    assert "describe_table='CityAQIPublishHistory'" in result["summary"]
+    assert not is_valid
+    assert "henancityaccumulateranking" in error.lower()

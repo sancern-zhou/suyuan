@@ -4,8 +4,9 @@ SQL安全验证器
 用于验证SQL查询的安全性，防止SQL注入和危险操作。
 """
 
-from typing import Tuple, List, Optional
 import re
+from typing import List, Optional, Tuple
+
 import structlog
 
 logger = structlog.get_logger()
@@ -92,6 +93,9 @@ class SQLValidator:
             if allowed_table_prefixes is not None
             else list(type(self).ALLOWED_TABLE_PREFIXES)
         )
+        # 前缀白名单是显式开启的收窄/扩展手段：未显式传入时保持历史行为
+        # （只按表名白名单校验），避免类默认前缀悄悄放宽其他工具的校验。
+        self._prefix_whitelist_enabled = allowed_table_prefixes is not None
 
     def validate(self, sql: str) -> Tuple[bool, str]:
         """
@@ -229,6 +233,9 @@ class SQLValidator:
             return True, ""
 
         allowed_tables = {table.lower() for table in self.ALLOWED_TABLES}
+        allowed_prefixes = tuple(
+            prefix.lower() for prefix in self.ALLOWED_TABLE_PREFIXES
+        )
         cte_names = {
             match.group(1).lower()
             for match in re.finditer(r'(?:\bwith|,)\s+([a-zA-Z_]\w*)\s+as\s*\(', sql, re.IGNORECASE)
@@ -239,10 +246,22 @@ class SQLValidator:
             table_lower = table.lower()
             if table_lower in cte_names:
                 continue
-            if table_lower not in allowed_tables:
-                disallowed_tables.append(table)
+            if table_lower in allowed_tables:
+                continue
+            if (
+                self._prefix_whitelist_enabled
+                and table_lower.startswith(allowed_prefixes)
+            ):
+                continue
+            disallowed_tables.append(table)
 
         if disallowed_tables:
+            if self._prefix_whitelist_enabled:
+                return False, (
+                    f"表名不在白名单中: {', '.join(disallowed_tables)}。"
+                    f"允许的表前缀: {', '.join(self.ALLOWED_TABLE_PREFIXES)}；"
+                    f"其他白名单表: {', '.join(self.ALLOWED_TABLES)}"
+                )
             return False, (
                 f"表名不在白名单中: {', '.join(disallowed_tables)}。"
                 f"允许的表: {', '.join(self.ALLOWED_TABLES)}"

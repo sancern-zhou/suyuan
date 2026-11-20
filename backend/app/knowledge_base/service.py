@@ -196,6 +196,8 @@ class KnowledgeBaseService:
             raise RuntimeError(f"Failed to create hybrid collection: {collection_name}")
 
         # 创建数据库记录
+        from .remote_embedding import configured_embedding_model_name
+
         kb = KnowledgeBase(
             id=kb_id,
             name=name,
@@ -204,6 +206,7 @@ class KnowledgeBaseService:
             vector_store_scope=storage_scope_enum,
             local_scope=(get_local_knowledge_scope() if storage_scope_enum == KnowledgeBaseStorageScope.LOCAL else None),
             owner_id=owner_id,
+            embedding_model=configured_embedding_model_name(),
             chunking_strategy=strategy_enum,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

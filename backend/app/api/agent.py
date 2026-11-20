@@ -329,6 +329,27 @@ def _event_run_id(event: Dict[str, Any]) -> Optional[str]:
     return data.get("run_id") or event.get("run_id")
 
 
+def _terminal_display_content(event_type: str, event_data: Dict[str, Any]) -> str:
+    """终态事件落到会话历史里的展示文案。
+
+    对可自动重试后仍失败的瞬时故障（网关 504/过载/超时），运行时会给
+    `user_message` 友好文案；技术错误留 `error` 只进日志。
+    """
+    if event_type == "interrupted":
+        return event_data.get("reason", "用户已暂停本轮分析")
+    if event_type == "incomplete":
+        return event_data.get(
+            "reason",
+            "分析任务较复杂，在限定步骤内未完成，是否继续？",
+        )
+    return (
+        event_data.get("user_message")
+        or event_data.get("error")
+        or event_data.get("message")
+        or "分析失败"
+    )
+
+
 def _build_final_message(event_data: Dict[str, Any]) -> Dict[str, Any]:
     final_message = {
         "type": "final",
@@ -1503,15 +1524,7 @@ async def analyze_stream(
                             event_data = event.get("data") or {}
                             if "error" in event_data:
                                 agent._session_store[actual_session_id]["error_message"] = event_data.get("error", "Unknown error")
-                            if event["type"] == "interrupted":
-                                terminal_content = event_data.get("reason", "用户已暂停本轮分析")
-                            elif event["type"] == "incomplete":
-                                terminal_content = event_data.get(
-                                    "reason",
-                                    "分析任务较复杂，在限定步骤内未完成，是否继续？",
-                                )
-                            else:
-                                terminal_content = event_data.get("error") or event_data.get("message") or "分析失败"
+                            terminal_content = _terminal_display_content(event["type"], event_data)
                             persistence.append_terminal(
                                 session,
                                 display_history=conversation_history,

@@ -178,6 +178,62 @@ async def test_wrong_sys_code_is_rejected_before_cache_or_platform():
 
 
 @pytest.mark.asyncio
+async def test_extra_sys_code_is_accepted_and_cached_under_it():
+    platform = FakePlatformClient()
+    service = AuthenticationService(
+        settings=_settings(auth_extra_sys_codes="NOISE"),
+        cache=IdentityCache(FakeRedis(), key_prefix="suyuan:auth:", max_ttl_seconds=60),
+        platform_client=platform,
+    )
+
+    user = await service.authenticate("noise-token", "NOISE")
+
+    assert user.id == "user-1"
+    assert platform.calls == [("noise-token", "NOISE")]
+
+
+class FakeSsoSessions:
+    def __init__(self, user):
+        self.user = user
+
+    async def get(self, token):
+        return self.user if token == "sso-token" else None
+
+
+@pytest.mark.asyncio
+async def test_sso_session_is_resolved_before_cache_and_platform():
+    sso_user = CurrentUser(
+        id="sso-user", username="sso", display_name="SSO", sys_code="SUYUAN"
+    )
+    platform = FakePlatformClient(error=AssertionError("must not call platform"))
+    service = AuthenticationService(
+        settings=_settings(),
+        cache=IdentityCache(FakeRedis(), key_prefix="suyuan:auth:", max_ttl_seconds=60),
+        platform_client=platform,
+        sso_sessions=FakeSsoSessions(sso_user),
+    )
+
+    assert (await service.authenticate("sso-token", "SUYUAN")).id == "sso-user"
+    assert platform.calls == []
+
+
+@pytest.mark.asyncio
+async def test_sso_session_miss_falls_back_to_platform_lookup():
+    platform = FakePlatformClient()
+    service = AuthenticationService(
+        settings=_settings(),
+        cache=IdentityCache(FakeRedis(), key_prefix="suyuan:auth:", max_ttl_seconds=60),
+        platform_client=platform,
+        sso_sessions=FakeSsoSessions(None),
+    )
+
+    user = await service.authenticate("company-token", "SUYUAN")
+
+    assert user.id == "user-1"
+    assert platform.calls == [("company-token", "SUYUAN")]
+
+
+@pytest.mark.asyncio
 async def test_mock_mode_returns_fixed_non_production_identity():
     service = AuthenticationService(
         settings=_settings(

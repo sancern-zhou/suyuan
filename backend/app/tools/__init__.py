@@ -459,7 +459,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="execute_smart_event_sql_query", error=str(e))
 
-    # PostgreSQL/KingbaseES 企业排污许可证查询工具
+    # PostgreSQL/KingbaseES 只读 SQL 查询工具（bigdata_system + sound_data 双库）
     try:
         from app.tools.query.execute_postgres_sql_query.tool import ExecutePostgresSQLQueryTool
         registry.register(ExecutePostgresSQLQueryTool(), priority=47)

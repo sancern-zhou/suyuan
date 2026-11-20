@@ -34,11 +34,14 @@ _PUBLIC_EXACT_PATHS = {
     "/api/auth/oauth/refresh",
     "/api/auth/oauth/jwt-login",
     "/api/auth/oauth/des-login",
+    "/api/auth/sso/exchange",
+    "/api/auth/sso/config",
     "/index.html",
     "/favicon.ico",
     "/wechat-screenshot.png",
     "/suyuan-runtime-config.js",
     "/login",
+    "/sso",
     "/fetchers",
     "/knowledge-base",
     "/tools-management",
@@ -136,7 +139,7 @@ class GatewayAuthenticationMiddleware:
                 await self._error(scope, receive, send, 401, "authentication_required")
                 return
             token = token.strip()
-            if sys_code != self.settings.auth_sys_code:
+            if sys_code not in self.settings.auth_accepted_sys_codes:
                 await self._error(scope, receive, send, 401, "invalid_sys_code")
                 return
 

@@ -43,17 +43,24 @@ class AuthenticationService:
         settings: Settings,
         cache: IdentityCache,
         platform_client: Any,
+        sso_sessions: Any | None = None,
     ) -> None:
         self._settings = settings
         self._cache = cache
         self._platform_client = platform_client
+        self._sso_sessions = sso_sessions
 
     async def authenticate(self, token: str, sys_code: str) -> CurrentUser:
-        if sys_code != self._settings.auth_sys_code:
+        if sys_code not in self._settings.auth_accepted_sys_codes:
             raise AuthenticationRejected("invalid SysCode")
 
         if self._settings.auth_mode == "mock":
             return build_mock_user(self._settings, sys_code)
+
+        if self._sso_sessions is not None:
+            sso_user = await self._sso_sessions.get(token)
+            if sso_user is not None:
+                return sso_user
 
         cached = await self._cache.get(token)
         if cached is not None:

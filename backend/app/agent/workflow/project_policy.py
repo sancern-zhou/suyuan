@@ -69,13 +69,14 @@ def scope_delegation_schema(schema, parent_mode):
         # 该父模式的主路径；goal 与按需 result_schema 承载具体任务要求。
         schema["description"] = (
             str(schema.get("description") or "").rstrip()
-            + "\n项目子模式用 goal 完整描述问题、范围和预期交付；父侧整合并成稿，简单问题直接执行。"
+            + "\n项目子模式的 goal 只写目标与分工（问题、时间范围、区域、粒度），不定义字段、统计口径与交付形态；父侧整合并成稿，简单问题直接执行。"
         )
     else:
         schema["description"] = (
             "项目内部子 Agent 工作流：按独立问题分配任务，dependencies 复用共享资源，"
             "无依赖节点并行，已知条件用 when，首轮结束后仅对具体缺口使用 extension 补图。"
-            "节点用 goal 描述独立问题、范围和预期交付，可按需传 result_schema。"
+            "节点 goal 只写目标与分工（问题、时间范围、区域、粒度），不定义字段、统计口径与交付形态；"
+            "仅在下游节点需机器可读消费或 when 路由要引用上游字段时传 result_schema。"
             "父 Agent 整合并成稿，简单问题直接执行。"
             f"允许子模式：{', '.join(enabled_modes)}。"
         )
@@ -89,6 +90,10 @@ def prepare_node(node):
         return
     for field in ("max_iterations", "timeout_seconds"):
         limit = getattr(policy, field)
+        if limit is None:
+            # None 声明 = 不设步数上限（靠上下文压缩续跑），不注入也不钳制
+            node.pop(field, None)
+            continue
         node[field] = min(node.get(field) or limit, limit)
     node["iteration_cap"] = policy.max_iterations
     node["timeout_cap"] = policy.timeout_seconds

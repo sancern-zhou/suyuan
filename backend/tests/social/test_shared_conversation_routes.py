@@ -40,7 +40,7 @@ def _web_row(session_id="sess-1"):
 
 _HISTORY = [
     {"role": "user", "content": "上月空气质量怎么样？"},
-    {"role": "assistant", "type": "tool_use", "content": "调用工具: execute_sql_query"},
+    {"role": "assistant", "type": "tool_use", "content": "调用工具: execute_postgres_sql_query"},
     {"role": "user", "type": "tool_result", "content": "查询成功"},
     {"type": "thought", "content": "分析思路"},
     {

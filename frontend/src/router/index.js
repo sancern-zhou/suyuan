@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
 import ReactAnalysisView from '@/views/ReactAnalysisView.vue'
 import FetchersView from '@/views/FetchersView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
@@ -6,6 +6,7 @@ import ToolsManagementView from '@/views/ToolsManagementView.vue'
 import SkillsManagementView from '@/views/SkillsManagementView.vue'
 import ExpertDeliberationView from '@/views/ExpertDeliberationView.vue'
 import LoginView from '@/views/LoginView.vue'
+import SsoView from '@/views/SsoView.vue'
 import { projectConfig } from '@/config/projectConfig.js'
 import { filterProjectRoutes } from './projectRoutes.js'
 
@@ -15,6 +16,12 @@ const routes = [
       name: 'login',
       component: LoginView,
       meta: { public: true, title: '登录' }
+    },
+    {
+      path: '/sso',
+      name: 'sso',
+      component: SsoView,
+      meta: { public: true, title: '平台免登录' }
     },
     {
       path: '/',
@@ -66,7 +73,9 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: import.meta.env.BASE_URL === './'
+    ? createWebHashHistory()
+    : createWebHistory(import.meta.env.BASE_URL),
   routes: filterProjectRoutes(routes, projectConfig.hasModule)
 })
 

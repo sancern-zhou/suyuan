@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import structlog
 
 logger = structlog.get_logger()
@@ -125,18 +127,6 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     },
 }
 
-_ROUTING_RULES = (
-    "选择规则：综合 query、expert、report 仅作主模式，不能作为子 Agent；正式报告由具备报告职责的主模式生成，助手 assistant 引导报告主入口；"
-    "监测历史数据事实按层级拆分：站点小时/日与站点目录用 query_monitoring_station，"
-    "城市口径与全国对比用 query_monitoring_city；层级混合拆成站点+城市两个节点，"
-    "层级不明确先向用户确认口径，不要用 query_monitoring 兜底（报告 DAG 已禁用，仅限非报告父模式直接委托）；"
-    "气象实况/预报与空气质量预报数据用 query_forecast；"
-    "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
-    "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"
-    "expert 需要 query 系数据时，把对应问数节点写入 dependencies 并复用其 file_path；"
-    "无依赖的 source 节点并行且会话隔离；同源数据由一个节点获取，后续节点通过 dependencies 复用。"
-)
-
 
 def target_mode_values() -> list[str]:
     """已登记契约的 target_mode 取值（顺序稳定）。"""
@@ -214,15 +204,21 @@ def describe_target_mode(arg: str) -> str:
     return _format_mode_contract(query, spec)
 
 
-def build_target_mode_contract(compact: bool = True) -> str:
+def build_target_mode_contract(compact: bool = True, modes: Sequence[str] | None = None) -> str:
     """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。
 
     compact=True 注入一行制（定位+边界）。scope/outputs/warning 全文不再进入
     每次请求：子模式自己的系统提示词才是权威能力边界，硬约束（禁用组合、
     任务契约校验）由 delegation_error/prepare_node 在运行时强制，字段级细节
     按需 view_skill 查看。compact=False 保留完整四段文本供非请求场景使用。
+
+    modes 限定只列给定子模式（纯项目父模式的委派契约）。领域路由规则不进
+    共享契约：大气域路由由共享 report 提示词承载，项目域路由由各项目分支的
+    编排提示词承载（projects/<project>/prompts/report.md）。
     """
     contracts = _active_contracts()
+    if modes is not None:
+        contracts = {name: contracts[name] for name in modes if name in contracts}
     if not compact:
         lines = ["子 Agent（target_mode）能力与工具边界："]
         for mode, spec in contracts.items():
@@ -236,7 +232,6 @@ def build_target_mode_contract(compact: bool = True) -> str:
             if spec.get("warning"):
                 parts.append(f"⚠️ {spec['warning']}")
             lines.append(" ".join(parts))
-        lines.append(_ROUTING_RULES)
         return "\n".join(lines)
     lines = ["子 Agent（target_mode）定位与边界（详细分工以子模式自身提示词为准）："]
     for mode, spec in contracts.items():
@@ -246,7 +241,6 @@ def build_target_mode_contract(compact: bool = True) -> str:
         if boundary:
             line += f"；边界：{boundary}"
         lines.append(line)
-    lines.append(_ROUTING_RULES)
     return "\n".join(lines)
 
 

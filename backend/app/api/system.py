@@ -67,6 +67,7 @@ async def api_info():
 
 @router.get("/session/{session_id}", include_in_schema=False)
 @router.get("/login", include_in_schema=False)
+@router.get("/sso", include_in_schema=False)
 @router.get("/fetchers", include_in_schema=False)
 @router.get("/knowledge-base", include_in_schema=False)
 @router.get("/tools-management", include_in_schema=False)

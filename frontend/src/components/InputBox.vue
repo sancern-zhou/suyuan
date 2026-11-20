@@ -385,8 +385,7 @@ import {
   normalizeSkills,
   removeComposerTrigger,
   resolveAcceptedActiveContextState,
-  shouldApplyActiveContextRestore,
-  shouldClearAcceptedComposer
+  shouldApplyActiveContextRestore
 } from '@/components/inputBoxCommandPalette.js'
 import {
   createSelectionRestoreGuard,
@@ -1137,12 +1136,12 @@ const handleSend = async () => {
     activeContextsExplicit: activeContextsLoaded.value || activeContextsDirty.value,
     activeContextSignature: activeContextSignature.value
   }
-  const clearAcceptedDraft = () => {
-    const currentSnapshot = {
-      query: localValue.value,
-      skillId: selectedSkill.value?.id || null,
-      fileIds: selectedFileRefs.value.map(file => `${file.resourceRefId}:${file.pinnedPolicy ? 'pinned' : 'turn'}`)
-    }
+  const sentTurnAttachments = attachments.value.filter(file => !file.pinnedPolicy)
+  const sentBoardSnapshot = reactStore.currentMode === 'board'
+    ? reactStore.currentState?.board?.pendingSnapshotAttachment || null
+    : null
+
+  const reconcileAcceptedActiveContexts = () => {
     const acceptedActiveContextState = resolveAcceptedActiveContextState({
       explicit: sentSnapshot.activeContextsExplicit,
       sentSignature: sentSnapshot.activeContextSignature,
@@ -1150,24 +1149,30 @@ const handleSend = async () => {
       dirty: activeContextsDirty.value,
       currentEditVersion: activeContextsEditVersion.value
     })
-    if (acceptedActiveContextState) {
-      activeContextsLoaded.value = acceptedActiveContextState.loaded
-      activeContextsDirty.value = acceptedActiveContextState.dirty
-      activeContextsEditVersion.value = acceptedActiveContextState.editVersion
+    if (!acceptedActiveContextState) return
+    activeContextsLoaded.value = acceptedActiveContextState.loaded
+    activeContextsDirty.value = acceptedActiveContextState.dirty
+    activeContextsEditVersion.value = acceptedActiveContextState.editVersion
+  }
+
+  // 请求被拒（未受理/失败）时还原草稿；用户已重新输入或重新选择附件则保留新草稿。
+  const restoreRejectedDraft = () => {
+    const board = reactStore.currentMode === 'board' ? reactStore.currentState?.board : null
+    if (sentBoardSnapshot && board && !board.pendingSnapshotAttachment) {
+      reactStore.setDrawioBoardSnapshotAttachment(sentBoardSnapshot)
     }
-    if (!shouldClearAcceptedComposer(sentSnapshot, currentSnapshot)) return
-    localValue.value = ''
-    attachments.value = attachments.value.filter(file => file.pinnedPolicy)
-    if (pendingBoardSnapshotAttachment.value) reactStore.setDrawioBoardSnapshotAttachment(null)
+    if (localValue.value || attachments.value.some(file => !file.pinnedPolicy)) return
+    localValue.value = sentSnapshot.query
+    if (sentTurnAttachments.length > 0) {
+      attachments.value = [...sentTurnAttachments, ...attachments.value]
+    }
     nextTick(() => {
-      if (textareaRef.value) {
-        textareaRef.value.style.height = 'auto'
-        textareaRef.value.style.overflowY = 'hidden'
-      }
+      autoResize()
+      textareaRef.value?.focus()
     })
   }
 
-  emit('send', {
+  const payload = {
     ...buildComposerPayload({
       query: localValue.value,
       skill: selectedSkill.value,
@@ -1186,8 +1191,22 @@ const handleSend = async () => {
       activeContextsLoaded: activeContextsLoaded.value,
       activeContextsDirty: activeContextsDirty.value
     }),
-    onAccepted: clearAcceptedDraft
+    onAccepted: reconcileAcceptedActiveContexts,
+    onRejected: restoreRejectedDraft
+  }
+
+  // 发送即清空输入区，不等服务端受理（受理回调可能晚于首字节/首个 AI 事件）。
+  localValue.value = ''
+  attachments.value = attachments.value.filter(file => file.pinnedPolicy)
+  if (sentBoardSnapshot) reactStore.setDrawioBoardSnapshotAttachment(null)
+  nextTick(() => {
+    if (textareaRef.value) {
+      textareaRef.value.style.height = 'auto'
+      textareaRef.value.style.overflowY = 'hidden'
+    }
   })
+
+  emit('send', payload)
 }
 
 const focus = () => {

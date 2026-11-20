@@ -176,7 +176,8 @@ class WorkflowModeManifest(StrictModel):
     scope: str = Field(min_length=1)
     boundary: str = Field(min_length=1)
     outputs: str = Field(min_length=1)
-    max_iterations: int = Field(default=12, ge=1, le=120)
+    # None = 不设步数上限（靠上下文压缩续跑 + 无进展熔断停机，对齐共享子模式语义）
+    max_iterations: int | None = Field(default=None, ge=1, le=120)
     timeout_seconds: int = Field(default=240, ge=1, le=3600)
     require_counter_evidence: bool = False
 
@@ -225,6 +226,10 @@ class BackendManifest(StrictModel):
     # 固定锚点追加"项目补充口径"段落。未声明的锚点不追加——共享层不得写死
     # 任何项目地名/中台视图。
     prompt_fragment_files: dict[str, str] = Field(default_factory=dict)
+    # 项目专属"报告最终自动复核"提示词文件（相对仓库根）。报告模式的自动复核轮
+    # 会把该文本当作下一轮用户输入注入；共享默认版本含大气排名与新标准字段，
+    # 非大气项目必须在项目内提供自己的复核要点，避免把无关语义带进会话。
+    report_final_review_prompt_file: str | None = None
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
     # Project-scoped tools appended to a shared mode whitelist.  Unlike
     # ``agent_mode_tools`` (full replacement), these are unioned on top of the
@@ -236,6 +241,13 @@ class BackendManifest(StrictModel):
     # full schemas stay resident ("always_on").  Project declarations take
     # precedence over the shared DEFERRED_TOOL_MODES table.
     agent_mode_deferred_tools: dict[str, list[str]] = Field(default_factory=dict)
+    # 共享"数据源地图"提示词段落开关：地图本质是"域 → 工具/表"的路由知识，
+    # 会写入工具名。项目把路由契约完整放进工具 schema（如声环境 SQL 工具描述）
+    # 时可关闭，避免系统提示词出现工具选型。
+    data_source_map_enabled: bool = True
+    # 共享"环境空气质量标准过渡阶段"段落开关：非大气项目（如声环境）关闭，
+    # 避免把 PM10/PM2.5 限值写进不相关的系统提示词。
+    air_quality_standard_transition: bool = True
     agent_workflow_modes: dict[str, WorkflowModeManifest] = Field(default_factory=dict)
     agent_workflow_parents: dict[str, WorkflowParentManifest] = Field(default_factory=dict)
     # Per-tool project options for shared tools (e.g. execute_sql_query

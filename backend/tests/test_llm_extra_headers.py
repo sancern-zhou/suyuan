@@ -34,12 +34,12 @@ def test_get_request_config_appends_extra_headers(monkeypatch):
     )
     service = object.__new__(LLMService)
     service.provider = "openai"
-    service.base_url = "http://10.10.68.237:41080/large-model/api/v1"
+    service.base_url = "http://<llm-gateway>:41080/large-model/api/v1"
     service.api_key = "sk-test"
 
     url, headers = service._get_request_config()
 
-    assert url == "http://10.10.68.237:41080/large-model/api/v1/chat/completions"
+    assert url == "http://<llm-gateway>:41080/large-model/api/v1/chat/completions"
     assert headers["Authorization"] == "Bearer sk-test"
     assert headers["jcmp-token"] == "5804"
 

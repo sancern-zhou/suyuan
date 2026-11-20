@@ -145,6 +145,17 @@ def test_deferred_stub_resident_budget_under_synthetic_optin(monkeypatch):
     from app.agent.tool_adapter import apply_deferred_tool_stubs
     from app.tools.agent_tools.tool_search_tool import ToolSearchTool
 
+    # 隔离项目清单声明：项目声明优先于共享表，避免真实 opt-in 项目（如 jiangxi）
+    # 下合成场景语义漂移——本测试只验证共享表 opt-in 的常驻预算纪律。
+    from types import SimpleNamespace
+
+    from app.project_config.models import BackendManifest
+
+    monkeypatch.setattr(
+        tool_registry,
+        "_load_project_context",
+        lambda: SimpleNamespace(manifest=SimpleNamespace(backend=BackendManifest())),
+    )
     monkeypatch.setitem(
         tool_registry.DEFERRED_TOOL_MODES,
         "query",

@@ -10,6 +10,7 @@ from app.auth.oauth_client import PlatformOAuthClient
 from app.auth.platform_client import PlatformAuthClient
 from app.auth.service import AuthenticationService
 from app.auth.share_access import get_share_access_service
+from app.auth.sso import SsoSessionStore
 from app.auth.ws_tickets import WebSocketTicketService
 from app.core.http_method_override import HttpMethodOverrideMiddleware
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
@@ -59,6 +60,15 @@ def configure_middleware(app: FastAPI) -> None:
     )
 
     auth_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    sso_session_store = (
+        SsoSessionStore(
+            auth_redis,
+            key_prefix=settings.auth_identity_cache_key_prefix,
+            ttl_seconds=settings.sso_session_ttl_seconds,
+        )
+        if (settings.sso_shared_secret or "").strip()
+        else None
+    )
     auth_service = AuthenticationService(
         settings=settings,
         cache=IdentityCache(
@@ -71,7 +81,9 @@ def configure_middleware(app: FastAPI) -> None:
             current_user_path=settings.auth_current_user_path,
             admin_role_codes=settings.auth_admin_role_codes_set,
             platform_sys_code=settings.auth_platform_sys_code,
+            platform_sys_codes=settings.auth_platform_sys_codes_list,
         ),
+        sso_sessions=sso_session_store,
     )
     app.state.auth_redis = auth_redis
     app.state.auth_service = auth_service
@@ -85,6 +97,7 @@ def configure_middleware(app: FastAPI) -> None:
         client_id=settings.auth_oauth_client_id.strip(),
         client_secret=settings.auth_oauth_client_secret.strip(),
     )
+    app.state.sso_session_store = sso_session_store
     app.state.ws_ticket_service = WebSocketTicketService(
         auth_redis,
         key_prefix=settings.auth_identity_cache_key_prefix,

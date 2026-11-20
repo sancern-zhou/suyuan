@@ -49,6 +49,7 @@ import {
 } from './reactStoreSteering.js'
 import { getEventRunId, shouldApplyRunEvent, shouldClearPendingPausedRunId } from './reactStoreRunOwnership.js'
 import { createRunStreamTracker, observeRunStreamEvent, shouldReportMissingRunProgress } from './reactStoreRunReattach.js'
+import { buildQuestionResumeOptions } from './reactStoreInteractions.js'
 import {
   acknowledgeQueuedInput,
   enqueueUserInput,
@@ -59,6 +60,7 @@ import {
 import { shouldActivateStartedSession } from './reactStoreSessionActivation.js'
 import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
+import { fatalErrorDisplayText, isSilentErrorEvent } from './reactStoreErrorEvents.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
 const VALID_MODES = [...new Set([...AGENT_MODE_IDS, ...projectConfig.agentModeIds, 'graph'])]
@@ -713,8 +715,10 @@ export const useReactStore = defineStore('react', {
       return true
     },
 
-    async resolvePendingInteraction({ decision, response = null, answers = null } = {}) {
-      const interactionState = this.currentState
+    async resolvePendingInteraction({ decision, response = null, answers = null, targetState = null } = {}) {
+      // targetState：调用方指定的目标会话状态（浮窗传 assistant 状态，浮窗不切换全局模式）；
+      // 缺省为全局当前状态（全页工作区行为不变）。
+      const interactionState = targetState || this.currentState
       const interaction = interactionState?.pendingInteraction
       if (!interaction?.interaction_id || !interaction.session_id) return false
       const resolution = await resolveAgentInteraction(
@@ -725,12 +729,13 @@ export const useReactStore = defineStore('react', {
       interactionState.pendingInteraction = null
       if (interaction.kind === 'structured_question') {
         if (decision === 'answer' && resolution?.resume_query) {
-          await this.startAnalysis(resolution.resume_query, {
-            agentMode: resolution.mode || interaction.mode || interactionState.mode || this.currentMode,
-            synthetic: true,
-            syntheticMeta: { source: 'structured_question_resume', interaction_id: interaction.interaction_id },
-            queuedAlreadyShown: true
-          })
+          await this.startAnalysis(resolution.resume_query, buildQuestionResumeOptions({
+            resolution,
+            interaction,
+            interactionState,
+            currentMode: this.currentMode,
+            externalTarget: Boolean(targetState)
+          }))
         }
         return true
       }
@@ -1062,8 +1067,9 @@ export const useReactStore = defineStore('react', {
       prependHistory(this.currentState, messages, normalizeRestoredMessages)
     },
 
-    async loadMoreMessages() {
-      const state = this.currentState
+    async loadMoreMessages(targetState = null) {
+      // targetState：调用方指定的目标会话状态（浮窗传 assistant 状态）；缺省为全局当前状态。
+      const state = targetState || this.currentState
       const generation = accountGeneration()
       try {
         await loadHistoryPage(state, async (...args) => {
@@ -1934,6 +1940,11 @@ export const useReactStore = defineStore('react', {
 
         case 'error': {
           // 迭代错误
+          if (isSilentErrorEvent(data)) {
+            // 可自动重试的瞬时故障（网关 504/过载/超时）：只留服务端日志，不打扰用户
+            console.warn('[handleEvent] silent error event:', data?.error || data?.error_type)
+            break
+          }
           addMessage('error', `错误: ${data?.error || '未知错误'}`, data)
           break
         }
@@ -1960,7 +1971,8 @@ export const useReactStore = defineStore('react', {
           // 致命错误
           targetState.isAnalyzing = false
           if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
-          targetState.error = data?.error || '致命错误'
+          // 后端对可重试类故障（504/过载/超时）给出友好文案，技术细节只进日志
+          targetState.error = fatalErrorDisplayText(data)
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
           targetState.activeRunId = null
@@ -2766,7 +2778,8 @@ export const useReactStore = defineStore('react', {
         preserveCurrentMode = false,
         queuedAlreadyShown = false,
         dequeuedInput = false,
-        onAccepted
+        onAccepted,
+        onRejected
       } = options
 
       const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
@@ -2794,6 +2807,7 @@ export const useReactStore = defineStore('react', {
       const hasStructuredSelection = skillIds.length > 0 || contextRefs.length > 0
 
       if (!query.trim() && !hasStructuredSelection) {
+        if (typeof onRejected === 'function') onRejected()
         return
       }
 
@@ -2810,6 +2824,7 @@ export const useReactStore = defineStore('react', {
           options: {
             ...options,
             onAccepted: undefined,
+            onRejected: undefined,
             agentMode: actualMode,
             skillIds,
             contextRefs,
@@ -2838,6 +2853,7 @@ export const useReactStore = defineStore('react', {
           options: {
             ...options,
             onAccepted: undefined,
+            onRejected: undefined,
             agentMode: actualMode,
             skillIds,
             contextRefs,
@@ -2976,6 +2992,7 @@ export const useReactStore = defineStore('react', {
           ...(boardContext !== null ? { boardContext } : {}),
           ...(mapContext !== null ? { mapContext } : {}),
           onAccepted,
+          onRejected,
           onEvent: (event) => {
             if (accountEpoch !== accountGeneration()) return
             if (!event.data) event.data = {}
@@ -3121,20 +3138,22 @@ export const useReactStore = defineStore('react', {
     },
 
     // 暂停分析（与stopAnalysis相同）
-    async pauseAnalysis() {
-      freezeActiveAssistantOutput(this.currentState, { reason: 'paused' }, contentToString)
-      const activeRunId = this.currentState.activeRunId
+    async pauseAnalysis(targetState = null) {
+      // targetState：调用方指定的目标会话状态（浮窗传 assistant 状态）；缺省为全局当前状态。
+      const state = targetState || this.currentState
+      freezeActiveAssistantOutput(state, { reason: 'paused' }, contentToString)
+      const activeRunId = state.activeRunId
       if (activeRunId) {
-        this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
-        this.currentState.pendingPausedRunId = activeRunId
-        this.currentState.activeRunId = null
+        state.ignoredRunIds = [...(state.ignoredRunIds || []), activeRunId]
+        state.pendingPausedRunId = activeRunId
+        state.activeRunId = null
       }
-      this.currentState.isAnalyzing = false
-      if (this.currentMode === 'board' && this.currentState.board) this.currentState.board.readOnly = false
-      this.currentState.isComplete = false
-      this.currentState.error = null
-      this.currentState.isInterruption = false
-      void agentAPI.cancel(this.currentState.sessionId, activeRunId)
+      state.isAnalyzing = false
+      if (this.currentMode === 'board' && state.board) state.board.readOnly = false
+      state.isComplete = false
+      state.error = null
+      state.isInterruption = false
+      void agentAPI.cancel(state.sessionId, activeRunId)
       // 不添加系统消息
     },
 

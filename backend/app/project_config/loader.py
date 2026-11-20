@@ -1,4 +1,6 @@
+from copy import deepcopy
 from pathlib import Path
+from threading import Lock
 
 import yaml
 from pydantic import ValidationError
@@ -14,16 +16,31 @@ def repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+# 提示词/工具构建会多次解析同一清单（一次 build 约 9 次），每次 YAML 解析
+# 约 14ms，是热路径主要开销。这里按（路径, mtime, size）缓存原始解析结果，
+# 每次仍重新校验成新模型，避免调用方原地修改污染后续调用。
+_YAML_CACHE: dict[Path, tuple[tuple[int, int], dict]] = {}
+_YAML_CACHE_LOCK = Lock()
+
+
 def _read_yaml(path: Path) -> dict:
     if not path.is_file():
         raise ProjectConfigError(f"manifest not found: {path}")
+    stat = path.stat()
+    signature = (stat.st_mtime_ns, stat.st_size)
+    with _YAML_CACHE_LOCK:
+        cached = _YAML_CACHE.get(path)
+    if cached is not None and cached[0] == signature:
+        return deepcopy(cached[1])
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ProjectConfigError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ProjectConfigError(f"manifest must be an object: {path}")
-    return value
+    with _YAML_CACHE_LOCK:
+        _YAML_CACHE[path] = (signature, value)
+    return deepcopy(value)
 
 
 def load_project_context(project_id: str, *, repo_root: Path | None = None) -> ProjectContext:

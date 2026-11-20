@@ -21,6 +21,19 @@ export function configuredApiBase() {
 }
 
 
+function apiBasePath(apiBaseUrl) {
+  const value = String(apiBaseUrl || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '')
+  if (!value) return ''
+  if (value.startsWith('./')) return value.slice(1)
+  if (value.startsWith('/')) return value
+  try {
+    return new URL(value, 'http://localhost/').pathname.replace(/\/+$/, '')
+  } catch {
+    return `/${value}`
+  }
+}
+
+
 export function gatewayUrl(url, apiBaseUrl = configuredApiBase()) {
   if (
     url === apiBaseUrl ||
@@ -29,6 +42,19 @@ export function gatewayUrl(url, apiBaseUrl = configuredApiBase()) {
     url.startsWith(`${apiBaseUrl}#`)
   ) {
     return url
+  }
+  // Server-emitted URLs already carry the gateway prefix (e.g. resource
+  // content_url); re-apply the configured base instead of duplicating it.
+  const basePath = apiBasePath(apiBaseUrl)
+  if (basePath) {
+    if (url === basePath) return apiBaseUrl
+    if (
+      url.startsWith(`${basePath}/`) ||
+      url.startsWith(`${basePath}?`) ||
+      url.startsWith(`${basePath}#`)
+    ) {
+      return `${apiBaseUrl}${url.slice(basePath.length)}`
+    }
   }
   if (url === '/api') return apiBaseUrl
   if (url.startsWith('/api?') || url.startsWith('/api#')) return `${apiBaseUrl}${url.slice(4)}`

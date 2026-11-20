@@ -983,7 +983,7 @@ format:
                 f"报告包创建或验收失败：{pipeline_error}。请按错误提示修复后重新打包。"
                 if pipeline_error
                 else (
-                    f"报告包已创建、渲染并验收通过：{safe_id}。右侧预览和下载资源已发布。"
+                    f"报告包已创建、渲染并验收通过：{safe_id}。"
                     if html_preview
                     else f"报告包已创建并验收通过：{safe_id}。未请求 HTML 预览。"
                 )

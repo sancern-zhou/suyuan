@@ -52,7 +52,6 @@ def test_xuchang_report_mode_is_orchestrator_focused(monkeypatch):
     assert "run_agent_workflow" in report_tools
     assert "call_sub_agent" not in report_tools
     assert {
-        "execute_sql_query",
         "execute_postgres_sql_query",
         "bash",
         "grep",
@@ -105,7 +104,6 @@ def test_xuchang_assistant_coordinates_instead_of_executing_professional_work(mo
         "terminal_session",
         "spawn",
         "broadcast_social_users",
-        "execute_sql_query",
         "execute_postgres_sql_query",
         "query_xcai_city_history",
         "get_weather_data",

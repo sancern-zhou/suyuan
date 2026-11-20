@@ -40,6 +40,7 @@ from app.services.chat_completions_adapter import (
     convert_anthropic_tools_to_chat,
     convert_chat_response_to_anthropic,
 )
+from app.services.chat_completions_collect import collect_chat_completions_stream
 
 logger = structlog.get_logger()
 
@@ -2917,6 +2918,7 @@ class LLMService:
         if converted_tools:
             payload["tools"] = converted_tools
             payload["tool_choice"] = tool_choice or "auto"
+            payload["parallel_tool_calls"] = True
         if self.provider == "deepseek":
             payload["enable_thinking"] = False
             if stream:
@@ -2947,11 +2949,97 @@ class LLMService:
             )
             if stream:
                 payload["stream_options"] = {"include_usage": True}
+        elif "deepseek" in (self.model or "").lower():
+            # 中转/自建网关常以 openai 兼容协议暴露 DeepSeek（本环境模型名
+            # MDDEEPSEEK...，上游实为 DeepSeek-V4.1-Flash），网关默认开启思考：
+            # 长上下文 + 多工具时推理占满预算，正文为空或流在 tool_call 参数
+            # 中途被截断（2026-11-13 空回答事故）。显式关闭思考后恢复正常。
+            payload["enable_thinking"] = False
+            logger.info(
+                "chat_completions_deepseek_thinking_disabled",
+                provider=self.provider,
+                model=self.model,
+            )
         return payload
 
     @staticmethod
     def _named_tool_choice(tool_name: str) -> Dict[str, Any]:
         return {"type": "function", "function": {"name": tool_name}}
+
+    async def _chat_completions_stream_collect(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        max_tokens: Optional[int],
+        temperature: float,
+        system: Optional[Any],
+        tool_choice: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """流式请求上游后聚合为完整响应（替代非流式 create）。
+
+        网关对「上游 6s 无任何响应字节」直接 504：非流式要等整段生成完成才回
+        首字节，长输出必然超时（小 prompt + max_tokens>=600 即复现）；流式则在
+        prefill 完成后立刻回字节，可正常跑完数十秒的长生成。
+        """
+        url, headers = self._get_request_config()
+        payload = self._build_chat_completions_payload(
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            stream=True,
+            tool_choice=tool_choice,
+        )
+        logger.info(
+            "llm_chat_completions_request",
+            provider=self.provider,
+            model=self.model,
+            api_mode=self.api_mode,
+            messages_count=len(payload["messages"]),
+            has_tools=bool(payload.get("tools")),
+            stream_collect=True,
+        )
+        timeout = self.provider_http_timeout(streaming=True)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                return await collect_chat_completions_stream(
+                    client=client,
+                    url=url,
+                    headers=headers,
+                    payload=payload,
+                    model=self.model,
+                    first_block_timeout=self.first_token_timeout_seconds,
+                )
+            except ToolCallArgumentsError as exc:
+                if not tools or not exc.tool_name:
+                    raise
+                logger.warning(
+                    "llm_chat_completions_tool_arguments_retry",
+                    provider=self.provider,
+                    model=self.model,
+                    tool_name=exc.tool_name,
+                    tool_call_id=exc.tool_call_id,
+                    stream_collect=True,
+                )
+                return await collect_chat_completions_stream(
+                    client=client,
+                    url=url,
+                    headers=headers,
+                    payload=self._build_chat_completions_payload(
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        system=system,
+                        stream=True,
+                        tool_choice=self._named_tool_choice(exc.tool_name),
+                    ),
+                    model=self.model,
+                    empty_retry=False,
+                    first_block_timeout=self.first_token_timeout_seconds,
+                )
 
     async def _chat_completions_create(
         self,
@@ -2962,6 +3050,15 @@ class LLMService:
         temperature: float,
         system: Optional[Any],
     ) -> Dict[str, Any]:
+        if getattr(settings, "llm_chat_completions_stream_collect", True):
+            return await self._chat_completions_stream_collect(
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system,
+            )
+
         url, headers = self._get_request_config()
         payload = self._build_chat_completions_payload(
             messages=messages,
@@ -3037,10 +3134,33 @@ class LLMService:
         )
         adapter = ChatCompletionsStreamAdapter(model=self.model)
         timeout = self.provider_http_timeout(streaming=True)
+        # message_start 必须等首个内容块确认后才下发：上游可能只回 role/空
+        # delta 就收流，此时 adapter.finish() 抛 EmptyCompletionError，调用方
+        # 才能安全换候选重放（已 yield 过 message_start 就不能再重试）。
+        started = False
+        buffered: List[Dict[str, Any]] = []
+        # 上游持续推送空 delta 心跳时，httpx 的 read timeout 永远不会触发
+        # （实测截断前会空转 140s+）。用首个内容块的墙钟看门狗兜住这种情况。
+        first_block_deadline = time.monotonic() + self.first_token_timeout_seconds
+
+        def flush_pending() -> List[Dict[str, Any]]:
+            nonlocal started
+            started = True
+            pending, buffered[:] = list(buffered), []
+            return pending
+
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
+                    if not started and time.monotonic() > first_block_deadline:
+                        logger.warning(
+                            "llm_chat_completions_first_block_timeout",
+                            provider=self.provider,
+                            model=self.model,
+                            timeout_seconds=self.first_token_timeout_seconds,
+                        )
+                        break
                     if not line or not line.startswith("data: "):
                         continue
                     data = line[len("data: "):].strip()
@@ -3048,8 +3168,20 @@ class LLMService:
                         break
                     chunk = json.loads(data)
                     for event in adapter.feed_chunk(chunk):
+                        if not started:
+                            buffered.append(event)
+                            if event.get("type") != "message_start":
+                                for pending_event in flush_pending():
+                                    yield pending_event
+                            continue
                         yield event
         for event in adapter.finish():
+            if not started:
+                buffered.append(event)
+                if event.get("type") != "message_start":
+                    for pending_event in flush_pending():
+                        yield pending_event
+                continue
             yield event
 
     @trace_model_call

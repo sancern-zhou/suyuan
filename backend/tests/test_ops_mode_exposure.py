@@ -27,9 +27,13 @@ def test_ops_mode_is_reachable_from_assistant_and_social_tools():
     assert "call_sub_agent" in assistant_tools
     assert "call_sub_agent" in social_tools
     assert "spawn" not in social_tools
-    assert "execute_ops_sql_query" in ops_tools
-    assert "execute_ops_sql_query" not in assistant_tools
-    assert "execute_ops_sql_query" not in social_tools
+    # 运维模式不再暴露 SQL 取数，改走 ops_audit_fetch_dataset/ops_audit_inspect
+    sql_tools = {"execute_postgres_sql_query"}
+    assert sql_tools.isdisjoint(ops_tools)
+    assert sql_tools.isdisjoint(assistant_tools)
+    assert sql_tools.isdisjoint(social_tools)
+    assert "ops_audit_fetch_dataset" in ops_tools
+    assert "ops_audit_inspect" in ops_tools
 
     call_schema = CallSubAgentTool().get_function_schema()
     target_modes = call_schema["parameters"]["properties"]["target_mode"]["enum"]
