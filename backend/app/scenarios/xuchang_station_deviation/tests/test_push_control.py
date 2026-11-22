@@ -42,8 +42,9 @@ def _alert(station_id: str = "a", rule_type: str = "sudden_rise",
         "measurement_granularity": grain,
         "rule_type": rule_type,
         "rule_label": {"sudden_rise": "单点突升", "continuous_rise": "连续抬升",
-                       "spatial_outlier": "站点离群"}[rule_type],
-        "rule_priority": {"sudden_rise": 1, "continuous_rise": 2, "spatial_outlier": 3}[rule_type],
+                       "spatial_outlier": "站点离群", "multi_station_rise": "多站同步抬升"}[rule_type],
+        "rule_priority": {"sudden_rise": 1, "continuous_rise": 2, "spatial_outlier": 3,
+                          "multi_station_rise": 0}[rule_type],
         "air_quality_level": air_quality_level,
         "station_value": 55.0,
         "recovery_threshold": recovery_threshold,
@@ -265,6 +266,52 @@ def test_quiet_hours_silence_outlier_only(tmp_path):
     assert pushed == [] and suppressed[0]["reason"] == "quiet_hours"
     pushed2, _s2, _w2 = _chain([_alert()], store, tmp_path, night)
     assert len(pushed2) == 1
+
+
+def test_mr_quiet_hours_pierces_at_moderate_level(tmp_path):
+    # 2026-11-22 定版：轻度及以上的 MR（多站同步抬升）夜间穿透免打扰——
+    # 区域事件被静默而未覆盖的单站告警照常外发是口径倒挂（11-22 22:00 实例）。
+    store = AlertStateStore(tmp_path)
+    night = datetime(2026, 11, 2, 23, 0, tzinfo=TZ)
+    pushed, suppressed, _summary = _chain(
+        [_alert(rule_type="multi_station_rise", air_quality_level="中度污染")],
+        store, tmp_path, night,
+    )
+    assert len(pushed) == 1 and suppressed == []
+    assert pushed[0]["rule_type"] == "multi_station_rise"
+
+    store_light = AlertStateStore(tmp_path / "light")
+    pushed_light, _suppressed_light, _w_light = _chain(
+        [_alert(rule_type="multi_station_rise", air_quality_level="轻度污染")],
+        store_light, tmp_path / "light", night,
+    )
+    assert len(pushed_light) == 1
+
+
+def test_mr_quiet_hours_still_suppresses_good_levels_and_outlier(tmp_path):
+    # 优/良档 MR 夜间维持静默；mr_quiet_pierce_level_code=0 关闭穿透；
+    # spatial_outlier 不享受等级穿透，夜间照旧静默。
+    night = datetime(2026, 11, 2, 23, 0, tzinfo=TZ)
+    store = AlertStateStore(tmp_path)
+    pushed, suppressed, _summary = _chain(
+        [_alert(rule_type="multi_station_rise", air_quality_level="良")], store, tmp_path, night,
+    )
+    assert pushed == [] and suppressed[0]["reason"] == "quiet_hours"
+
+    store_off = AlertStateStore(tmp_path / "pierce-off")
+    config = AirAlertRuleConfig(mr_quiet_pierce_level_code=0)
+    pushed2, suppressed2, _s2 = _chain(
+        [_alert(rule_type="multi_station_rise", air_quality_level="中度污染")],
+        store_off, tmp_path / "pierce-off", night, config=config,
+    )
+    assert pushed2 == [] and suppressed2[0]["reason"] == "quiet_hours"
+
+    store_ol = AlertStateStore(tmp_path / "outlier")
+    pushed3, suppressed3, _s3 = _chain(
+        [_alert(rule_type="spatial_outlier", air_quality_level="中度污染")],
+        store_ol, tmp_path / "outlier", night,
+    )
+    assert pushed3 == [] and suppressed3[0]["reason"] == "quiet_hours"
 
 
 def test_push_log_records_push_and_suppress(tmp_path):

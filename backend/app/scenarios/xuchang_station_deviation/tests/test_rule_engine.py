@@ -945,6 +945,68 @@ def test_mr_low_baseline_rebound_digest_even_with_full_amplitude(tmp_path):
     assert [item["reason"] for item in suppressed] == ["mr_digest"]
 
 
+# ---- MR 渐升型共升（2026-11-22 定版：路径 A 补 CL 累计口径）----
+
+def _hourly_mr_run(series_by_station: dict[str, list[float]], hour0: datetime):
+    """小时粒度共升场景：series 为各站 h0..h3 的 PM2.5 小时值（4 个点）。"""
+    rows = []
+    for sid, series in series_by_station.items():
+        rows.extend(_hour_rows(
+            [(hour0 + timedelta(hours=index), value) for index, value in enumerate(series)],
+            sid,
+        ))
+    target = hour0 + timedelta(hours=len(next(iter(series_by_station.values()))) - 1)
+    return evaluate_pm25_hourly_cycle(
+        rows, target_hour=target, config=AirAlertRuleConfig(), states=MemStates(),
+    )
+
+
+def test_mr_admits_gradual_cl_risers_to_regional_event():
+    # 2026-11-22 22:00 实例复现：4 站同步爬坡到中度污染。a/b 末跳（12/14）
+    # 不足 DS 半阈值（中度档 0.5×30=15）但 CL 累计（36/40）达 0.5×CL 阈值 →
+    # 按渐升口径入 MR；c/d 末跳（40/38）按跳变口径入站。四站 + 全部单站
+    # 候选（a/b 的 CL、c/d 的 DS、c 的 OL）合并为一条区域事件。
+    hour0 = datetime(2026, 9, 12, 5, 0, tzinfo=TZ)
+    outcome = _hourly_mr_run({
+        "a": [90.0, 99.0, 114.0, 126.0],
+        "b": [84.0, 100.0, 110.0, 124.0],
+        "c": [90.0, 95.0, 100.0, 140.0],
+        "d": [88.0, 92.0, 98.0, 136.0],
+        "e": [70.0] * 4,
+        "f": [70.0] * 4,
+    }, hour0)
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    mr = outcome.candidates[0]
+    assert mr["detail"]["path"] == "co_rise"
+    assert mr["detail"]["mr_tier"] == "push"
+    admissions = {s["station_id"]: s["admission"] for s in mr["detail"]["involved_stations"]}
+    assert admissions == {"a": "cl", "b": "cl", "c": "ds", "d": "ds"}
+    assert len(outcome.region_merged) == 5
+    assert {item["station_id"] for item in outcome.region_merged} == {"a", "b", "c", "d"}
+    assert all(item["merged_into_event_id"] == mr["event_id"] for item in outcome.region_merged)
+
+
+def test_mr_pure_gradual_co_rise_without_any_sudden_jump():
+    # 纯渐升共升：两站末跳均不足 DS 半阈值、无任何跳变站，渐升口径入站后
+    # MR 照常成立，单站 CL/OL 候选并入区域事件。
+    hour0 = datetime(2026, 9, 12, 5, 0, tzinfo=TZ)
+    outcome = _hourly_mr_run({
+        "a": [90.0, 99.0, 114.0, 126.0],
+        "b": [84.0, 100.0, 110.0, 124.0],
+        "c": [70.0] * 4,
+        "d": [70.0] * 4,
+        "e": [70.0] * 4,
+        "f": [70.0] * 4,
+    }, hour0)
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    mr = outcome.candidates[0]
+    assert mr["detail"]["path"] == "co_rise"
+    involved = {s["station_id"]: s["admission"] for s in mr["detail"]["involved_stations"]}
+    assert involved == {"a": "cl", "b": "cl"}
+    assert mr["station_id"] == "b"  # CL 累计幅度 40/30 > 36/30，b 做主站
+    assert {item["station_id"] for item in outcome.region_merged} == {"a", "b"}
+
+
 # ---- 推送链协同（引擎产物 → 管控）----
 
 def test_priority_keeps_sudden_rise_over_outlier(tmp_path):

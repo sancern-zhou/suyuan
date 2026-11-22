@@ -607,11 +607,14 @@ def evaluate_multi_station_rise(
     series_by_station: dict[str, list[tuple[datetime, float]]],
     names: dict[str, str],
     config: AirAlertRuleConfig,
+    cl_context: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """多站同步抬升（MR）：双站缝隙与片区一致偏好的正向告警（优先级最高）。
 
     路径 A（co_rise，时间维度）：同槽 >=mr_min_sites 站各自较自身基线的抬升
-    达 mr_amplitude_ratio×DS 阈值且过绝对下限；反弹守卫拦截低洼基线的微反弹。
+    达 mr_amplitude_ratio×DS 阈值（跳变型）或 CL 窗口累计抬升达
+    mr_amplitude_ratio×CL 阈值（渐升型，2026-11-22 定版）且过绝对下限；
+    反弹守卫拦截低洼基线的微反弹。
     路径 B（co_deviation，空间维度）：OL 触发站 wz<mr_wz_max 且存在同向伴生站。
     触发后覆盖涉事站点的单站 DS/CL/OL 候选（进 region_merged 抑制流水，指回
     MR 事件）；全部涉事站为优档且主站幅度不足全阈值时降级 digest。
@@ -660,7 +663,28 @@ def evaluate_multi_station_rise(
         ratio, absolute = config.thresholds(pollutant, "sudden_rise", level)
         threshold = max(base * ratio, absolute)
         floor = float((config.mr_absolute_floor or {}).get(pollutant, 0.0))
-        if rise < max(float(config.mr_amplitude_ratio) * threshold, floor):
+        admission = (
+            "ds"
+            if rise >= max(float(config.mr_amplitude_ratio) * threshold, floor)
+            else None
+        )
+        if admission is None:
+            # 渐升型共升（2026-11-22 定版）：CL 窗口累计抬升达
+            # amplitude_ratio×CL 阈值亦可入站。3 小时爬坡的站末跳普遍不足
+            # DS 半阈值，仅按单小时口径收站会漏掉区域性同步抬升。
+            cl = (cl_context or {}).get(sid)
+            if cl:
+                cl_ratio, cl_absolute = config.thresholds(pollutant, "continuous_rise", level)
+                cl_threshold = max(float(cl["baseline"]) * cl_ratio, cl_absolute)
+                cl_rise = float(cl["rise"])
+                if cl_rise > 0 and cl_rise >= max(
+                    float(config.mr_amplitude_ratio) * cl_threshold, floor
+                ):
+                    admission = "cl"
+                    base = float(cl["baseline"])
+                    rise = cl_rise
+                    threshold = cl_threshold
+        if admission is None:
             continue
         history = [v for t, v in (series_by_station.get(sid) or []) if t < slot]
         pct = (100.0 * sum(1 for v in history if v <= base) / len(history)) if history else 50.0
@@ -670,7 +694,7 @@ def evaluate_multi_station_rise(
             "station_id": sid, "station_name": names.get(sid, sid), "station_value": values[sid],
             "baseline": round(base, 3), "rise": round(rise, 3),
             "threshold": round(threshold, 3), "baseline_day_percentile": round(pct),
-            "air_quality_level": level,
+            "air_quality_level": level, "admission": admission,
         }
     if len(passed) >= int(config.mr_min_sites):
         path, involved = "co_rise", passed
@@ -831,6 +855,7 @@ def evaluate_five_minute_cycle(
 
         # 先算每站 DS 上下文，供“邻站未同向”判定。
         ds_context: dict[str, dict[str, Any]] = {}
+        cl_context: dict[str, dict[str, Any]] = {}
         series_by_station: dict[str, list[tuple[datetime, float]]] = {}
         for station_id, (value, row) in current.items():
             series = _series_with_current(history.get(station_id), target_slot, value)
@@ -890,6 +915,7 @@ def evaluate_five_minute_cycle(
                 )
             if tail is not None and level is not None:
                 baseline = mean(tail[:3])
+                cl_context[station_id] = {"baseline": baseline, "rise": value - baseline}
                 hit, detail = rule_cl(tail[3:], baseline, pollutant, level, config)
                 if hit:
                     outcome.candidates.append(_candidate(
@@ -924,6 +950,7 @@ def evaluate_five_minute_cycle(
             "pollutant": pollutant,
             "values": all_values,
             "ds_context": ds_context,
+            "cl_context": cl_context,
             "series": series_by_station,
             "names": {
                 sid: (row.get("name") or row.get("station_name") or sid)
@@ -935,6 +962,7 @@ def evaluate_five_minute_cycle(
         evaluate_multi_station_rise(
             outcome, grain=grain, slot=target_slot, pollutant=snapshot["pollutant"],
             values=snapshot["values"], levels=levels, ds_context=snapshot["ds_context"],
+            cl_context=snapshot["cl_context"],
             series_by_station=snapshot["series"], names=snapshot["names"], config=config,
         )
     mr_covered = outcome.region_merged  # MR 覆盖的单站候选（merge 只返回 CL 合并抑制）
@@ -978,6 +1006,7 @@ def evaluate_pm25_hourly_cycle(
     all_values = {sid: value for sid, (value, _row) in current.items()}
 
     ds_context: dict[str, dict[str, Any]] = {}
+    cl_context: dict[str, dict[str, Any]] = {}
     series_by_station: dict[str, list[tuple[datetime, float]]] = {}
     for station_id, (value, row) in current.items():
         series = _series_with_current(history.get(station_id), target_hour, value)
@@ -1035,6 +1064,7 @@ def evaluate_pm25_hourly_cycle(
             )
         if tail is not None and level is not None:
             baseline = mean(tail[:baseline_hours])
+            cl_context[station_id] = {"baseline": baseline, "rise": value - baseline}
             hit, detail = rule_cl(tail[baseline_hours:], baseline, pollutant, level, config)
             if hit:
                 outcome.candidates.append(_candidate(
@@ -1067,6 +1097,7 @@ def evaluate_pm25_hourly_cycle(
         "pollutant": pollutant,
         "values": all_values,
         "ds_context": ds_context,
+        "cl_context": cl_context,
         "series": series_by_station,
         "names": {
             sid: (row.get("name") or row.get("station_name") or sid)
@@ -1077,6 +1108,7 @@ def evaluate_pm25_hourly_cycle(
         evaluate_multi_station_rise(
             outcome, grain=grain, slot=target_hour, pollutant=snapshot["pollutant"],
             values=snapshot["values"], levels=levels, ds_context=snapshot["ds_context"],
+            cl_context=snapshot["cl_context"],
             series_by_station=snapshot["series"], names=snapshot["names"], config=config,
         )
     mr_covered = outcome.region_merged  # MR 覆盖的单站候选（merge 只返回 CL 合并抑制）

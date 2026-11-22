@@ -150,7 +150,10 @@ class AirAlertRuleConfig:
 
     # 多站同步抬升（MR，2026-11-20 新增；回测 11-13~11-18 定参）：
     # - 路径 A（共升）：同槽 >=mr_min_sites 站各自 rise >= mr_amplitude_ratio × 自身
-    #   DS 阈值且 >= 绝对下限（mr_absolute_floor）；
+    #   DS 阈值且 >= 绝对下限（mr_absolute_floor）；CL 窗口累计抬升达
+    #   mr_amplitude_ratio × 自身 CL 阈值亦可入站（渐升型共升，2026-11-22
+    #   定版：3 小时爬坡的站末跳普遍不足 DS 半阈值，仅按单小时口径收站
+    #   会漏掉区域性同步抬升，如 11-22 22:00 市一中/芙蓉广场案例）；
     # - 路径 B（共偏）：OL 触发站 wz < mr_wz_max（Iglewicz–Hoaglin modified
     #   z-score）且存在 >=1 个伴生站正向偏离 >= mr_companion_ratio × 自身 OL 阈值；
     # - 反弹守卫：基线当日分位 < mr_rebound_pct 时，要求抬升后进六站中位数以上
@@ -170,6 +173,11 @@ class AirAlertRuleConfig:
     mr_plausibility_cap: dict[str, float] = field(default_factory=lambda: {
         "PM2.5": 800.0, "PM10": 1000.0, "SO2": 800.0, "NO2": 500.0, "CO": 10.0,
     })
+    # MR 免打扰等级穿透（2026-11-22 定版）：MR 是区域过程事件，夜间静默会
+    # 造成"区域事件静默、未覆盖单站照常外发"的口径倒挂（11-22 22:00 实例）。
+    # 涉事主站污染等级码 >= 此值的 MR 穿透免打扰正常推送；置 0 关闭穿透。
+    # spatial_outlier 不受影响，夜间维持静默。
+    mr_quiet_pierce_level_code: int = 3
 
     # 90 条规则矩阵：污染物 → 规则类型 → 污染等级 → (比例, 绝对增量)。
     rule_matrix: dict[str, dict[str, dict[str, tuple[float, float]]]] = field(

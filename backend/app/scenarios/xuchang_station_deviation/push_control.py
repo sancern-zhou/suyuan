@@ -26,6 +26,7 @@ from app.scenarios.xuchang_station_deviation.rule_config import (
     LEVEL_CODES,
     POLLUTANT_ORDER,
     AirAlertRuleConfig,
+    normalize_level,
 )
 from app.scenarios.xuchang_station_deviation.rule_engine import new_rule_state
 
@@ -482,7 +483,16 @@ def apply_push_chain(
                 _log(alert, "suppress", chronic_reason)
                 continue
             # 免打扰只拦常规再报；#23 升级例外（等级升高）夜间也必须叫人。
-            if not upgrade and config.quiet_suppresses(rule_type) and config.in_quiet_hours(now.hour):
+            # MR 等级穿透（2026-11-22 定版）：轻度及以上的多站同步抬升代表
+            # 区域过程，夜间静默会造成"区域事件静默、未覆盖单站照常外发"
+            # 的口径倒挂（11-22 22:00 实例：MR 被静默、两条单站 CL 外发）。
+            mr_quiet_pierce = (
+                rule_type == "multi_station_rise"
+                and int(config.mr_quiet_pierce_level_code or 0) > 0
+                and LEVEL_CODES.get(normalize_level(alert.get("air_quality_level")), 2)
+                >= int(config.mr_quiet_pierce_level_code)
+            )
+            if not upgrade and not mr_quiet_pierce and config.quiet_suppresses(rule_type) and config.in_quiet_hours(now.hour):
                 alert["suppress_reason"] = "quiet_hours"
                 suppressed.append({"alert": alert, "reason": "quiet_hours"})
                 _log(alert, "suppress", "quiet_hours")
