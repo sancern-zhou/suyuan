@@ -64,6 +64,11 @@ def new_rule_state() -> dict[str, Any]:
         "start_value": None,
         "last_trigger_threshold": None,
         "first_event_id": None,
+        "ol_history": [],
+        "ol_chronic_active": False,
+        "ol_chronic_reference_delta": None,
+        "ol_chronic_since": None,
+        "ol_last_hit_day": None,
     }
 
 
@@ -432,8 +437,9 @@ def rule_ol(
     config: AirAlertRuleConfig,
     state: dict[str, Any],
     hold_periods: int,
+    baseline_value: float | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """站点离群：本站 vs 其余有效站同刻平均值。"""
+    """站点离群：本站 vs 其余有效站同刻平均值，且本站自身需未回落。"""
     if peer_mean is None or peer_mean <= 0 or level_name is None:
         state["streak_cnt"] = 0
         return 0, {}
@@ -451,8 +457,15 @@ def rule_ol(
         "absolute_threshold": absolute,
         "threshold": round(threshold, 3),
         "hold_periods": hold_periods,
+        "baseline": round(baseline_value, 3) if baseline_value is not None else None,
         "recovery_threshold": round(threshold, 3),
     }
+    # 邻站下降会把同刻均值压低，形成本站“被动离群”；本站未较自身基线
+    # 上升时不累计 OL 连续窗口，避免把区域改善误报为目标站异常升高。
+    if baseline_value is not None and value <= baseline_value:
+        detail["suppressed_reason"] = "target_not_rising"
+        state["streak_cnt"] = 0
+        return 0, detail
     if delta >= 0 and ge1(delta, threshold):
         state["streak_cnt"] = int(state.get("streak_cnt") or 0) + 1
         detail["hold_streak"] = state["streak_cnt"]
@@ -756,7 +769,11 @@ def evaluate_multi_station_rise(
     covered_rules = {"sudden_rise", "spatial_outlier"} | ({"continuous_rise"} if path == "co_rise" else set())
     kept: list[dict[str, Any]] = []
     for alert in outcome.candidates:
-        if alert.get("station_id") in involved and str(alert.get("rule_type")) in covered_rules:
+        if (
+            alert.get("station_id") in involved
+            and alert.get("target_pollutant") == pollutant
+            and str(alert.get("rule_type")) in covered_rules
+        ):
             alert["merged_into_event_id"] = candidate["event_id"]
             outcome.region_merged.append(alert)
         else:
@@ -892,6 +909,7 @@ def evaluate_five_minute_cycle(
                     value, peer_mean, pollutant, level, config,
                     states.instance(grain, station_id, pollutant, "OL"),
                     PM25_HOLD_PERIODS if pollutant == "PM2.5" else FIVE_MIN_HOLD_PERIODS,
+                    baseline_value=context["baseline"] if context is not None else None,
                 )
                 if hit:
                     detail["peer_station_count"] = peer_count
@@ -1034,6 +1052,7 @@ def evaluate_pm25_hourly_cycle(
             hit, detail = rule_ol(
                 value, peer_mean, pollutant, level, config,
                 states.instance(grain, station_id, pollutant, "OL"), PM25_HOLD_PERIODS,
+                baseline_value=context["baseline"] if context is not None else None,
             )
             if hit:
                 detail["peer_station_count"] = peer_count

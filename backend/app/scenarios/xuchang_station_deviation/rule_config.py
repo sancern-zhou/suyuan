@@ -214,6 +214,16 @@ class AirAlertRuleConfig:
     # 沿用冷却期查表；置 False 可整体关闭（回到无上限滞回抑制）。
     hysteresis_renotify: bool = True
 
+    # OL 长期系统性偏差：按站点×因子独立识别，不抬高全局阈值。近 7 天
+    # >=6 次且覆盖 >=3 个自然日后转摘要口径；等级升级或偏差 >= 历史典型
+    # 幅度 1.5 倍时穿透；连续 2 个无 OL 命中的自然日后退出。
+    ol_chronic_enabled: bool = True
+    ol_chronic_lookback_days: int = 7
+    ol_chronic_min_events: int = 6
+    ol_chronic_min_days: int = 3
+    ol_chronic_escalation_ratio: float = 1.5
+    ol_chronic_recovery_days: int = 2
+
     # 运营限额与免打扰（规则总表未定义；按规则类型执行，见下方方法）。
     site_daily_quota: int = 8
     global_daily_cap: int = 40

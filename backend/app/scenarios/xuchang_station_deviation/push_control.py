@@ -266,6 +266,64 @@ def recovery_pass(
     return rearmed
 
 
+def _evaluate_chronic_outlier_state(
+    state: dict[str, Any], config: AirAlertRuleConfig, now: datetime
+) -> None:
+    """按 OL 命中历史维护长期系统性偏差状态。"""
+    if not config.ol_chronic_enabled:
+        return
+    cutoff = now.date() - timedelta(days=config.ol_chronic_lookback_days - 1)
+    last_hit = _parse_ts(state.get("ol_last_hit_day"))
+    if (
+        state.get("ol_chronic_active")
+        and last_hit is not None
+        and (now.date() - last_hit.date()).days > config.ol_chronic_recovery_days
+    ):
+        state["ol_chronic_active"] = False
+        state["ol_chronic_since"] = None
+        state["ol_chronic_reference_delta"] = None
+    history = [
+        item for item in state.get("ol_history", [])
+        if _parse_ts(item.get("occurred_at")) is not None
+        and _parse_ts(item["occurred_at"]).date() >= cutoff
+    ]
+    state["ol_history"] = history
+    if not state.get("ol_chronic_active") and (
+        last_hit is None or (now.date() - last_hit.date()).days <= config.ol_chronic_recovery_days
+    ):
+        days = {_parse_ts(item["occurred_at"]).date() for item in history}
+        if len(history) >= config.ol_chronic_min_events and len(days) >= config.ol_chronic_min_days:
+            deltas = sorted(float(item["absolute_delta"]) for item in history)
+            state["ol_chronic_active"] = True
+            state["ol_chronic_since"] = now.isoformat()
+            state["ol_chronic_reference_delta"] = deltas[len(deltas) // 2]
+
+
+def _chronic_outlier_reason(
+    alert: dict[str, Any], state: dict[str, Any], config: AirAlertRuleConfig
+) -> str | None:
+    """识别并记录 OL 历史；慢性状态仅放行等级升级或幅度显著加重。"""
+    if not config.ol_chronic_enabled or alert.get("rule_type") != "spatial_outlier":
+        return None
+    occurred_at = _parse_ts(alert.get("occurred_at"))
+    if occurred_at is None:
+        return None
+    delta = float(alert.get("absolute_delta") or 0.0)
+    history = state.setdefault("ol_history", [])
+    history.append({"occurred_at": occurred_at.isoformat(), "absolute_delta": delta})
+    state["ol_last_hit_day"] = occurred_at.date().isoformat()
+    if alert.get("air_quality_level") and state.get("last_air_level") is None:
+        state["last_air_level"] = alert.get("air_quality_level")
+    if not state.get("ol_chronic_active"):
+        return None
+    reference = state.get("ol_chronic_reference_delta")
+    if reference and delta >= float(reference) * config.ol_chronic_escalation_ratio:
+        alert["chronic_escalation"] = True
+        alert["chronic_reference_delta"] = reference
+        return None
+    return "chronic_outlier"
+
+
 def merge_by_station(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """同站合并：按站点 + 粒度合并为一条通报，跨因子只影响通报组织，
     不改变 #24 已完成的优先级选择。"""
@@ -387,6 +445,10 @@ def apply_push_chain(
     # 1) 恢复防抖检查。
     if recovery_metrics:
         recovery_pass(store, recovery_metrics, config)
+    for key, state in store.all_instances().items():
+        if key.endswith("::spatial_outlier"):
+            _evaluate_chronic_outlier_state(state, config, now)
+    store.save()
 
     # 2) #24 优先级 + 闸门：同站同因子同窗口的候选按 DS>CL>OL 逐条过闸门，
     #    取第一条能推送的；其余候选以 priority 抑制留痕。全部被闸门拦截时，
@@ -408,10 +470,17 @@ def apply_push_chain(
             state = store.instance(
                 str(alert.get("measurement_granularity")), station_id, pollutant, rule_type
             )
+            _evaluate_chronic_outlier_state(state, config, now)
+            chronic_reason = _chronic_outlier_reason(alert, state, config)
             upgrade = upgrade_info(state, alert.get("air_quality_level"))
             if upgrade:
                 alert.update(upgrade)
                 alert["upgrade_of_event_id"] = state.get("first_event_id")
+            if chronic_reason and not upgrade:
+                alert["suppress_reason"] = chronic_reason
+                suppressed.append({"alert": alert, "reason": chronic_reason})
+                _log(alert, "suppress", chronic_reason)
+                continue
             # 免打扰只拦常规再报；#23 升级例外（等级升高）夜间也必须叫人。
             if not upgrade and config.quiet_suppresses(rule_type) and config.in_quiet_hours(now.hour):
                 alert["suppress_reason"] = "quiet_hours"

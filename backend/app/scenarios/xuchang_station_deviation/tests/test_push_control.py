@@ -339,6 +339,60 @@ def test_hysteresis_renotify_can_be_disabled(tmp_path):
     assert suppressed[0]["reason"] == "hysteresis"
 
 
+def _chronic_store(tmp_path):
+    store = AlertStateStore(tmp_path)
+    state = store.instance("5min", "a", "CO", "spatial_outlier")
+    state["ol_history"] = [
+        {"occurred_at": f"2026-11-{19 + index // 2:02d}T0{7 + index % 2}:00:00+08:00",
+         "absolute_delta": 0.3}
+        for index in range(6)
+    ]
+    return store, state
+
+
+def _co_outlier(event_id: str, occurred_at: str, delta: float = 0.3):
+    alert = _alert(
+        rule_type="spatial_outlier", pollutant="CO", air_quality_level="优",
+        occurred_at=occurred_at,
+    )
+    alert.update(event_id=event_id, absolute_delta=delta)
+    return alert
+
+
+def test_repeated_ol_enters_chronic_state_and_stops_repeat_push(tmp_path):
+    store, state = _chronic_store(tmp_path)
+    now = datetime(2026, 11, 22, 9, 0, tzinfo=TZ)
+    pushed, suppressed, _summary = _chain([_co_outlier("co-new", "2026-11-22T09:00:00+08:00")], store, tmp_path, now)
+    assert pushed == [] and suppressed[0]["reason"] == "chronic_outlier"
+    assert state["ol_chronic_active"] is True
+    assert state["ol_chronic_reference_delta"] == 0.3
+
+
+def test_chronic_ol_escalates_on_level_or_delta_increase(tmp_path):
+    store, _state = _chronic_store(tmp_path)
+    now = datetime(2026, 11, 22, 9, 0, tzinfo=TZ)
+    _chain([_co_outlier("co-new", "2026-11-22T09:00:00+08:00")], store, tmp_path, now)
+    level = _co_outlier("co-level", "2026-11-22T09:30:00+08:00")
+    level["air_quality_level"] = "良"
+    pushed, _suppressed, _summary = _chain([level], store, tmp_path, datetime(2026, 11, 22, 9, 30, tzinfo=TZ))
+    assert pushed[0]["is_upgrade"] is True
+
+    store2, _state2 = _chronic_store(tmp_path / "delta")
+    pushed2, _s2, _w2 = _chain(
+        [_co_outlier("co-delta", "2026-11-22T09:00:00+08:00", 0.45)],
+        store2, tmp_path / "delta", now,
+    )
+    assert pushed2[0]["chronic_escalation"] is True
+
+
+def test_chronic_ol_recovers_after_two_quiet_days(tmp_path):
+    store, state = _chronic_store(tmp_path)
+    _chain([_co_outlier("co-new", "2026-11-22T09:00:00+08:00")], store, tmp_path, datetime(2026, 11, 22, 9, 0, tzinfo=TZ))
+    assert state["ol_chronic_active"] is True
+    _chain([_alert()], store, tmp_path, datetime(2026, 11, 25, 9, 0, tzinfo=TZ))
+    assert state["ol_chronic_active"] is False
+
+
 def test_state_survives_restart(tmp_path):
     # 重启后从状态文件恢复 armed/冷却期/等级。
     store = AlertStateStore(tmp_path)

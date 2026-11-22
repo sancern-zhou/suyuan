@@ -395,6 +395,22 @@ def test_ol_requires_two_windows_for_five_min():
     assert outliers[0]["detail"]["hold_streak"] == 2
 
 
+def test_ol_suppresses_passive_outlier_from_peer_drop():
+    # 本站 CO 保持 0.6，其余站由 0.6 降至 0.3：相对偏差虽达 100%，但
+    # 本站自身未升高，属于邻站下降造成的被动离群，不应累计 OL 窗口。
+    slot = datetime(2026, 11, 22, 7, 15, tzinfo=TZ)
+    states = MemStates()
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"co": 0.6}, source="hour"))
+        rows.extend(_history_rows(sid, [0.6] * 4, slot, column="co"))
+        rows.append(_row(sid, slot, {"co": 0.6 if sid == "a" else 0.3}))
+    outcome = _cycle(rows, slot, states=states)
+
+    assert _slot_values(outcome, "spatial_outlier") == []
+    assert states.instance("5min", "a", "CO", "OL")["streak_cnt"] == 0
+
+
 def test_ol_requires_min_region_stations():
     # 有效站 <4：不判 OL。
     slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
@@ -726,6 +742,33 @@ def test_mr_co_rise_covers_dual_sudden_rise():
     covered = {item["station_id"]: item for item in outcome.region_merged}
     assert set(covered) == {"a", "b"}  # 主站自己的 DS 候选同样被覆盖
     assert all(item["merged_into_event_id"] == mr["event_id"] for item in covered.values())
+
+
+def test_mr_co_rise_does_not_cover_other_pollutants():
+    # PM10 双站共升可触发 MR，但不得吞掉同站 NO2 的独立候选。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {
+            "pm10": 40.0, "no2": 60.0 if sid == "b" else 20.0,
+        }, source="hour"))
+        rows.extend(_history_rows(sid, [40.0] * 4, slot))
+        rows.extend(_history_rows(sid, [20.0] * 4, slot, column="no2"))
+        rows.append(_row(sid, slot, {
+            "pm10": 57.0 if sid == "a" else (55.0 if sid == "b" else 40.0),
+            "no2": 45.0 if sid == "b" else 20.0,
+        }))
+    outcome = _cycle(rows, slot)
+
+    assert {c["rule_type"] for c in outcome.candidates} == {
+        "multi_station_rise", "sudden_rise",
+    }
+    no2_ds = next(c for c in outcome.candidates if c["target_pollutant"] == "NO2")
+    assert no2_ds["station_id"] == "b"
+    assert no2_ds["event_id"] not in {
+        item["event_id"] for item in outcome.region_merged
+    }
+    assert all(item["target_pollutant"] == "PM10" for item in outcome.region_merged)
 
 
 def test_mr_co_rise_pushed_single_regional_notice(tmp_path):

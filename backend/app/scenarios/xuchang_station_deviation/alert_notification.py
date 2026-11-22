@@ -197,7 +197,8 @@ def _region_station_facts(alert: dict[str, Any]) -> list[str]:
         name = str(item.get("station_name") or item.get("station_id") or "未知站点")
         parts = [f"{name}实测{_dec(item.get('station_value'))}{unit}"]
         if item.get("baseline") is not None:
-            parts.append(f"较近段基线{_dec(item.get('baseline'))}抬升{_dec(item.get('delta'))}")
+            rise = item.get("rise") if "rise" in item else item.get("delta")
+            parts.append(f"较近段基线{_dec(item.get('baseline'))}抬升{_dec(rise)}")
         facts.append("，".join(parts))
     return facts
 

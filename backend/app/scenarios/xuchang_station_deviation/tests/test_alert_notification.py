@@ -276,6 +276,35 @@ def test_multi_station_rise_facts():
     assert "望田路111号" not in plain
 
 
+def test_multi_station_co_rise_region_facts_use_rise_value():
+    alert = _deviation_alert(
+        target_pollutant="PM2.5",
+        station_value=33.0,
+        rule_type="multi_station_rise",
+        rule="multi_station_rise",
+        detail={
+            "path": "co_rise",
+            "involved_stations": [
+                {"station_id": "1003A", "station_name": "开发区", "station_value": 33.0,
+                 "baseline": 23.0, "rise": 10.0},
+                {"station_id": "1008A", "station_name": "许昌学院", "station_value": 22.0,
+                 "baseline": 18.0, "rise": 4.0},
+            ],
+            "region_stations": [
+                {"station_id": "1008A", "station_name": "许昌学院", "station_value": 22.0,
+                 "baseline": 18.0, "rise": 4.0},
+            ],
+        },
+    )
+
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+
+    assert "许昌学院实测22.0微克/立方米，较近段基线18.0抬升4.0" in message
+    assert "抬升缺测" not in message
+
+
 def test_fallback_message_matches_main_renderer():
     package = _package([{"alert": _deviation_alert(), "evidence": _deviation_evidence()}])
 
