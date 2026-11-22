@@ -40,6 +40,11 @@ from app.scenarios.xuchang_station_deviation.rule_engine import (
 )
 from app.scenarios.xuchang_station_deviation.source_features import calculate_pollutant_source_features
 from app.scenarios.xuchang_station_deviation.dispatch import resolve_station
+from app.scenarios.xuchang_station_deviation.watchkeeping import (
+    WatchkeepingAgent,
+    _enabled as watchkeeping_shadow_enabled,
+    collect_boundary_observations,
+)
 
 logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -446,6 +451,7 @@ class XuchangStationDeviationAlertService:
         # 分级告警（R1-R4 + 推送管控）的状态与推送流水存储（文档 §2.4/§2.5）。
         self.alert_state_store = AlertStateStore(self.output_root)
         self.push_log_store = PushLogStore(self.output_root)
+        self.watchkeeping_agent = WatchkeepingAgent(self.output_root)
 
     def _query(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
@@ -1024,7 +1030,12 @@ class XuchangStationDeviationAlertService:
                 alert["multifactor_table"] = {"path": alert["multifactor_table_path"], "pollutants": ["PM2.5", "PM10", "SO2", "NO2", "CO", "O3"]}
             path = self._write_event(alert)
             events.append({**alert, "event_json_path": format_agent_path(path)})
-        return {
+        watch_observations = (
+            collect_boundary_observations(rows, target_slot=target_slot, config=config)
+            if granularity == "5min" and watchkeeping_shadow_enabled()
+            else []
+        )
+        result = {
             "city": self.config.city,
             "target_slot": target_slot.isoformat(),
             "target_hour": target_slot.isoformat(),
@@ -1046,4 +1057,9 @@ class XuchangStationDeviationAlertService:
             "checks": checks,
             "granularity": granularity,
             "meteorology_decision": meteo_decision,
+            "watch_observations": watch_observations,
         }
+        if watch_observations:
+            # 第一阶段只记录值守判断；正式告警及所有实际推送保持原链路。
+            result["watchkeeping"] = await self.watchkeeping_agent.observe(result, self.output_root)
+        return result
