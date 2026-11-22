@@ -125,6 +125,60 @@ def test_project_task_sync_migrates_legacy_agent_task_to_seeded_workflow(tmp_pat
     assert migrated.target_user_ids == ["app:android:android_demo"]
 
 
+def test_project_task_sync_migrates_workflow_task_to_seeded_agent_mode(tmp_path):
+    """种子从工作流改为 Agent 模式时反向迁移：执行契约与投递目标随种子走，
+    运行时运营状态（enabled/统计）保留。"""
+    storage = TaskStorage(tmp_path / "state")
+    existing = ScheduledTask(
+        task_id="task_report",
+        name="报告",
+        description="报告",
+        execution_mode="workflow",
+        workflow_name="xuchang_pollution_cause_analysis",
+        workflow_args={},
+        trigger_type="event",
+        event_type="xuchang.pollution_cause_analysis.triggered",
+        target_user_ids=["app:android:android_demo"],
+        broadcast_enabled=True,
+        prompt="旧工作流指令",
+        timeout_seconds=600,
+    )
+    existing.enabled = False
+    existing.total_runs = 7
+    storage.create(existing)
+
+    seed = ScheduledTask(
+        task_id="task_report",
+        name="报告",
+        description="报告",
+        execution_mode="report",
+        trigger_type="event",
+        event_type="xuchang.pollution_cause_analysis.triggered",
+        target_user_ids=["app:android:大气科1", "app:android:大气科2"],
+        broadcast_enabled=True,
+        prompt="报告模式 Agent 指令",
+        timeout_seconds=900,
+    )
+    _write_definition(tmp_path, seed)
+
+    result = sync_project_scheduled_tasks(
+        project_id="demo", task_ids=["task_report"], service=_Service(storage), project_root=tmp_path
+    )
+
+    migrated = storage.get("task_report")
+    assert result[0]["action"] == "migrated_agent_mode"
+    assert migrated.execution_mode == "report"
+    assert migrated.workflow_name is None
+    assert migrated.workflow_args == {}
+    assert migrated.tool_names is None
+    assert migrated.prompt == "报告模式 Agent 指令"
+    assert migrated.timeout_seconds == 900
+    assert migrated.target_user_ids == ["app:android:大气科1", "app:android:大气科2"]
+    assert migrated.broadcast_enabled is True
+    assert migrated.enabled is False
+    assert migrated.total_runs == 7
+
+
 def test_project_task_sync_uses_declared_runtime_fields_only(tmp_path):
     """运行时存储中的额外字段不会进入任务模型。"""
     storage = TaskStorage(tmp_path / "state")
