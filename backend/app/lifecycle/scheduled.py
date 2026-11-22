@@ -84,6 +84,12 @@ def register_project_workflow_handlers(project: str) -> None:
             "xuchang_pollution_cause_analysis", run_xuchang_pollution_cause
         )
 
+        from app.scenarios.xuchang_pollution_cause.wechat_delivery import (
+            register_pollution_cause_wechat_sink,
+        )
+
+        register_pollution_cause_wechat_sink()
+
         async def run_xuchang_monthly_review(
             task: Any,
             execution: Any,

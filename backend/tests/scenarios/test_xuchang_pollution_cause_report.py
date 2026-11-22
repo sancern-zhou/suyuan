@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import zipfile
 from pathlib import Path
@@ -79,7 +80,77 @@ def test_build_qmd_contains_notice_and_evidence_tables():
 def test_build_qmd_degrades_when_brief_missing():
     qmd = cause_report.build_pollution_cause_qmd(_evidence(), None, "通报正文")
     assert "昨日气象观测统计暂缺。" in qmd
-    assert "昨日无站点快速告警过程记录。" in qmd
+    assert "昨日无站点快速告警过程记录。"
+
+
+def test_build_qmd_renders_v8_hourly_rise_alert_fields_with_transport_join(tmp_path, monkeypatch):
+    """生产 report_brief v8 字段名（pollutant/start_time/peak_rise_*）必须可渲染，
+    传输结论经 hourly_rise_detection → transport_responses 关联（回归 2026-11-22
+    附3 全列为空的字段错位缺陷）。"""
+    monkeypatch.setattr(cause_report, "get_data_registry", lambda: tmp_path)
+    review_dir = tmp_path / "xuchang_station_daily_reviews" / "20261110"
+    review_dir.mkdir(parents=True)
+    (review_dir / "hourly_rise_detection.json").write_text(json.dumps({
+        "events": [{
+            "episode_id": "hourly-rise-2026111009-1008A-pm25",
+            "station_id": "1008A",
+            "target_pollutant": "PM2.5",
+            "episode_start": "2026-11-10T10:00:00",
+            "episode_end": "2026-11-10T12:00:00",
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    (review_dir / "transport_responses.json").write_text(json.dumps({
+        "episodes": [{
+            "episode_id": "hourly-rise-2026111009-1008A-pm25",
+            "transport_consistency": {
+                "conclusion": "local_prominence",
+                "conclusion_label": "局地突出",
+            },
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    brief = {
+        "episode_count": 1,
+        "alert_list": [{
+            "station_id": "1008A",
+            "station_name": "许昌学院",
+            "pollutant": "PM2.5",
+            "start_time": "2026-11-10T10:00:00",
+            "end_time": "2026-11-10T12:00:00",
+            "peak_rise_absolute": 17.0,
+            "peak_rise_percent": 89.5,
+        }],
+        "meteorology_intervals": {},
+    }
+    qmd = cause_report.build_pollution_cause_qmd(
+        _evidence(), brief, "通报正文",
+        transport_conclusions=cause_report.load_transport_conclusions("2026-11-10"),
+    )
+
+    assert "| 许昌学院 | PM2.5 | 2026-11-10T10:00 | 2026-11-10T12:00 | 17.0μg（89.5%） | 局地突出 |" in qmd
+    assert "| 站点 | 污染物 | 开始 | 结束 | 峰值升幅 | 传输结论 |" in qmd
+
+
+def test_build_qmd_transport_join_fail_open_without_review_files(tmp_path, monkeypatch):
+    """回顾目录缺文件时 fail-open：行仍渲染，传输结论列为"—"。"""
+    monkeypatch.setattr(cause_report, "get_data_registry", lambda: tmp_path)
+    assert cause_report.load_transport_conclusions("2026-11-10") == {}
+
+    brief = {
+        "episode_count": 1,
+        "alert_list": [{
+            "station_id": "1008A",
+            "station_name": "许昌学院",
+            "pollutant": "PM2.5",
+            "start_time": "2026-11-10T10:00:00",
+            "end_time": "2026-11-10T12:00:00",
+            "peak_rise_absolute": 17.0,
+            "peak_rise_percent": 89.5,
+        }],
+        "meteorology_intervals": {},
+    }
+    qmd = cause_report.build_pollution_cause_qmd(_evidence(), brief, "通报正文")
+    assert "| 许昌学院 | PM2.5 | 2026-11-10T10:00 | 2026-11-10T12:00 | 17.0μg（89.5%） | — |" in qmd
 
 
 def test_write_qmd_returns_package_contract(tmp_path, monkeypatch):

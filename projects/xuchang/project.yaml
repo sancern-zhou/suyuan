@@ -360,6 +360,8 @@ backend:
       # 交互式 HTML 报告成稿（技能 interactive_html_report）：展示主体
       - create_html_artifact
       - create_report_package
+      # 通报/报告发布到报告中心（污染原因分析等定时报告任务）
+      - publish_report
       - run_agent_workflow
       - list_skills
       - view_skill

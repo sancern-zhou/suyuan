@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
+
+from app.utils.path_config import PROJECT_ROOT
 
 from app.scenarios.xuchang_pollution_cause import notification
 from app.scenarios.xuchang_station_deviation import wechat_push_queue
@@ -283,3 +286,115 @@ def test_workflow_fails_open_when_report_generation_fails(tmp_path, monkeypatch)
     pending = wechat_push_queue.list_pending_messages(root=tmp_path)
     assert len(pending) == 1
     assert pending[0]["attachments"] == []
+
+def test_wechat_sink_enqueues_broadcast_message_and_docx(monkeypatch):
+    """Agent 模式执行成功后，钩子取广播调用的文案与 DOCX 补投微信群队列。"""
+    from app.scheduled_tasks.models.execution import ExecutionStatus, StepExecution
+    from app.scenarios.xuchang_pollution_cause import wechat_delivery
+
+    captured = {}
+    monkeypatch.setattr(
+        wechat_delivery,
+        "enqueue_wechat_message",
+        lambda kind, text, **kwargs: captured.update(
+            {"kind": kind, "text": text, **kwargs}
+        ) or {"id": "wx-test"},
+    )
+    execution = SimpleNamespace(
+        task_id=wechat_delivery.TASK_ID,
+        execution_id="exec-report-1",
+        status=ExecutionStatus.SUCCESS,
+        steps=[StepExecution(
+            step_id="task",
+            status=ExecutionStatus.SUCCESS,
+            agent_prompt="p",
+            agent_response="done",
+            tool_calls=[{
+                "tool": "broadcast_social_users",
+                "success": True,
+                "args": {
+                    "message": "【污染原因分析】通报全文",
+                    "media": [
+                        # 绝对路径应归一化为项目相对路径（PROJECT_ROOT 动态构造）
+                        str(Path(PROJECT_ROOT) / "backend/backend_data_registry/reports/r1/report.docx"),
+                        "backend/backend_data_registry/reports/r2/report.docx",
+                    ],
+                },
+                "media": [],
+            }],
+        )],
+    )
+    event = SimpleNamespace(
+        payload={"target_date": "2026-11-21"},
+        attributes={"target_date": "2026-11-21"},
+    )
+    asyncio.run(wechat_delivery.sink_dispatch(
+        SimpleNamespace(task_id=wechat_delivery.TASK_ID),
+        event,
+        execution,
+    ))
+
+    assert captured["kind"] == "pollution_cause"
+    assert captured["text"] == "【污染原因分析】通报全文"
+    assert captured["attachments"] == [{
+        "path": "backend/backend_data_registry/reports/r1/report.docx",
+        "filename": "污染原因分析通报_20261121.docx",
+        "mime": wechat_delivery.DOCX_MIME_TYPE,
+    }]
+    assert captured["metadata"]["execution_id"] == "exec-report-1"
+
+def test_wechat_sink_ignores_failure_and_other_tasks(monkeypatch):
+    from app.scheduled_tasks.models.execution import ExecutionStatus
+    from app.scenarios.xuchang_pollution_cause import wechat_delivery
+
+    enqueued = []
+    monkeypatch.setattr(
+        wechat_delivery,
+        "enqueue_wechat_message",
+        lambda kind, text, **kwargs: enqueued.append((kind, text)),
+    )
+    failed = SimpleNamespace(
+        task_id=wechat_delivery.TASK_ID,
+        execution_id="exec-failed",
+        status=ExecutionStatus.FAILED,
+        steps=[],
+    )
+    asyncio.run(wechat_delivery.sink_dispatch(
+        SimpleNamespace(task_id=wechat_delivery.TASK_ID),
+        SimpleNamespace(payload={}),
+        failed,
+    ))
+    other_task = SimpleNamespace(
+        task_id="task_other",
+        execution_id="exec-other",
+        status=ExecutionStatus.SUCCESS,
+        steps=[],
+    )
+    asyncio.run(wechat_delivery.sink_dispatch(other_task, SimpleNamespace(payload={}), other_task))
+    assert enqueued == []
+
+
+def test_wechat_sink_skips_when_broadcast_call_missing(monkeypatch):
+    from app.scheduled_tasks.models.execution import ExecutionStatus
+    from app.scenarios.xuchang_pollution_cause import wechat_delivery
+
+    enqueued = []
+    monkeypatch.setattr(
+        wechat_delivery,
+        "enqueue_wechat_message",
+        lambda kind, text, **kwargs: enqueued.append((kind, text)),
+    )
+    execution = SimpleNamespace(
+        task_id=wechat_delivery.TASK_ID,
+        execution_id="exec-no-broadcast",
+        status=ExecutionStatus.SUCCESS,
+        steps=[SimpleNamespace(
+            tool_calls=[{"tool": "read_file", "success": True, "args": {}}],
+        )],
+    )
+    asyncio.run(wechat_delivery.sink_dispatch(
+        SimpleNamespace(task_id=wechat_delivery.TASK_ID),
+        SimpleNamespace(payload={}),
+        execution,
+    ))
+    assert enqueued == []

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -99,10 +100,97 @@ def _strip_message_prefix(message: str) -> str:
     return text
 
 
+def load_transport_conclusions(target_date: str) -> dict[tuple[str, str, str], str]:
+    """按 (站码, 因子, 过程起点) 关联小时抬升过程的传输结论标签。
+
+    数据链：hourly_rise_detection.json:events[] 提供 (station_id,
+    target_pollutant, episode_start, episode_id)；transport_responses.json
+    的 episodes[] 按 episode_id 给 conclusion_label（如"局地突出"）。两个
+    文件任一缺失或解析失败返回空映射（fail-open，附表该列显示"—"）。
+    """
+    date_dir = get_data_registry() / "xuchang_station_daily_reviews" / (
+        str(target_date).replace("-", "") or "unknown"
+    )
+    try:
+        detection = json.loads(
+            (date_dir / "hourly_rise_detection.json").read_text(encoding="utf-8")
+        )
+        transport = json.loads(
+            (date_dir / "transport_responses.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    labels = {
+        episode.get("episode_id"): str(
+            (episode.get("transport_consistency") or {}).get("conclusion_label") or ""
+        )
+        for episode in transport.get("episodes") or []
+        if isinstance(episode, dict)
+    }
+    mapping: dict[tuple[str, str, str], str] = {}
+    for event in detection.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        label = labels.get(event.get("episode_id"))
+        if not label:
+            continue
+        mapping[(
+            str(event.get("station_id") or ""),
+            str(event.get("target_pollutant") or ""),
+            str(event.get("episode_start") or ""),
+        )] = label
+    return mapping
+
+
+def _alert_table_rows(
+    alert_list: list[dict[str, Any]],
+    transport_conclusions: dict[tuple[str, str, str], str] | None,
+) -> list[tuple[Any, ...]]:
+    """兼容 v8 小时抬升口径与旧 episode 口径的附3 行构造。
+
+    v8 字段：pollutant / start_time / end_time / peak_rise_absolute /
+    peak_rise_percent；旧字段：target_pollutant / episode_start /
+    episode_end / peak_time / transport_conclusion。
+    """
+    rows: list[tuple[Any, ...]] = []
+    for row in alert_list:
+        pollutant = row.get("pollutant") or row.get("target_pollutant")
+        start_raw = row.get("start_time") or row.get("episode_start")
+        end_raw = row.get("end_time") or row.get("episode_end")
+        peak_abs = row.get("peak_rise_absolute")
+        peak_pct = row.get("peak_rise_percent")
+        if peak_abs is not None or peak_pct is not None:
+            rise = "—" if peak_abs is None else f"{_fmt(peak_abs)}μg"
+            percent = "—" if peak_pct is None else f"{_fmt(peak_pct)}%"
+            peak = f"{rise}（{percent}）"
+        else:
+            peak = str(row.get("peak_time") or "")[:16]
+        label = ""
+        if transport_conclusions:
+            label = transport_conclusions.get((
+                str(row.get("station_id") or ""),
+                str(pollutant or ""),
+                str(start_raw or ""),
+            )) or ""
+        if not label:
+            label = str(row.get("transport_conclusion") or "")
+        rows.append((
+            row.get("station_name") or row.get("station_id"),
+            pollutant,
+            str(start_raw or "")[:16],
+            str(end_raw or "")[:16],
+            peak,
+            label,
+        ))
+    return rows
+
+
 def build_pollution_cause_qmd(
     evidence: dict[str, Any],
     review_brief: dict[str, Any] | None,
     message: str,
+    *,
+    transport_conclusions: dict[tuple[str, str, str], str] | None = None,
 ) -> str:
     """把触发证据、回顾 brief 与通报正文组装成固定结构 QMD。"""
     target_date = str(evidence.get("target_date") or "")
@@ -164,16 +252,8 @@ def build_pollution_cause_qmd(
     if alert_list:
         lines.extend([
             _markdown_table(
-                ("站点", "污染物", "开始", "结束", "峰值时间", "区域分类", "传输结论"),
-                [(
-                    row.get("station_name") or row.get("station_id"),
-                    row.get("target_pollutant"),
-                    str(row.get("episode_start") or "")[:16],
-                    str(row.get("episode_end") or "")[:16],
-                    str(row.get("peak_time") or "")[:16],
-                    row.get("regional_classification"),
-                    row.get("transport_conclusion"),
-                ) for row in alert_list],
+                ("站点", "污染物", "开始", "结束", "峰值升幅", "传输结论"),
+                _alert_table_rows(alert_list, transport_conclusions),
             ),
             "",
         ])
@@ -208,7 +288,12 @@ def write_pollution_cause_qmd(
     output_path = date_dir / f"report_source_{safe_execution}.qmd"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        build_pollution_cause_qmd(evidence, review_brief, message),
+        build_pollution_cause_qmd(
+            evidence,
+            review_brief,
+            message,
+            transport_conclusions=load_transport_conclusions(target_date),
+        ),
         encoding="utf-8",
     )
     return {
