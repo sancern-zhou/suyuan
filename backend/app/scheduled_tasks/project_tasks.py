@@ -94,6 +94,27 @@ def sync_project_scheduled_tasks(
             task_data["timeout_seconds"] = definition.timeout_seconds
             service.update_task(ScheduledTask.model_validate(task_data))
             action = "updated_workflow_instruction"
+        elif existing.execution_mode == "workflow" and definition.execution_mode != "workflow":
+            # Mirror of migrated_workflow: when a seeded workflow task is
+            # re-owned by an Agent mode, migrate the execution contract and
+            # delivery targets (audience expansion moves from workflow code
+            # into the seed's target_user_ids), while retaining runtime-owned
+            # operational state (enabled/schedule/run stats).
+            task_data = existing.model_dump()
+            task_data.update({
+                "execution_mode": definition.execution_mode,
+                "workflow_name": None,
+                "workflow_args": {},
+                "tool_names": definition.tool_names,
+                "skill_id": definition.skill_id,
+                "prompt": definition.prompt,
+                "timeout_seconds": definition.timeout_seconds,
+                "history_learning": definition.history_learning,
+                "broadcast_enabled": definition.broadcast_enabled,
+                "target_user_ids": definition.target_user_ids,
+            })
+            service.update_task(ScheduledTask.model_validate(task_data))
+            action = "migrated_agent_mode"
         elif _monitor_definition_changed(definition, existing):
             # Runtime-monitor tasks are system-owned infrastructure (tagged
             # runtime-monitor): prompts/toolsets are code-owned and seeds must
