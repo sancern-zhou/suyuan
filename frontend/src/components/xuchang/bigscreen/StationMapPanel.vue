@@ -167,7 +167,7 @@ const buildMarker = (station, isAlerting) => {
       <div class="screen-station-dot type-${esc(station.type || 'national')}${isAlerting ? ' alerting' : ''}" style="--dot-color:${esc(color)}">
         <span>${esc(text)}</span>
       </div>`,
-    offset: new AMap.Pixel(-17, -17),
+    offset: new AMap.Pixel(isAlerting ? -16 : -12, isAlerting ? -16 : -12),
     title: label,
     zIndex: isAlerting ? 130 : 110
   })
@@ -183,7 +183,7 @@ const buildMarker = (station, isAlerting) => {
           <p>AQI ${formatMetric(station, 'aqi')} · ${conc}</p>
           <small>${esc(TYPE_LABELS[station.type] || '站点')}${station.quality ? ' · ' + esc(station.quality) : ''}${station.primary ? ' · 首要 ' + esc(station.primary) : ''}${station.aqi_estimated ? ' · AQI按HJ633推算' : ''} · ${esc(String(station.data_time || '').replace('T', ' ').slice(0, 16))}</small>
         </div>`,
-      offset: new AMap.Pixel(0, -18)
+      offset: new AMap.Pixel(0, -14)
     })
     info.open(map, marker.getPosition())
   })
@@ -474,14 +474,14 @@ watch(displayMetric, renderMarkers)
   align-items: center;
   justify-content: center;
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--dot-color);
   border: 2px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 0 10px color-mix(in srgb, var(--dot-color) 70%, transparent);
   color: #fff;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 
@@ -489,7 +489,7 @@ watch(displayMetric, renderMarkers)
 
   // 乡镇站：圆角方块
   &.type-township {
-    border-radius: 7px;
+    border-radius: 5px;
   }
 
   // 区县代表点：菱形（背景层旋转 45°，AQI 文字保持水平）
@@ -514,8 +514,8 @@ watch(displayMetric, renderMarkers)
   }
 
   &.alerting {
-    width: 42px;
-    height: 42px;
+    width: 32px;
+    height: 32px;
     animation: station-pulse 1.4s ease-in-out infinite;
   }
 }
