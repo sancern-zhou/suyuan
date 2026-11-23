@@ -162,7 +162,7 @@ const buildMarker = (station, isAlerting) => {
   const label = `${station.station_name} ${METRIC_LABELS[metric]} ${text}`
   const marker = new AMap.Marker({
     position: new AMap.LngLat(station.lon, station.lat),
-    // 深色大屏样式：等级色图标（国控=圆形/乡镇=圆角方块/区县=菱形），告警站点加大加脉冲描边
+    // 深色大屏样式：等级色图标（国控=三角形/乡镇=圆形/区县=菱形），告警站点加大加脉冲光晕
     content: `
       <div class="screen-station-dot type-${esc(station.type || 'national')}${isAlerting ? ' alerting' : ''}" style="--dot-color:${esc(color)}">
         <span>${esc(text)}</span>
@@ -375,11 +375,11 @@ watch(displayMetric, renderMarkers)
     flex: none;
 
     &.shape-national {
-      border-radius: 50%;
+      clip-path: polygon(50% 0, 100% 100%, 0 100%);
     }
 
     &.shape-township {
-      border-radius: 2px;
+      border-radius: 50%;
     }
 
     &.shape-county {
@@ -485,12 +485,42 @@ watch(displayMetric, renderMarkers)
   font-weight: 700;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 
-  // 国控站：圆形（默认）
+  // 国控站：三角形（背景层 clip-path，数值文字保持水平、略下移落入色块质心）
+  &.type-national {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
 
-  // 乡镇站：圆角方块
-  &.type-township {
-    border-radius: 5px;
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
+
+    // 外层白描边 + 等级色光晕
+    &::after {
+      inset: 0;
+      z-index: 1;
+      background: rgba(255, 255, 255, 0.85);
+      filter: drop-shadow(0 0 6px color-mix(in srgb, var(--dot-color) 70%, transparent));
+    }
+
+    // 内层等级色（缩 2px 露出描边）
+    &::before {
+      inset: 2px;
+      z-index: 2;
+      background: var(--dot-color);
+    }
+
+    > span {
+      position: relative;
+      z-index: 3;
+      transform: translateY(4px);
+    }
   }
+
+  // 乡镇站：圆形（默认样式即圆形，无需覆写）
 
   // 区县代表点：菱形（背景层旋转 45°，AQI 文字保持水平）
   &.type-county {
@@ -528,7 +558,8 @@ watch(displayMetric, renderMarkers)
 }
 
 @keyframes station-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(216, 82, 69, 0.8); }
-  50% { box-shadow: 0 0 0 12px rgba(216, 82, 69, 0); }
+  /* 用 drop-shadow 而非 box-shadow 扩散环：透明背景 + clip-path 形状下 box-shadow 会显示成圆形 */
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(216, 82, 69, 0.85)); }
+  50% { filter: drop-shadow(0 0 10px rgba(216, 82, 69, 0.85)); }
 }
 </style>
