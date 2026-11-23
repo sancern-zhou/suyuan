@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { dashboardAssetUrl, fetchScreenSnapshot } from '@/api/xuchang/bigScreen.js'
 
-const POLL_INTERVAL_MS = 5 * 60 * 1000
+// 快照每 5 分钟生成一次；页面每分钟轻量检查 ETag，变化时才更新整屏。
+const POLL_INTERVAL_MS = 60 * 1000
 
 export const useBigScreenStore = defineStore('bigScreen', {
   state: () => ({
@@ -56,6 +57,7 @@ export const useBigScreenStore = defineStore('bigScreen', {
     },
     stopPolling() {
       if (this._timer) {
+        clearTimeout(this._timer)
         clearInterval(this._timer)
         this._timer = null
       }

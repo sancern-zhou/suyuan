@@ -6,7 +6,7 @@ all uvicorn workers serve byte-identical screens without touching Cube or
 SQL Server per request.
 
 P1: 告警热更新 —— snapshot 返回前实时重读场景一 episode_state.json，把
-分钟级的新告警合并进 alerts 段（快照本体半小时刷新一次，告警不需要等）。
+分钟级的新告警合并进 alerts 段（快照本体每 5 分钟刷新一次，告警不需要等）。
 P1: 资产出网 —— /asset 按 registry 相对路径白名单校验后回图，供焦点轮播
 展示传输轨迹 / GEMS 卫星图；素材路径不直接暴露绝对路径，且要求登录。
 """

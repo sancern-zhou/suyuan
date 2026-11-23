@@ -377,7 +377,7 @@ def test_screen_snapshot_fetcher_is_registered_for_xuchang():
     fetchers = lifecycle_manager._configured_fetchers(context)
 
     assert [fetcher.name for fetcher in fetchers] == ["xuchang_screen_snapshot_fetcher"]
-    assert fetchers[0].schedule == "11,41 * * * *"
+    assert fetchers[0].schedule == "6-56/5 * * * *"
 
 
 def test_assets_scanner_picks_latest_per_kind_with_window(registry, monkeypatch):

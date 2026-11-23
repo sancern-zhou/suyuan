@@ -76,7 +76,7 @@ def test_fetcher_protocol_and_windows():
     # 平台协议：办事处 tstype=9&type=5&timeStep=1；省控 tstype=3&type=4&timeStep=2
     assert (office.platform_tstype, office.factor_type, office.time_step) == ("9", "5", 1)
     assert (shengkong.platform_tstype, shengkong.factor_type, shengkong.time_step) == ("3", "4", 2)
-    assert office.schedule == "9,39 * * * *"
+    assert office.schedule == "4,9,15,25,35,45 * * * *"
     assert shengkong.schedule == "13 * * * *"
     start, end = office._window(datetime(2026, 11, 23, 15, 0))
     assert (end - start).total_seconds() == 180 * 60
@@ -89,7 +89,7 @@ def test_fetchers_are_registered_in_scheduler_factory():
 
     scheduler = create_scheduler()
     for name, schedule in (
-        ("xuchang_office_five_minute_fetcher", "9,39 * * * *"),
+        ("xuchang_office_five_minute_fetcher", "4,9,15,25,35,45 * * * *"),
         ("xuchang_shengkong_station_fetcher", "13 * * * *"),
     ):
         fetcher = scheduler.get_fetcher(name)
@@ -102,17 +102,25 @@ def test_new_fetcher_schedule_does_not_collide_with_crawler_mysql_writers():
 
     transport 单轮 3~4 分钟需带拖尾；其余抓取器秒级完成，按同分钟判。
     """
+    def cron_minutes(spec):
+        if "/" not in spec:
+            return {int(part) for part in spec.split(",")}
+        start, step = spec.split("/")
+        first = int(start.split("-")[0])
+        return set(range(first, 60, int(step)))
+
     occupied = set()
     for spec in (
         "14,20,55", "16,22,57", "18,24,59",  # ssfb 城市/站点/区县
-        "7,37",                              # 乡镇 5 分钟（实测 1~2s）
     ):
         occupied.update(int(part) for part in spec.split(","))
+    occupied.update(cron_minutes("2-57/5"))  # 乡镇 5 分钟
     for minute in [int(part) for part in "26,31,40,50".split(",")]:
         occupied.update(range(minute, minute + 4))  # transport 单轮拖尾
-    occupied.update({11, 41})                # 乡镇小时 + 大屏快照
+    occupied.update({11})                    # 乡镇小时
+    occupied.update(cron_minutes("6-56/5"))  # 大屏快照
     for fetcher in (XuchangOfficeFiveMinuteFetcher(), XuchangShengkongStationFetcher()):
-        minutes = [int(part) for part in fetcher.schedule.split(" ")[0].split(",")]
+        minutes = cron_minutes(fetcher.schedule.split(" ")[0])
         for minute in minutes:
             assert minute not in occupied, (fetcher.name, minute)
             occupied.add(minute)

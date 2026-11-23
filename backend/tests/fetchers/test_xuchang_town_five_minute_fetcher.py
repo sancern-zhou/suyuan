@@ -63,7 +63,7 @@ def test_record_from_row_drops_invalid_rows():
 
 def test_fetcher_schedule_and_window():
     fetcher = XuchangTownFiveMinuteFetcher()
-    assert fetcher.schedule == "7,37 * * * *"
+    assert fetcher.schedule == "2-57/5 * * * *"
     start, end = fetcher._window(datetime(2026, 10, 27, 15, 0))
     assert (end - start).total_seconds() == 180 * 60
 
@@ -74,4 +74,4 @@ def test_town_five_minute_fetcher_is_registered_in_scheduler_factory():
     scheduler = create_scheduler()
     fetcher = scheduler.get_fetcher("xuchang_town_five_minute_fetcher")
     assert fetcher is not None
-    assert fetcher.schedule == "7,37 * * * *"
+    assert fetcher.schedule == "2-57/5 * * * *"

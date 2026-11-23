@@ -190,7 +190,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         super().__init__(
             name="xuchang_screen_snapshot_fetcher",
             description="许昌数据大屏快照聚合（Cube 语义层+预报表+告警/播报）",
-            schedule="11,41 * * * *",
+            schedule="6-56/5 * * * *",
             version="1.0.0",
         )
         self.now_factory = now_factory

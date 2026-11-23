@@ -210,7 +210,7 @@ class XuchangTownFiveMinuteFetcher(DataFetcher):
         super().__init__(
             name="xuchang_town_five_minute_fetcher",
             description="抓取空气质量信息联网系统(旧云平台)许昌乡镇站5分钟数据入库DataCrawler(仅保留30天)",
-            schedule="7,37 * * * *",
+            schedule="2-57/5 * * * *",
             version="1.0.0",
         )
         self.client = client or TownCloudClient()

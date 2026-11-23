@@ -336,7 +336,7 @@ class XuchangOfficeFiveMinuteFetcher(_PerStationOldCloudFetcher):
             "抓取空气质量信息联网系统(旧云平台)办事处站5分钟PM2.5/PM10入库DataCrawler"
             "(tstype=9&type=5逐站查询,仅保留30天)"
         )
-        self.schedule = "9,39 * * * *"
+        self.schedule = "4,9,15,25,35,45 * * * *"
 
     def _window(self, now: datetime) -> tuple[datetime, datetime]:
         lookback = min(settings.office_five_minute_lookback_minutes, 4320)
