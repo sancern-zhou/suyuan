@@ -26,15 +26,11 @@
     >{{ leftOpen ? '‹' : '›' }}</button>
 
     <aside v-show="leftOpen" class="side-panel panel-left">
-      <RealtimePanel :header="store.header" />
-      <TrendPanel :trend="store.cityTrend" :forecast="store.forecast" />
-      <RankingPanel
-        title="国控站实时排名"
-        name-key="station_name"
-        :rows="nationalRows"
-        :data-time="nationalTime"
-        highlight=""
-      />
+      <CityStatsRankPanel :stats="store.cityPeriodStats" :province="store.provinceCityRanking" />
+      <CityYearTargetPanel :target="store.cityYearTargetOfficial" />
+      <CountyYearTargetPanel :data="store.countyYearTargets" />
+      <Rank168Panel :series="store.rank168Series" />
+      <CountyMonthReportPanel :report="store.countyMonthReport" />
     </aside>
 
     <button
@@ -48,11 +44,8 @@
     <aside v-show="rightOpen" class="side-panel panel-right">
       <DataQualityBar :quality="store.quality" />
       <AlertListPanel :alerts="store.alerts" />
-      <TargetProgressPanel
-        :target="store.yearTarget || {}"
-        :forecast="store.forecast"
-        :rank168="store.rank168"
-      />
+      <AirForecastPanel :forecast="store.forecast" />
+      <NmcForecastPanel :forecast="store.nmcForecast" />
     </aside>
 
     <BroadcastTicker :items="store.broadcast" />
@@ -60,13 +53,16 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import ScreenHeader from '@/components/xuchang/bigscreen/ScreenHeader.vue'
-import RealtimePanel from '@/components/xuchang/bigscreen/RealtimePanel.vue'
-import TrendPanel from '@/components/xuchang/bigscreen/TrendPanel.vue'
-import RankingPanel from '@/components/xuchang/bigscreen/RankingPanel.vue'
-import TargetProgressPanel from '@/components/xuchang/bigscreen/TargetProgressPanel.vue'
+import CityStatsRankPanel from '@/components/xuchang/bigscreen/CityStatsRankPanel.vue'
+import CityYearTargetPanel from '@/components/xuchang/bigscreen/CityYearTargetPanel.vue'
+import CountyYearTargetPanel from '@/components/xuchang/bigscreen/CountyYearTargetPanel.vue'
+import Rank168Panel from '@/components/xuchang/bigscreen/Rank168Panel.vue'
+import CountyMonthReportPanel from '@/components/xuchang/bigscreen/CountyMonthReportPanel.vue'
 import AlertListPanel from '@/components/xuchang/bigscreen/AlertListPanel.vue'
+import AirForecastPanel from '@/components/xuchang/bigscreen/AirForecastPanel.vue'
+import NmcForecastPanel from '@/components/xuchang/bigscreen/NmcForecastPanel.vue'
 import StationMapPanel from '@/components/xuchang/bigscreen/StationMapPanel.vue'
 import DataQualityBar from '@/components/xuchang/bigscreen/DataQualityBar.vue'
 import BroadcastTicker from '@/components/xuchang/bigscreen/BroadcastTicker.vue'
@@ -117,25 +113,7 @@ const onTiltChange = tilted => {
   }
 }
 
-// 国控站行映射为排名表字段（RankingPanel 期望 nameKey/aqi/pm25/quality/primary）
-const nationalRows = computed(() =>
-  (store.stations?.national || [])
-    .filter(item => item.aqi != null && Number.isFinite(Number(item.aqi)))
-    .sort((a, b) => a.aqi - b.aqi)
-    .map((item, index) => ({
-      station_name: item.station_name,
-      aqi: item.aqi,
-      pm25: item.pm25,
-      quality: item.quality,
-      primary: item.primary,
-      rank: index + 1
-    }))
-)
-
-const nationalTime = computed(() => {
-  const rows = store.stations?.national || []
-  return String(rows[0]?.data_time || '').replace('T', ' ').slice(0, 16)
-})
+// 左侧五类统计/考核/排名卡片的数据均由 store 新数据段驱动（见各面板组件）
 
 onMounted(() => {
   initDashboardAccessToken()
@@ -181,7 +159,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 380px;
+  width: 430px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
@@ -190,16 +168,10 @@ onBeforeUnmount(() => {
 }
 
 .panel-left { left: 12px; }
-.panel-right { right: 12px; }
+.panel-right { right: 12px; width: 400px; }
 
 /* 自由高度滚动容器内，ECharts 面板需固定高度防止塌陷 */
 .side-panel {
-  :deep(.trend-panel),
-  :deep(.ranking-panel) {
-    height: 250px;
-    flex-shrink: 0;
-  }
-
   :deep(.alert-panel) {
     max-height: 320px;
     flex-shrink: 0;
@@ -207,7 +179,7 @@ onBeforeUnmount(() => {
 
   /* 卫星底图上提升面板遮蔽度，保证文字可读 */
   :deep(section) {
-    background: rgba(6, 30, 44, 0.82);
+    background: rgba(6, 30, 44, 0.85);
     backdrop-filter: blur(8px);
   }
 }
@@ -236,7 +208,7 @@ onBeforeUnmount(() => {
   border-radius: 0 8px 8px 0;
   transition: left 0.25s ease;
 
-  &.open { left: 392px; }
+  &.open { left: 442px; }
 }
 
 .handle-right {
@@ -245,6 +217,6 @@ onBeforeUnmount(() => {
   border-radius: 8px 0 0 8px;
   transition: right 0.25s ease;
 
-  &.open { right: 392px; }
+  &.open { right: 412px; }
 }
 </style>

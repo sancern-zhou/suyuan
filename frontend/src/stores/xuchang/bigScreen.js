@@ -26,7 +26,14 @@ export const useBigScreenStore = defineStore('bigScreen', {
     assets: state => state.snapshot?.assets || [],
     rank168: state => state.snapshot?.rank168 || null,
     minute: state => state.snapshot?.minute || null,
-    quality: state => state.snapshot?.quality || null
+    quality: state => state.snapshot?.quality || null,
+    cityPeriodStats: state => state.snapshot?.city_period_stats || null,
+    provinceCityRanking: state => state.snapshot?.province_city_ranking || null,
+    cityYearTargetOfficial: state => state.snapshot?.city_year_target_official || null,
+    countyYearTargets: state => state.snapshot?.county_year_targets || null,
+    rank168Series: state => state.snapshot?.rank168_series || null,
+    countyMonthReport: state => state.snapshot?.county_month_report || null,
+    nmcForecast: state => state.snapshot?.nmc_forecast || null
   },
   actions: {
     assetUrl(assetPath) {

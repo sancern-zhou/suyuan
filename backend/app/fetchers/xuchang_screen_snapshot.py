@@ -244,6 +244,27 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         )
         quality = await self._guarded("quality", errors, self._quality)
 
+        # 左侧统计/考核/排名段（官方定版为主）与右侧 NMC 气象预报段
+        city_period_stats = await self._guarded(
+            "city_period_stats", errors, lambda: self._city_period_stats(now.date())
+        )
+        province_city_ranking = await self._guarded(
+            "province_city_ranking", errors, self._province_city_ranking
+        )
+        city_year_target_official = await self._guarded(
+            "city_year_target_official", errors, self._city_year_target_official
+        )
+        county_year_targets = await self._guarded(
+            "county_year_targets", errors, self._county_year_targets
+        )
+        rank168_series = await self._guarded("rank168_series", errors, self._rank168_series)
+        county_month_report = await self._guarded(
+            "county_month_report", errors, self._county_month_report
+        )
+        nmc_forecast = await self._guarded(
+            "nmc_forecast", errors, lambda: asyncio.to_thread(self._nmc_forecast)
+        )
+
         station_data_times = [
             _text(item.get("data_time"))
             for layer in (stations or {}).values()
@@ -269,6 +290,13 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "rank168": rank168,
             "minute": minute,
             "quality": quality,
+            "city_period_stats": city_period_stats,
+            "province_city_ranking": province_city_ranking,
+            "city_year_target_official": city_year_target_official,
+            "county_year_targets": county_year_targets,
+            "rank168_series": rank168_series,
+            "county_month_report": county_month_report,
+            "nmc_forecast": nmc_forecast,
             "errors": errors or None,
         }
         path = self._write_snapshot(snapshot)
@@ -760,7 +788,14 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             DatabaseTaskResultStorage,
         )
 
-        records, _total = DatabaseTaskResultStorage().query_page(page=1, page_size=10)
+        # _broadcast 由 asyncio.to_thread 调度，当前线程没有运行中的事件循环；
+        # 显式经同步桥专用线程池执行，避免 asyncio.run 创建独立连接后在
+        # bridge_session 的常驻事件循环上复用（asyncpg 跨 loop 报错）。
+        from app.db.sync_bridge import run_db
+
+        records, _total = DatabaseTaskResultStorage(runner=run_db).query_page(
+            page=1, page_size=10
+        )
         rows = []
         for record in records:
             text = _text(record.broadcast_message) or _text(record.conclusion) or ""
@@ -1264,16 +1299,18 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "dimensions": [
                 "Rank168CityMonthly.periodLabel",
                 "Rank168CityMonthly.periodType",
+                "Rank168CityMonthly.dataMonth",
             ],
             "filters": [
                 {"member": "Rank168CityMonthly.periodType", "operator": "equals", "values": ["cum"]},
                 {"member": "Rank168CityMonthly.city", "operator": "equals", "values": [XUCHANG_CITY]},
             ],
-            "order": {"Rank168CityMonthly.dataMonth": "desc"},
+            "order": {"Rank168CityMonthly.periodEnd": "desc"},
             "limit": 1,
         })
         if not rows:
             return None
+        # Cube 对 time 维度派生列的排序可能按字符串处理，取最新期次在 Python 侧兜底。
         row = _flat(rows, "Rank168CityMonthly")[0]
         return {
             "period_label": _text(row.get("periodLabel")),
@@ -1416,3 +1453,335 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                     "total": TOWNSHIP_TOTAL,
                 }
         return {"site_hour": site, "town_hour": town}
+
+    # ------------------------------------------------------------ 左侧统计段
+    async def _city_period_stats(self, today: date) -> dict[str, Any]:
+        """许昌市当月/当年截止昨天的统计（本地日值自算，未剔沙尘，实时参考口径）。
+
+        官方月报发布前这是唯一"截至昨天"的过程数据，面板必须标注口径；
+        官方定版值看 city_year_target_official / province_city_ranking 段。
+        """
+        yesterday = today - timedelta(days=1)
+        month_start = yesterday.replace(day=1)
+        year_start = yesterday.replace(month=1, day=1)
+        month = await self._city_day_aggregate(month_start, yesterday)
+        year = await self._city_day_aggregate(year_start, yesterday)
+        return {"as_of": yesterday.isoformat(), "month": month, "year": year}
+
+    async def _city_day_aggregate(self, start: date, end: date) -> Optional[dict[str, Any]]:
+        if end < start:
+            return None
+        rows = await cube_load({
+            "measures": [
+                "SsfbCityDay.count", "SsfbCityDay.avgPm25", "SsfbCityDay.avgPm10",
+                "SsfbCityDay.avgO38h", "SsfbCityDay.avgNo2", "SsfbCityDay.avgSo2",
+                "SsfbCityDay.avgCo",
+            ],
+            "dimensions": ["SsfbCityDay.quality", "SsfbCityDay.dataDate"],
+            "timeDimensions": [{
+                "dimension": "SsfbCityDay.dataDate",
+                "dateRange": [start.isoformat(), end.isoformat()],
+            }],
+            "filters": [{
+                "member": "SsfbCityDay.city", "operator": "equals", "values": [XUCHANG_CITY],
+            }],
+            "limit": 100,
+        })
+        days_total = 0
+        good_days = 0
+        sums: Dict[str, float] = {}
+        counts: Dict[str, int] = {}
+        metrics = ["avgPm25", "avgPm10", "avgO38h", "avgNo2", "avgSo2", "avgCo"]
+        for item in _flat(rows, "SsfbCityDay"):
+            count = int(item.get("count") or 0)
+            days_total += count
+            if _text(item.get("quality")) in GOOD_QUALITIES:
+                good_days += count
+            for key in metrics:
+                value = _number(item.get(key))
+                if value is not None and count:
+                    sums[key] = sums.get(key, 0.0) + value * count
+                    counts[key] = counts.get(key, 0) + count
+        return {
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "days_total": days_total,
+            "good_days": good_days,
+            "good_days_ratio": round(good_days / days_total * 100, 1) if days_total else None,
+            "pm25": round(sums["avgPm25"] / counts["avgPm25"], 1) if counts.get("avgPm25") else None,
+            "pm10": round(sums["avgPm10"] / counts["avgPm10"], 1) if counts.get("avgPm10") else None,
+            "o3_8h": round(sums["avgO38h"] / counts["avgO38h"], 1) if counts.get("avgO38h") else None,
+            "no2": round(sums["avgNo2"] / counts["avgNo2"], 1) if counts.get("avgNo2") else None,
+            "so2": round(sums["avgSo2"] / counts["avgSo2"], 1) if counts.get("avgSo2") else None,
+            "co": round(sums["avgCo"] / counts["avgCo"], 2) if counts.get("avgCo") else None,
+            "caliber": "本地日值自算·未剔沙尘（实时参考）",
+        }
+
+    async def _province_city_ranking(self) -> dict[str, Any]:
+        """全省 19 市(区)官方月报排名（当月 + 1-N 月累计，最新期次）。
+
+        综合指数正序（低=好），rank 由本段按官方值重排（1=最优）。
+        """
+        result: Dict[str, Any] = {}
+        for scope, cube_name in (("month", "ProvinceMonth"), ("cum", "ProvinceMonthCum")):
+            latest = await cube_load({
+                "measures": [f"{cube_name}.count"],
+                "dimensions": [f"{cube_name}.dataMonth"],
+                "filters": [{"member": f"{cube_name}.level", "operator": "equals", "values": ["city"]}],
+                "order": {f"{cube_name}.dataMonth": "desc"},
+                "limit": 1,
+            })
+            month = _text(latest[0].get(f"{cube_name}.dataMonth")) if latest else None
+            if not month:
+                continue
+            rows = await cube_load({
+                "measures": [
+                    f"{cube_name}.pm25", f"{cube_name}.pm10", f"{cube_name}.o3",
+                    f"{cube_name}.goodDays", f"{cube_name}.heavyDays",
+                    f"{cube_name}.compositeIndex",
+                    f"{cube_name}.pm25YoY", f"{cube_name}.compositeIndexYoY",
+                ],
+                "dimensions": [f"{cube_name}.region"],
+                "timeDimensions": [{
+                    "dimension": f"{cube_name}.dataMonth",
+                    "dateRange": [month, _month_end(month[:7]).isoformat()],
+                }],
+                "filters": [{"member": f"{cube_name}.level", "operator": "equals", "values": ["city"]}],
+                "limit": 30,
+            })
+            entries = []
+            for item in _flat(rows, cube_name):
+                entries.append({
+                    "region": _text(item.get("region")),
+                    "pm25": _number(item.get("pm25")),
+                    "pm10": _number(item.get("pm10")),
+                    "o3": _number(item.get("o3")),
+                    "good_days": _int_or_none(item.get("goodDays")),
+                    "heavy_days": _int_or_none(item.get("heavyDays")),
+                    "composite_index": _number(item.get("compositeIndex")),
+                    "pm25_yoy": _number(item.get("pm25YoY")),
+                    "composite_index_yoy": _number(item.get("compositeIndexYoY")),
+                })
+            entries.sort(key=lambda item: (
+                item["composite_index"] is None,
+                item["composite_index"] if item["composite_index"] is not None else 0,
+            ))
+            for index, item in enumerate(entries, start=1):
+                item["rank"] = index if item["composite_index"] is not None else None
+            result[scope] = {"data_month": month[:7], "rows": entries}
+        return result
+
+    async def _city_year_target_official(self) -> dict[str, Any]:
+        """许昌市年度目标与实际（官方考核定版）+ 当前在途年度目标。"""
+        rows = await cube_load({
+            "measures": [
+                "XuchangCityYearTarget.pm25Target", "XuchangCityYearTarget.pm10Target",
+                "XuchangCityYearTarget.goodDaysTarget", "XuchangCityYearTarget.heavyDaysTarget",
+                "XuchangCityYearTarget.pm25", "XuchangCityYearTarget.pm10",
+                "XuchangCityYearTarget.goodDays", "XuchangCityYearTarget.heavyDays",
+            ],
+            "dimensions": ["XuchangCityYearTarget.year"],
+            "limit": 20,
+        })
+        years = []
+        for item in _flat(rows, "XuchangCityYearTarget"):
+            years.append({
+                "year": _int_or_none(item.get("year")),
+                "pm25_target": _number(item.get("pm25Target")),
+                "pm10_target": _number(item.get("pm10Target")),
+                "good_days_target": _int_or_none(item.get("goodDaysTarget")),
+                "heavy_days_target": _int_or_none(item.get("heavyDaysTarget")),
+                "pm25": _number(item.get("pm25")),
+                "pm10": _number(item.get("pm10")),
+                "good_days": _int_or_none(item.get("goodDays")),
+                "heavy_days": _int_or_none(item.get("heavyDays")),
+            })
+        years.sort(key=lambda item: item["year"] or 0, reverse=True)
+        current_year = self.now_factory().year
+        finalized = next((item for item in years if (item["year"] or 0) < current_year), None)
+        current = next((item for item in years if item["year"] == current_year), None)
+        return {"finalized": finalized, "current": current}
+
+    async def _county_year_targets(self) -> dict[str, Any]:
+        """许昌 10 县市区年度目标与实际（官方考核定版，默认最新定版年）。"""
+        years_probe = await cube_load({
+            "measures": ["XuchangCountyYearTarget.count"],
+            "dimensions": ["XuchangCountyYearTarget.year"],
+            "limit": 20,
+        })
+        years = sorted(
+            (_int_or_none(item.get("year")) for item in _flat(years_probe, "XuchangCountyYearTarget")),
+            reverse=True,
+        )
+        years = [year for year in years if year is not None]
+        if not years:
+            return {}
+        result: Dict[str, Any] = {"years": years, "by_year": {}}
+        for year in years[:3]:
+            rows = await cube_load({
+                "measures": [
+                    "XuchangCountyYearTarget.pm25Target", "XuchangCountyYearTarget.pm25",
+                    "XuchangCountyYearTarget.pm10Target", "XuchangCountyYearTarget.pm10",
+                    "XuchangCountyYearTarget.goodDaysTarget", "XuchangCountyYearTarget.goodDays",
+                    "XuchangCountyYearTarget.heavyDaysTarget", "XuchangCountyYearTarget.heavyDays",
+                ],
+                "dimensions": [
+                    "XuchangCountyYearTarget.region", "XuchangCountyYearTarget.regionType",
+                    "XuchangCountyYearTarget.pm25Completed", "XuchangCountyYearTarget.goodDaysCompleted",
+                    "XuchangCountyYearTarget.heavyDaysCompleted",
+                ],
+                "filters": [{
+                    "member": "XuchangCountyYearTarget.year", "operator": "equals",
+                    "values": [str(year)],
+                }],
+                "limit": 20,
+            })
+            entries = []
+            for item in _flat(rows, "XuchangCountyYearTarget"):
+                entries.append({
+                    "region": _text(item.get("region")),
+                    "region_type": _text(item.get("regionType")),
+                    "pm25_target": _number(item.get("pm25Target")),
+                    "pm25": _number(item.get("pm25")),
+                    "pm10_target": _number(item.get("pm10Target")),
+                    "pm10": _number(item.get("pm10")),
+                    "good_days_target": _int_or_none(item.get("goodDaysTarget")),
+                    "good_days": _int_or_none(item.get("goodDays")),
+                    "heavy_days_target": _int_or_none(item.get("heavyDaysTarget")),
+                    "heavy_days": _int_or_none(item.get("heavyDays")),
+                    "pm25_completed": _text(item.get("pm25Completed")),
+                    "good_days_completed": _text(item.get("goodDaysCompleted")),
+                    "heavy_days_completed": _text(item.get("heavyDaysCompleted")),
+                })
+            result["by_year"][str(year)] = entries
+        return result
+
+    async def _rank168_series(self) -> dict[str, Any]:
+        """168 城全国排名（生态环境部定版）：当月 + 1-N 月累计两个口径。"""
+        result: Dict[str, Any] = {}
+        for scope in ("month", "cum"):
+            rows = await cube_load({
+                "measures": [
+                    "Rank168CityMonthly.compositeIndexRank", "Rank168CityMonthly.pm25Rank",
+                    "Rank168CityMonthly.compositeIndex", "Rank168CityMonthly.pm25",
+                ],
+                "dimensions": ["Rank168CityMonthly.periodLabel", "Rank168CityMonthly.dataMonth"],
+                "filters": [
+                    {"member": "Rank168CityMonthly.periodType", "operator": "equals", "values": [scope]},
+                    {"member": "Rank168CityMonthly.city", "operator": "equals", "values": [XUCHANG_CITY]},
+                ],
+                "order": {"Rank168CityMonthly.dataMonth": "desc"},
+                "limit": 12,
+            })
+            entries = [{
+                "period_label": _text(item.get("periodLabel")),
+                "data_month": (_text(item.get("dataMonth")) or "")[:7],
+                "composite_rank": _int_or_none(item.get("compositeIndexRank")),
+                "pm25_rank": _int_or_none(item.get("pm25Rank")),
+                "composite_index": _number(item.get("compositeIndex")),
+                "pm25": _number(item.get("pm25")),
+            } for item in _flat(rows, "Rank168CityMonthly")]
+            # dataMonth 为 time 维度但排序键在 Cube 层对 varchar 派生列可能失效，
+            # 统一在 Python 侧按月份字符串倒序兜底（见 _rank168 同款修复）。
+            entries.sort(key=lambda item: item["data_month"], reverse=True)
+            result[scope] = entries
+        return result
+
+    async def _county_month_report(self) -> dict[str, Any]:
+        """许昌 10 县市区官方月报统计（当月 + 1-N 月累计，省/国家平台）。
+
+        region_type: 魏都/开发/东城/示范/建安=国家平台，鄢陵/襄城/禹州/长葛=省平台。
+        """
+        result: Dict[str, Any] = {}
+        for scope, cube_name in (("month", "CountyMonth"), ("cum", "CountyMonthCum")):
+            latest = await cube_load({
+                "measures": [f"{cube_name}.count"],
+                "dimensions": [f"{cube_name}.dataMonth"] if scope == "month" else [f"{cube_name}.periodEnd"],
+                "order": {f"{cube_name}.{'dataMonth' if scope == 'month' else 'periodEnd'}": "desc"},
+                "limit": 1,
+            })
+            key = "dataMonth" if scope == "month" else "periodEnd"
+            month = _text(latest[0].get(f"{cube_name}.{key}")) if latest else None
+            if not month:
+                continue
+            if scope == "month":
+                date_range = [month, _month_end(month[:7]).isoformat()]
+            else:
+                date_range = [month, month]
+            rows = await cube_load({
+                "measures": [
+                    f"{cube_name}.pm25", f"{cube_name}.pm10", f"{cube_name}.so2",
+                    f"{cube_name}.no2", f"{cube_name}.co95", f"{cube_name}.o3_8h_90",
+                    f"{cube_name}.goodDays", f"{cube_name}.heavyDays", f"{cube_name}.compositeIndex",
+                ],
+                "dimensions": [f"{cube_name}.region", f"{cube_name}.regionType"],
+                "timeDimensions": [{
+                    "dimension": f"{cube_name}.{key}", "dateRange": date_range,
+                }],
+                "limit": 20,
+            })
+            entries = []
+            for item in _flat(rows, cube_name):
+                entries.append({
+                    "region": _text(item.get("region")),
+                    "region_type": _text(item.get("regionType")),
+                    "pm25": _number(item.get("pm25")),
+                    "pm10": _number(item.get("pm10")),
+                    "so2": _number(item.get("so2")),
+                    "no2": _number(item.get("no2")),
+                    "co95": _number(item.get("co95")),
+                    "o3_8h_90": _number(item.get("o3_8h_90")),
+                    "good_days": _int_or_none(item.get("goodDays")),
+                    "heavy_days": _int_or_none(item.get("heavyDays")),
+                    "composite_index": _number(item.get("compositeIndex")),
+                })
+            entries.sort(key=lambda item: (
+                item["composite_index"] is None,
+                item["composite_index"] if item["composite_index"] is not None else 0,
+            ))
+            result[scope] = {"data_month": month[:7], "rows": entries}
+        return result
+
+    # ------------------------------------------------------------ 右侧 NMC 气象预报段
+    def _nmc_forecast(self) -> Optional[dict[str, Any]]:
+        """NMC 逐 3 小时气象预报（最新发布批次，未来 7 天）。
+
+        与 xuchang_weather_report 同源同口径（XcAiDb XuchangNmcHourlyWeatherForecast）。
+        """
+        from app.tools.query.query_xcai_city_history.sql_client import get_sql_server_client
+
+        now = self.now_factory()
+        connection = pyodbc.connect(get_sql_server_client().connection_string, timeout=30)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT forecast_time, temperature, humidity, wind_speed, wind_direction,
+                       precipitation_probability, weather_text, publish_time
+                FROM dbo.XuchangNmcHourlyWeatherForecast
+                WHERE city_name=N'许昌市' AND forecast_time >= ?
+                  AND publish_time=(SELECT MAX(publish_time) FROM dbo.XuchangNmcHourlyWeatherForecast
+                                    WHERE city_name=N'许昌市' AND forecast_time >= ?)
+                ORDER BY forecast_time
+                """,
+                now.replace(minute=0, second=0),
+                now.replace(minute=0, second=0),
+            )
+            columns = [column[0] for column in cursor.description]
+            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        finally:
+            connection.close()
+        if not rows:
+            return None
+        return {
+            "publish_time": _iso(rows[0].get("publish_time")),
+            "rows": [{
+                "time": _iso(item.get("forecast_time")),
+                "temperature": _number(item.get("temperature")),
+                "humidity": _number(item.get("humidity")),
+                "wind_speed": _number(item.get("wind_speed")),
+                "wind_direction": _text(item.get("wind_direction")),
+                "precipitation_probability": _number(item.get("precipitation_probability")),
+                "weather_text": _text(item.get("weather_text")),
+            } for item in rows],
+        }

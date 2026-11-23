@@ -119,6 +119,57 @@ def _default_handlers() -> dict[str, Any]:
         }),
         "ShengkongHour.count": [],
         "OfficeFiveMinute.count": [],
+        # 左侧统计/考核/排名段
+        "ProvinceMonth.count": _cube_rows("ProvinceMonth", {
+            "dataMonth": "2026-09-01T00:00:00.000", "count": 19,
+        }),
+        "ProvinceMonth.pm25": _cube_rows("ProvinceMonth", {
+            "region": "许昌市", "pm25": 30.0, "pm10": 55.0, "o3": 160.0,
+            "goodDays": 25, "heavyDays": 0, "compositeIndex": 6.5,
+            "pm25YoY": 90.0, "compositeIndexYoY": 50.0,
+        }),
+        "ProvinceMonthCum.count": _cube_rows("ProvinceMonthCum", {
+            "dataMonth": "2026-09-01T00:00:00.000", "count": 19,
+        }),
+        "ProvinceMonthCum.pm25": lambda query: (
+            _cube_rows("ProvinceMonthCum", {
+                "region": "许昌市", "pm25": 43.2, "pm10": 74, "o3": 165.0,
+                "goodDays": 218, "heavyDays": 1, "goodDaysRatio": 79.9,
+                "compositeIndex": 7.0, "pm25YoY": 88.0, "compositeIndexYoY": 45.0,
+            })
+            if "region" in str(query.get("dimensions", []))
+            # 旧 _year_target 段查询（dimensions 只有 dataMonth）
+            else _cube_rows("ProvinceMonthCum", {
+                "dataMonth": "2026-09-01T00:00:00.000", "pm25": 43.2, "pm10": 74,
+                "goodDays": 218, "heavyDays": 1, "goodDaysRatio": 79.9,
+            })
+        ),
+        "XuchangCountyYearTarget.count": _cube_rows("XuchangCountyYearTarget", {
+            "year": 2025, "count": 10,
+        }),
+        "XuchangCountyYearTarget.pm25Target": _cube_rows("XuchangCountyYearTarget", {
+            "region": "建安区", "regionType": "urban",
+            "pm25Target": 41, "pm25": 45, "pm10Target": 70, "pm10": 75,
+            "goodDaysTarget": 269, "goodDays": 250,
+            "heavyDaysTarget": 6, "heavyDays": 7,
+            "pm25Completed": "否", "goodDaysCompleted": "否", "heavyDaysCompleted": "否",
+        }),
+        "CountyMonth.count": _cube_rows("CountyMonth", {
+            "dataMonth": "2026-09-01T00:00:00.000", "count": 10,
+        }),
+        "CountyMonth.pm25": _cube_rows("CountyMonth", {
+            "region": "鄢陵县", "regionType": "county",
+            "pm25": 30.47, "pm10": 58.03, "so2": 11, "no2": 19, "co95": 0.9,
+            "o3_8h_90": 180, "goodDays": 21, "heavyDays": 0, "compositeIndex": 7.575,
+        }),
+        "CountyMonthCum.count": _cube_rows("CountyMonthCum", {
+            "periodEnd": "2026-09-30T00:00:00.000", "count": 10,
+        }),
+        "CountyMonthCum.pm25": _cube_rows("CountyMonthCum", {
+            "region": "鄢陵县", "regionType": "county",
+            "pm25": 32.0, "pm10": 60.0, "so2": 10, "no2": 20, "co95": 1.0,
+            "o3_8h_90": 175, "goodDays": 200, "heavyDays": 1, "compositeIndex": 7.2,
+        }),
     }
 
 
@@ -187,6 +238,15 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
                         "aqi": 88, "pm25": 62},
             "city": {"area": "许昌市", "data_time": "2026-10-24T14:00:00",
                      "aqi": 85, "quality": "良", "primary": "PM2.5"},
+        },
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_nmc_forecast",
+        lambda self: {
+            "publish_time": "2026-10-24T14:30:00",
+            "rows": [{"time": "2026-10-24T15:00:00", "temperature": 18.0,
+                      "humidity": 60, "wind_speed": 3.0, "wind_direction": "北风",
+                      "precipitation_probability": 10, "weather_text": "多云"}],
         },
     )
     return XuchangScreenSnapshotFetcher(now_factory=lambda: NOW)
@@ -358,6 +418,26 @@ async def test_alerts_window_and_order(monkeypatch, registry):
     alerts = fetcher._alerts()
 
     assert [item["episode_id"] for item in alerts] == ["ep-active", "ep-recent"]
+
+
+def test_broadcast_runs_on_db_bridge_pool(monkeypatch):
+    """to_thread 中调用同步存储仍须走专用桥线程池，避免 asyncpg 跨 loop。"""
+    import app.db.sync_bridge as sync_bridge
+    from app.scheduled_tasks.storage.task_result_storage_db import (
+        DatabaseTaskResultStorage,
+    )
+
+    called = {}
+
+    def fake_query_page(self, **kwargs):
+        assert self._runner is sync_bridge.run_db
+        called["query"] = kwargs
+        return [], 0
+
+    monkeypatch.setattr(DatabaseTaskResultStorage, "query_page", fake_query_page)
+
+    assert XuchangScreenSnapshotFetcher()._broadcast() == []
+    assert called["query"] == {"page": 1, "page_size": 10}
 
 
 def test_screen_snapshot_fetcher_is_registered_for_xuchang():
