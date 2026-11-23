@@ -55,6 +55,10 @@ class DashboardAccessTest {
             "https://xuchang.example.com/bigscreen?access_token=t",
             dashboardEntryUrl(webBase, "/bigscreen", "t")
         )
+        assertEquals(
+            "https://xuchang.example.com/mobile-map?access_token=t",
+            dashboardEntryUrl(webBase, "/mobile-map", "t")
+        )
     }
 
     @Test

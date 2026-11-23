@@ -400,7 +400,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var requestKeyboardFocus by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
-    // 三 tab 导航：chat（对话）/ watch（巡查快报）/ tasks（任务中心：定时任务+广播）。
+    // 四 tab 导航：chat（对话）/ watch（巡查快报）/ map（实时地图）/ tasks（任务中心）。
     // 历史会话仍是对话 tab 内的覆盖层；共享对话入口由特性开关下线（面板代码保留）。
     var currentTab by rememberSaveable { mutableStateOf("chat") }
     var tasksSubTab by rememberSaveable { mutableStateOf("reports") }
@@ -557,6 +557,13 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             DashboardWebViewScreen(
                 entryUrl = dashboardEntryUrl(
                     BuildConfig.WEB_FRONTEND_URL, "/fieldwatch", BuildConfig.DASHBOARD_ACCESS_TOKEN
+                ),
+                allowedBaseUrl = BuildConfig.WEB_FRONTEND_URL
+            )
+        } else if (currentTab == "map") {
+            DashboardWebViewScreen(
+                entryUrl = dashboardEntryUrl(
+                    BuildConfig.WEB_FRONTEND_URL, "/mobile-map", BuildConfig.DASHBOARD_ACCESS_TOKEN
                 ),
                 allowedBaseUrl = BuildConfig.WEB_FRONTEND_URL
             )

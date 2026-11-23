@@ -78,6 +78,20 @@ internal fun BottomNavBar(
                 )
             )
         }
+        if (showWatch) {
+            NavigationBarItem(
+                selected = currentTab == "map",
+                onClick = { onTab("map") },
+                icon = { TabIcon(R.drawable.ic_tab_map, "实时地图", badge = 0) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = SuyuanColors.primary,
+                    selectedTextColor = SuyuanColors.primary,
+                    unselectedIconColor = SuyuanColors.secondaryText,
+                    unselectedTextColor = SuyuanColors.secondaryText,
+                    indicatorColor = SuyuanColors.primary.copy(alpha = 0.12f)
+                )
+            )
+        }
         NavigationBarItem(
             selected = currentTab == "tasks",
             onClick = { onTab("tasks") },

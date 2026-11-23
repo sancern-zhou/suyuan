@@ -12,7 +12,7 @@
           @click="toggleLayer(layer.key)"
         ><i class="shape" :class="`shape-${layer.key}`"></i>{{ layer.label }}</button>
       </div>
-      <div class="map-legend">
+      <div v-if="!compact" class="map-legend">
         <span v-for="level in legendLevels" :key="level.label">
           <i :style="{ background: level.color }"></i>{{ level.label }}
         </span>
@@ -54,7 +54,8 @@ import { LEVEL_NAMES, LEVEL_PALETTE, aqiColor, aqiLevelName, iaqi, iaqiColor } f
 
 const props = defineProps({
   stations: { type: Object, default: () => ({ national: [], townships: [], shengkong: [], office: [] }) },
-  alerts: { type: Array, default: () => [] }
+  alerts: { type: Array, default: () => [] },
+  compact: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['tilt-change'])
@@ -730,7 +731,7 @@ watch(displayMetric, renderMarkers)
 }
 
 .screen-station-series {
-  width: 410px;
+  width: min(410px, calc(100vw - 48px));
   padding: 12px 12px 9px;
   border: 1px solid rgba(63, 200, 212, 0.32);
   border-radius: 8px;
@@ -798,13 +799,59 @@ watch(displayMetric, renderMarkers)
 }
 
 .station-series-chart {
-  width: 384px;
+  width: 100%;
   height: 230px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #8ab6c2;
   font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .metric-controls {
+    top: 10px;
+    width: calc(100% - 20px);
+  }
+
+  .metric-toggle {
+    display: flex;
+    width: 100%;
+    gap: 3px;
+
+    button {
+      flex: 1;
+      justify-content: center;
+      min-width: 0;
+      padding: 5px 2px;
+      font-size: 10px;
+    }
+  }
+
+  .map-controls {
+    bottom: 16px;
+    width: calc(100% - 20px);
+  }
+
+  .map-controls > .layer-toggle {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    width: 100%;
+
+    button {
+      justify-content: center;
+      min-width: 0;
+      padding: 6px 3px;
+      font-size: 11px;
+    }
+  }
+
+  .view-toggle {
+    right: 10px;
+    bottom: 58px;
+    padding: 5px 9px;
+    font-size: 11px;
+  }
 }
 
 @keyframes station-pulse {

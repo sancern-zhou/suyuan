@@ -35,6 +35,17 @@ const routes = [
       }
     },
     {
+      path: '/mobile-map',
+      name: 'mobile-map',
+      component: () => import('@/views/xuchang/MobileMapView.vue'),
+      meta: {
+        requiredModule: 'xuchang-air-quality',
+        title: '实时地图',
+        allowDashboardToken: true,
+        adminOnly: true
+      }
+    },
+    {
       path: '/fieldwatch',
       name: 'fieldwatch',
       component: () => import('@/views/xuchang/FieldWatchView.vue'),

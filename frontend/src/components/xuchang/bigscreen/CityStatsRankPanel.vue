@@ -32,7 +32,7 @@
       <div v-if="displayProvinceRows.length" class="data-table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>城市</th><th>综合指数</th><th>PM2.5</th><th>PM10</th><th>优良天</th></tr>
+            <tr><th>排名</th><th>城市</th><th>综合指数</th><th>PM2.5</th><th>PM10</th><th>优良天</th></tr>
           </thead>
           <tbody>
             <tr
@@ -40,7 +40,8 @@
               :key="row.region"
               :class="{ highlight: row.region === '许昌市' }"
             >
-              <td><span class="sub">#{{ row.rank ?? '—' }}</span> {{ row.region }}</td>
+              <td>{{ row.rank ?? '—' }}</td>
+              <td>{{ row.region }}</td>
               <td>{{ fmt(row.composite_index, 2) }}</td>
               <td>{{ fmt(row.pm25, 1) }}</td>
               <td>{{ fmt(row.pm10, 0) }}</td>
