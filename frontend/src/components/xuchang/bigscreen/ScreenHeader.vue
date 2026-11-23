@@ -5,6 +5,14 @@
       <p class="brand-sub">空气质量 · 排名 · 告警 · 达标态势</p>
     </div>
 
+    <button
+      class="fullscreen-button"
+      type="button"
+      :title="fullscreen ? '退出全屏（Esc）' : '全屏展示大屏（收起平台左侧导航）'"
+      :aria-label="fullscreen ? '退出全屏' : '全屏展示大屏'"
+      @click="$emit('toggle-fullscreen')"
+    >{{ fullscreen ? '⛶ 退出全屏' : '⛶ 全屏' }}</button>
+
     <div class="meta-block">
       <p>数据截止 <strong>{{ formatDateTime(dataCutoffHour) }}</strong></p>
       <p class="status-line" :class="{ stale: error }">
@@ -22,8 +30,11 @@ const props = defineProps({
   dataCutoffHour: { type: String, default: '' },
   generatedAt: { type: String, default: '' },
   loading: { type: Boolean, default: false },
-  error: { type: String, default: '' }
+  error: { type: String, default: '' },
+  fullscreen: { type: Boolean, default: false }
 })
+
+defineEmits(['toggle-fullscreen'])
 </script>
 
 <style lang="scss" scoped>
@@ -59,11 +70,28 @@ const props = defineProps({
   }
 }
 
+.fullscreen-button {
+  margin-left: auto;
+  padding: 7px 12px;
+  border: 1px solid rgba(63, 200, 212, 0.45);
+  border-radius: 6px;
+  background: rgba(7, 41, 59, 0.82);
+  color: #9fe8ee;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+
+  &:hover {
+    background: rgba(63, 200, 212, 0.22);
+    border-color: #3fc8d4;
+  }
+}
+
 .meta-block {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-left: auto;
   font-size: 12px;
   color: #8ab6c2;
   text-align: right;

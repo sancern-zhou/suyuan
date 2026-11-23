@@ -13,6 +13,8 @@
       :generated-at="store.snapshot?.generated_at || ''"
       :loading="store.loading"
       :error="store.error"
+      :fullscreen="isFullscreen"
+      @toggle-fullscreen="toggleFullscreen"
     />
 
     <button
@@ -79,6 +81,26 @@ const store = useBigScreenStore()
 const viewportEl = ref(null)
 const leftOpen = ref(true)
 const rightOpen = ref(true)
+const isFullscreen = ref(false)
+
+const syncFullscreenState = () => {
+  isFullscreen.value = document.fullscreenElement === viewportEl.value
+}
+
+const toggleFullscreen = async () => {
+  try {
+    if (isFullscreen.value) {
+      await document.exitFullscreen()
+    } else if (viewportEl.value?.requestFullscreen) {
+      await viewportEl.value.requestFullscreen()
+    } else {
+      store.error = '当前浏览器不支持全屏，请使用浏览器全屏模式'
+    }
+  } catch (error) {
+    console.warn('[BigScreenView] 全屏切换失败', error)
+    store.error = '全屏切换失败，请使用浏览器全屏模式'
+  }
+}
 // 2.5D 视角切换：切入时收起两侧数据面板（视野更干净、便于截图），切回时恢复原状态
 const panelsBeforeTilt = ref(null)
 const onTiltChange = tilted => {
@@ -118,9 +140,11 @@ const nationalTime = computed(() => {
 onMounted(() => {
   initDashboardAccessToken()
   store.startPolling()
+  document.addEventListener('fullscreenchange', syncFullscreenState)
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', syncFullscreenState)
   store.stopPolling()
 })
 </script>
@@ -136,6 +160,12 @@ onBeforeUnmount(() => {
 
 .bigscreen-viewport.is-embedded {
   position: absolute;
+}
+
+.bigscreen-viewport:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #04141f;
 }
 
 .map-layer {
