@@ -282,18 +282,24 @@ class TownCloudClient:
             return payload
         return payload
 
-    def fetch_station_directory(self) -> list[dict[str, Any]]:
-        """拉取乡镇站目录（airNetwork/page，含 tsno/站名/县区/在线状态）。
+    def fetch_station_directory(
+        self, tstype: str = "4"
+    ) -> list[dict[str, Any]]:
+        """拉取站点目录（airNetwork/page，含 tsno/站名/县区/在线状态）。
 
         airData/page 的数据行不带 tsno（只有站名与 countyId），落库前
-        需要用本目录按 (countyId, name) 关联出站码。
+        需先拉目录按站名关联得到站码；tstype：4=乡镇站、3=省控站、
+        9=办事处站（2=国控站不经本客户端采集）。
+
+        注意 airData/page 的 tstype 参数在不带 tsno 时会被平台忽略
+        （恒返回乡镇站全集行），目录仍需按 tstype 精确拉取。
         """
         rows: list[dict[str, Any]] = []
         page = 1
         while True:
             payload = self._get_json(
                 "/subsystem/ssair/airNetwork/page",
-                {"pageNum": page, "pageSize": 500, "tstype": "4"},
+                {"pageNum": page, "pageSize": 500, "tstype": str(tstype)},
             )
             if payload.get("code") != 200:
                 raise RuntimeError(f"airNetwork/page 查询失败: {payload}")
@@ -305,9 +311,7 @@ class TownCloudClient:
             page += 1
             if page > MAX_PAGES:
                 logger.warning(
-                    "town_cloud_directory_too_many_pages",
-                    total=total,
-                    collected=len(rows),
+                    "town_cloud_too_many_pages", total=total, collected=len(rows)
                 )
                 break
         return rows
@@ -320,28 +324,40 @@ class TownCloudClient:
         time_step: int = 1,
         is_audit: int = 0,
         page_size: int = 2000,
+        tstype: str = "4",
+        factor_type: str = "1",
+        tsno: str | None = None,
     ) -> list[dict[str, Any]]:
-        """拉取时间窗口内全部乡镇站（tstype=4）数据行。
+        """拉取时间窗口内站点数据行。
 
         timeStep: 1=5分钟（窗口不得超过 3 天，平台限制）、2=小时、3=日。
         isAudit: 0=原始 / 1=审核（实测平台对乡镇站小时/日数据两口径返回
         同一套数据，见 xuchang_town_hour_day 抓取器说明）。
+        tstype: 4=乡镇站、3=省控站、9=办事处站。
+        factor_type: air_data_type 因子集字典——1=乡镇全因子（八参数）、
+        4=省控全因子（六参数，仅小时）、5=办事处 PM2.5/PM10 专属。
+        tsno: 站码。**必须携带**——不带 tsno 时平台忽略 tstype、恒返回
+        乡镇站全集行（2026-11-23 两次"平台不提供"误判皆源于此），省控/
+        办事处须逐站查询。
         """
         rows: list[dict[str, Any]] = []
         page = 1
         while True:
+            params: dict[str, Any] = {
+                "pageNum": page,
+                "pageSize": page_size,
+                "tstype": str(tstype),
+                "timeStep": str(time_step),
+                "type": str(factor_type),
+                "isAudit": str(is_audit),
+                "collectionTimeBegin": start.strftime("%Y-%m-%d %H:%M:%S"),
+                "collectionTimeEnd": end.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            if tsno:
+                params["tsno"] = str(tsno)
             payload = self._get_json(
                 "/subsystem/ssair/airData/page",
-                {
-                    "pageNum": page,
-                    "pageSize": page_size,
-                    "tstype": "4",
-                    "timeStep": str(time_step),
-                    "type": "1",
-                    "isAudit": str(is_audit),
-                    "collectionTimeBegin": start.strftime("%Y-%m-%d %H:%M:%S"),
-                    "collectionTimeEnd": end.strftime("%Y-%m-%d %H:%M:%S"),
-                },
+                params,
             )
             if payload.get("code") != 200:
                 raise RuntimeError(f"airData/page 查询失败: {payload}")

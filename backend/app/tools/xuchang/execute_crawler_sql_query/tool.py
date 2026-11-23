@@ -42,6 +42,8 @@ CRAWLER_SQL_TABLES = [
     "XuchangCountyYearTarget",
     "HenanCityYearTarget",
     "Rank168CityMonthly",
+    "OfficeStationFiveMinute",
+    "ShengkongStationHour",
 ]
 
 # 各表白名单对应的数据时间范围（实测），供 Agent 直接判断可查窗口、避免空查。
@@ -72,6 +74,10 @@ TABLE_TIME_RANGES: dict[str, str] = {
                            " 2021/2022/2024 为天数、2023/2025 为比例%；2025 行未定稿）",
     "Rank168CityMonthly": "2026-01~07，生态环境部 168 重点城市排名逐月+累计（PeriodType=month/cum；"
                           "仅用于全国排名与横向对比，浓度绝对值以本地口径为准）",
+    "OfficeStationFiveMinute": "2026-11-23 起，许昌 31 办事处站逐 5 分钟（仅 PM2.5/PM10 两因子；"
+                                "滚动保留 30 天；AQI 需按 HJ633 推算并注明）",
+    "ShengkongStationHour": "2026-11-23 起，许昌 8 省控站逐小时六参数（平台省控仅小时粒度；"
+                             "2 个县'政府'站自 2026-04 起离线；滚动保留 30 天；AQI 需按 HJ633 推算并注明）",
 }
 
 MAX_LIMIT = 5000

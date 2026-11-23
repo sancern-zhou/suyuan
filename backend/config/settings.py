@@ -168,6 +168,24 @@ class Settings(BaseSettings):
         le=180,
         description="乡镇站日数据回看窗口（天），覆盖跨日补审与事后修正",
     )
+    office_five_minute_lookback_minutes: int = Field(
+        default=180,
+        ge=15,
+        le=4320,
+        description="办事处站 5 分钟数据回看窗口（分钟）；平台限制单次查询窗口 ≤ 3 天",
+    )
+    shengkong_hour_lookback_hours: int = Field(
+        default=30,
+        ge=6,
+        le=720,
+        description="省控站小时数据回看窗口（小时），覆盖平台迟到发布与事后修正",
+    )
+    oldcloud_extra_retention_days: int = Field(
+        default=30,
+        ge=7,
+        le=365,
+        description="办事处 5 分钟/省控小时数据保留天数，超过即删除",
+    )
 
     # 助手模式后台委派（run_in_background）在交付边界的等待上限：
     # 等待本会话委派完成后把结果注入观察继续 loop；超时放行交付。

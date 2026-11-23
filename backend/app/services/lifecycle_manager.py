@@ -64,12 +64,18 @@ try:
     from app.fetchers.xuchang_enterprise_clue_weekly import XuchangEnterpriseClueWeeklyFetcher
     from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
     from app.fetchers.xuchang_town_hour_day import XuchangTownAirDataFetcher
+    from app.fetchers.xuchang_oldcloud_extra_stations import (
+        XuchangOfficeFiveMinuteFetcher,
+        XuchangShengkongStationFetcher,
+    )
 except ImportError:  # xuchang 分支专属模块，main 工作树上不存在（可选导入）
     XuchangPollutionCauseTriggerFetcher = None
     XuchangMonthlyReviewEvidenceFetcher = None
     XuchangEnterpriseClueWeeklyFetcher = None
     XuchangTownFiveMinuteFetcher = None
     XuchangTownAirDataFetcher = None
+    XuchangOfficeFiveMinuteFetcher = None
+    XuchangShengkongStationFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -182,6 +188,10 @@ def _configured_fetchers(project_context):
     if XuchangTownAirDataFetcher is not None:
         factories["xuchang_town_hour_fetcher"] = lambda: XuchangTownAirDataFetcher(data_kind="hour")
         factories["xuchang_town_day_fetcher"] = lambda: XuchangTownAirDataFetcher(data_kind="day")
+    if XuchangOfficeFiveMinuteFetcher is not None:
+        factories["xuchang_office_five_minute_fetcher"] = XuchangOfficeFiveMinuteFetcher
+    if XuchangShengkongStationFetcher is not None:
+        factories["xuchang_shengkong_station_fetcher"] = XuchangShengkongStationFetcher
     if XuchangPollutionCauseTriggerFetcher is not None:
         factories["xuchang_pollution_cause_trigger_fetcher"] = XuchangPollutionCauseTriggerFetcher
     if XuchangMonthlyReviewEvidenceFetcher is not None:

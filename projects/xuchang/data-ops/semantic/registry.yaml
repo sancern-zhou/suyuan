@@ -441,6 +441,52 @@ cubes:
         name: AQI(平台5分钟不发布,恒空)
       onlineSites:
         name: 有数据站点数(去重)
+  OfficeFiveMinute:
+    dataset: DataCrawler.OfficeStationFiveMinute
+    grain: 一行 = 办事处站 × 5分钟
+    applicability: 许昌31个街道办事处站的5分钟实时数据（仅城区街道办事处，与乡镇站互补）
+    source_window: 2026-11-23起，滚动保留最近30天
+    limitations:
+      - 平台办事处站仅发布PM2.5/PM10两因子（SO2/NO2/CO/O3恒无），本表不包含这些因子
+      - 平台不发布AQI/等级，AQI需按HJ633由PM2.5/PM10两因子推算并在结论中注明
+      - 建安区昌盛街道办事处自2026-11-21起通讯中断；韩城目录标离线但数据在流
+      - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 5分钟记录数
+      avgPm25:
+        name: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+      onlineSites:
+        name: 有数据站点数(去重)
+  ShengkongHour:
+    dataset: DataCrawler.ShengkongStationHour
+    grain: 一行 = 省控站 × 小时
+    applicability: 许昌8个省控站的逐小时数据（其中2个县"政府"站自2026-04起离线，正常在线6站）
+    source_window: 2026-11-23起，滚动保留最近30天
+    limitations:
+      - 平台省控站仅小时粒度（5分钟各因子集均无数据），无更细粒度
+      - 平台不发布AQI/等级，AQI与首要污染物需按HJ633由六参数推算并在结论中注明
+      - 无NO/NOX（平台省控因子集不返回）
+      - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 小时记录数
+      avgPm25:
+        name: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+      avgSo2:
+        name: SO2(μg/m³)
+      avgNo2:
+        name: NO2(μg/m³)
+      avgCo:
+        name: CO(mg/m³)
+      avgO3:
+        name: O3(μg/m³)
+      onlineSites:
+        name: 有数据站点数(去重)
   ProvinceMonth:
     dataset: DataCrawler.ProvinceMonthReport
     grain: 一行 = 期次(Scope=month) × 层级(Level) × 区域

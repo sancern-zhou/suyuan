@@ -773,10 +773,16 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
     async def _stations(self, alert_names: set[str]) -> dict[str, Any]:
         national = await asyncio.to_thread(self._national_stations, alert_names)
         townships = await self._township_stations()
+        shengkong = await self._shengkong_stations()
+        office = await self._office_stations()
+        # counties（区县代表点）已从地图下线（2026-11-23 改为真实省控/办事处站），
+        # 但 FieldWatchView 的"区县实况"面板仍消费该段，保留在快照中
         counties = await self._county_stations()
         return {
             "national": national,
             "townships": townships,
+            "shengkong": shengkong,
+            "office": office,
             "counties": counties,
         }
 
@@ -1025,6 +1031,156 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "so2": conc["so2"],
                 "no2": conc["no2"],
                 "co": conc["co"],
+            })
+        return stations
+
+    async def _shengkong_stations(self) -> List[dict[str, Any]]:
+        """省控站点位（平台 listMap 坐标）+ ShengkongHour 最新小时值。
+
+        旧云平台省控站（tstype=3，8 站；襄城县政府/鄢陵县县政府自
+        2026-04 起通讯中断，其余 6 站正常报数）。平台省控仅小时粒度
+        （5 分钟各因子集均无数据），气泡 AQI 按 HJ633 由六参数推算并标注。
+        """
+        from app.tools.xuchang.station_catalog.catalog import load_shengkong_coordinates
+        from app.tools.xuchang.station_catalog.coordinates import normalize_station_name
+
+        now = self.now_factory()
+        start = (now - timedelta(hours=3)).strftime("%Y-%m-%dT%H:00:00")
+        end = (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:00:00")
+        probe = await cube_load({
+            "measures": ["ShengkongHour.count"],
+            "dimensions": ["ShengkongHour.dataTime"],
+            "timeDimensions": [{
+                "dimension": "ShengkongHour.dataTime",
+                "dateRange": [start, end],
+            }],
+            "order": {"ShengkongHour.dataTime": "desc"},
+            "limit": 1,
+        })
+        latest_time = _text(probe[0].get("ShengkongHour.dataTime")) if probe else None
+        if not latest_time:
+            return []
+        rows = await cube_load({
+            "measures": [
+                "ShengkongHour.avgPm25", "ShengkongHour.avgPm10",
+                "ShengkongHour.avgSo2", "ShengkongHour.avgNo2",
+                "ShengkongHour.avgCo", "ShengkongHour.avgO3",
+            ],
+            "dimensions": ["ShengkongHour.stationName"],
+            "timeDimensions": [{
+                "dimension": "ShengkongHour.dataTime",
+                "dateRange": _hour_range(latest_time),
+            }],
+            "order": {"ShengkongHour.avgPm25": "desc"},
+            "limit": 10,
+        })
+        coordinates = load_shengkong_coordinates()
+        stations = []
+        for item in _flat(rows, "ShengkongHour"):
+            name = _text(item.get("stationName"))
+            if not name:
+                continue
+            coord = coordinates.get(normalize_station_name(name))
+            if not coord:
+                continue
+            conc = {
+                "so2": _clean_conc(item.get("avgSo2")),
+                "no2": _clean_conc(item.get("avgNo2")),
+                "o3": _clean_conc(item.get("avgO3")),
+                "co": _clean_conc(item.get("avgCo")),
+                "pm10": _clean_conc(item.get("avgPm10")),
+                "pm25": _clean_conc(item.get("avgPm25")),
+            }
+            est_aqi, est_primary = hourly_aqi_and_primary(conc)
+            stations.append({
+                "station_name": name,
+                "type": "shengkong",
+                "lon": coord["longitude"],
+                "lat": coord["latitude"],
+                "data_time": latest_time,
+                "aqi": int(round(est_aqi)) if est_aqi is not None else None,
+                "aqi_estimated": est_aqi is not None,
+                "primary": est_primary,
+                "pm25": conc["pm25"],
+                "pm10": conc["pm10"],
+                "o3": conc["o3"],
+                "so2": conc["so2"],
+                "no2": conc["no2"],
+                "co": conc["co"],
+            })
+        return stations
+
+    async def _office_stations(self) -> List[dict[str, Any]]:
+        """办事处站点位（平台 listMap 坐标）+ OfficeFiveMinute 最新 5 分钟值。
+
+        旧云平台办事处站（tstype=9，31 个街道办事处，平台仅发布
+        PM2.5/PM10 两因子），气泡 AQI 按 HJ633 由两因子推算并标注。
+        """
+        from app.tools.xuchang.station_catalog.catalog import load_office_coordinates
+        from app.tools.xuchang.station_catalog.coordinates import normalize_station_name
+
+        now = self.now_factory()
+        start = (now - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%S")
+        end = (now + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
+        probe = await cube_load({
+            "measures": ["OfficeFiveMinute.count"],
+            "dimensions": ["OfficeFiveMinute.dataTime"],
+            "timeDimensions": [{
+                "dimension": "OfficeFiveMinute.dataTime",
+                "dateRange": [start, end],
+            }],
+            "order": {"OfficeFiveMinute.dataTime": "desc"},
+            "limit": 1,
+        })
+        latest_time = _text(probe[0].get("OfficeFiveMinute.dataTime")) if probe else None
+        if not latest_time:
+            return []
+        rows = await cube_load({
+            "measures": [
+                "OfficeFiveMinute.avgPm25", "OfficeFiveMinute.avgPm10",
+            ],
+            "dimensions": ["OfficeFiveMinute.stationName"],
+            "timeDimensions": [{
+                "dimension": "OfficeFiveMinute.dataTime",
+                "dateRange": _minute_range(latest_time),
+            }],
+            "order": {"OfficeFiveMinute.avgPm25": "desc"},
+            "limit": 40,
+        })
+        coordinates = load_office_coordinates()
+        stations = []
+        for item in _flat(rows, "OfficeFiveMinute"):
+            name = _text(item.get("stationName"))
+            if not name:
+                continue
+            coord = coordinates.get(normalize_station_name(name))
+            if not coord:
+                continue
+            conc = {
+                "pm10": _clean_conc(item.get("avgPm10")),
+                "pm25": _clean_conc(item.get("avgPm25")),
+                "so2": None,
+                "no2": None,
+                "o3": None,
+                "co": None,
+            }
+            # 办事处仅 PM2.5/PM10 两因子，AQI 取两因子 IAQI 最大值（推算）
+            est_aqi, est_primary = hourly_aqi_and_primary(conc)
+            stations.append({
+                "station_name": name,
+                "type": "office",
+                "lon": coord["longitude"],
+                "lat": coord["latitude"],
+                "data_time": latest_time,
+                "aqi": int(round(est_aqi)) if est_aqi is not None else None,
+                "aqi_estimated": est_aqi is not None,
+                "primary": est_primary,
+                "pm25": conc["pm25"],
+                "pm10": conc["pm10"],
+                "o3": None,
+                "so2": None,
+                "no2": None,
+                "co": None,
             })
         return stations
 

@@ -60,6 +60,8 @@ CACHE_DIR_NAME = "xuchang_station_catalog"
 CACHE_FILE_NAME = "catalog_cache.json"
 CACHE_TTL_HOURS = 168.0
 TOWNSHIP_COORDINATES_FILE = Path(__file__).with_name("township_coordinates.tsv")
+OFFICE_COORDINATES_FILE = Path(__file__).with_name("office_coordinates.tsv")
+SHENGKONG_COORDINATES_FILE = Path(__file__).with_name("shengkong_coordinates.tsv")
 HIDDEN_STATIONS_FILE = Path(__file__).with_name("hidden_stations.txt")
 
 
@@ -121,6 +123,51 @@ def load_township_coordinates() -> dict[str, dict[str, Any]]:
                 coordinates.setdefault(_normalize_station_name(name[len(prefix):]), record)
                 break
     return coordinates
+
+
+def _load_platform_coordinates(path: Path) -> dict[str, dict[str, Any]]:
+    """加载旧云平台办事处/省控站坐标 TSV（listMap 权威拉取，GCJ-02）。
+
+    列：站名<TAB>区县<TAB>经度<TAB>纬度；键用与 township 表相同的
+    归一化（去空白、臺->台）。
+    """
+    coordinates: dict[str, dict[str, Any]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        logger.warning("xuchang_platform_coordinates_read_failed",
+                       file=path.name, error=str(exc))
+        return coordinates
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t") if "\t" in line else line.split(r"\t")
+        if len(fields) != 4:
+            continue
+        name, district, longitude, latitude = (item.strip() for item in fields)
+        try:
+            lon = float(longitude)
+            lat = float(latitude)
+        except ValueError:
+            continue
+        coordinates[_normalize_station_name(name)] = {
+            "district": district,
+            "longitude": lon,
+            "latitude": lat,
+        }
+    return coordinates
+
+
+@lru_cache(maxsize=1)
+def load_office_coordinates() -> dict[str, dict[str, Any]]:
+    """办事处站（tstype=9，31 个街道办事处）坐标表。"""
+    return _load_platform_coordinates(OFFICE_COORDINATES_FILE)
+
+
+@lru_cache(maxsize=1)
+def load_shengkong_coordinates() -> dict[str, dict[str, Any]]:
+    """省控站（tstype=3，8 站）坐标表。"""
+    return _load_platform_coordinates(SHENGKONG_COORDINATES_FILE)
 
 
 @lru_cache(maxsize=1)

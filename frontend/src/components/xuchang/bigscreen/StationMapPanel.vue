@@ -51,7 +51,7 @@ import { loadAMap } from '@/utils/mapLoader.js'
 import { LEVEL_NAMES, LEVEL_PALETTE, aqiColor, iaqiColor } from './aqiLevels.js'
 
 const props = defineProps({
-  stations: { type: Object, default: () => ({ national: [], townships: [], counties: [] }) },
+  stations: { type: Object, default: () => ({ national: [], townships: [], shengkong: [], office: [] }) },
   alerts: { type: Array, default: () => [] }
 })
 
@@ -59,11 +59,12 @@ const emit = defineEmits(['tilt-change'])
 
 const mapContainer = ref(null)
 const error = ref('')
-const visibleLayers = ref(['national', 'townships', 'counties'])
+const visibleLayers = ref(['national', 'townships', 'shengkong', 'office'])
 const layerOptions = [
   { key: 'national', label: '国控站' },
   { key: 'townships', label: '乡镇站' },
-  { key: 'counties', label: '区县' }
+  { key: 'shengkong', label: '省控站' },
+  { key: 'office', label: '办事处' }
 ]
 const legendLevels = LEVEL_NAMES.map((label, index) => ({
   label: label.replace('污染', ''),
@@ -76,9 +77,9 @@ let boundaryPolygon = null
 let boundaryBounds = null
 const INIT_CENTER = [113.852, 34.028]
 const INIT_ZOOM = 10.5
-const markerGroups = { national: [], townships: [], counties: [] }
+const markerGroups = { national: [], townships: [], shengkong: [], office: [] }
 
-const TYPE_LABELS = { national: '国控站', township: '乡镇站', county: '区县代表点' }
+const TYPE_LABELS = { national: '国控站', township: '乡镇站', shengkong: '省控站', office: '办事处站' }
 
 // 图标数值切换：AQI + 六项污染物（CO 为 mg/m³，其余 μg/m³）
 const metricOptions = [
@@ -162,7 +163,8 @@ const buildMarker = (station, isAlerting) => {
   const label = `${station.station_name} ${METRIC_LABELS[metric]} ${text}`
   const marker = new AMap.Marker({
     position: new AMap.LngLat(station.lon, station.lat),
-    // 深色大屏样式：等级色图标（国控=三角形/乡镇=圆形/区县=菱形），告警站点加大加脉冲光晕
+    // 深色大屏样式：等级色图标（国控=三角形/乡镇=圆形/省控=菱形/办事处=六边形），
+    // 告警站点加大加脉冲光晕
     content: `
       <div class="screen-station-dot type-${esc(station.type || 'national')}${isAlerting ? ' alerting' : ''}" style="--dot-color:${esc(color)}">
         <span>${esc(text)}</span>
@@ -194,14 +196,16 @@ const clearMarkers = () => {
   Object.values(markerGroups).forEach(markers => markers.forEach(marker => marker.setMap(null)))
   markerGroups.national = []
   markerGroups.townships = []
-  markerGroups.counties = []
+  markerGroups.shengkong = []
+  markerGroups.office = []
 }
 
 const applyLayerVisibility = () => {
   const show = key => visibleLayers.value.includes(key)
   markerGroups.national.forEach(marker => marker.setMap(show('national') ? map : null))
   markerGroups.townships.forEach(marker => marker.setMap(show('townships') ? map : null))
-  markerGroups.counties.forEach(marker => marker.setMap(show('counties') ? map : null))
+  markerGroups.shengkong.forEach(marker => marker.setMap(show('shengkong') ? map : null))
+  markerGroups.office.forEach(marker => marker.setMap(show('office') ? map : null))
 }
 
 const renderMarkers = () => {
@@ -215,8 +219,11 @@ const renderMarkers = () => {
   ;(props.stations?.townships || []).forEach(station => {
     markerGroups.townships.push(buildMarker(station, false))
   })
-  ;(props.stations?.counties || []).forEach(station => {
-    markerGroups.counties.push(buildMarker(station, false))
+  ;(props.stations?.shengkong || []).forEach(station => {
+    markerGroups.shengkong.push(buildMarker(station, false))
+  })
+  ;(props.stations?.office || []).forEach(station => {
+    markerGroups.office.push(buildMarker(station, false))
   })
   applyLayerVisibility()
 }
@@ -382,8 +389,12 @@ watch(displayMetric, renderMarkers)
       border-radius: 50%;
     }
 
-    &.shape-county {
+    &.shape-shengkong {
       transform: rotate(45deg) scale(0.85);
+    }
+
+    &.shape-office {
+      clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
     }
   }
 }
@@ -522,8 +533,8 @@ watch(displayMetric, renderMarkers)
 
   // 乡镇站：圆形（默认样式即圆形，无需覆写）
 
-  // 区县代表点：菱形（背景层旋转 45°，AQI 文字保持水平）
-  &.type-county {
+  // 省控站：菱形（背景层旋转 45°，AQI 文字保持水平）
+  &.type-shengkong {
     background: transparent;
     border-color: transparent;
     box-shadow: none;
@@ -540,6 +551,38 @@ watch(displayMetric, renderMarkers)
 
     > span {
       position: relative;
+    }
+  }
+
+  // 办事处站：六边形（背景层 clip-path，平顶左右尖）
+  &.type-office {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+    }
+
+    &::after {
+      inset: 0;
+      z-index: 1;
+      background: rgba(255, 255, 255, 0.85);
+      filter: drop-shadow(0 0 6px color-mix(in srgb, var(--dot-color) 70%, transparent));
+    }
+
+    &::before {
+      inset: 2px;
+      z-index: 2;
+      background: var(--dot-color);
+    }
+
+    > span {
+      position: relative;
+      z-index: 3;
     }
   }
 
