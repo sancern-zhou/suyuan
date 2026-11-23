@@ -156,6 +156,9 @@ class AirAlertRuleConfig:
     #   会漏掉区域性同步抬升，如 11-22 22:00 市一中/芙蓉广场案例）；
     # - 路径 B（共偏）：OL 触发站 wz < mr_wz_max（Iglewicz–Hoaglin modified
     #   z-score）且存在 >=1 个伴生站正向偏离 >= mr_companion_ratio × 自身 OL 阈值；
+    # - 路径 C（区域一致上升）：多数站同向上升，区域中位累计升幅达到较低
+    #   下限即可触发，不再要求单站达到 DS 半阈值；PM2.5 单小时周期，其余
+    #   因子连续两个 5 分钟周期（区域整体缓升场景）；
     # - 反弹守卫：基线当日分位 < mr_rebound_pct 时，要求抬升后进六站中位数以上
     #   或幅度 >= 全阈值；
     # - 物理上限（mr_plausibility_cap）：任一站超限视为平台数据故障，本槽不判 MR；
@@ -170,6 +173,16 @@ class AirAlertRuleConfig:
     mr_rebound_pct: float = 30.0
     mr_companion_ratio: float = 0.5
     mr_wz_max: float = 3.5
+    # 路径 C（2026-11-23）：区域整体缓升。至少 5 个有效站且 80% 同向严格
+    # 上升，区域中位数升幅达到下限。PM2.5 小时数据单周期即触发；其余因子
+    # 连续 2 个 5 分钟槽。全优且主站升幅不足 2 倍下限时进 digest。
+    mr_regional_trend_enabled: bool = True
+    mr_regional_trend_min_sites: int = 5
+    mr_regional_trend_min_ratio: float = 0.8
+    mr_regional_trend_hold_slots: int = 2
+    mr_regional_trend_rise_floor: dict[str, float] = field(default_factory=lambda: {
+        "PM2.5": 2.0, "PM10": 3.0, "SO2": 2.0, "NO2": 2.0, "CO": 0.05,
+    })
     mr_plausibility_cap: dict[str, float] = field(default_factory=lambda: {
         "PM2.5": 800.0, "PM10": 1000.0, "SO2": 800.0, "NO2": 500.0, "CO": 10.0,
     })

@@ -162,11 +162,16 @@ def _multi_station_fact(alert: dict[str, Any], name: str, unit: str) -> str:
     )
     parts = [f"{name}实测{_dec(alert.get('station_value'))}{unit}"]
     if primary is not None:
-        if path == "co_rise" and primary.get("baseline") is not None:
+        if path in {"co_rise", "regional_trend"} and primary.get("baseline") is not None:
             parts.append(f"较基线{_dec(primary.get('baseline'))}抬升{_dec(primary.get('rise'))}")
         elif primary.get("peer_mean") is not None:
             parts.append(f"周边站均值{_dec(primary.get('peer_mean'))}，偏高{_dec(primary.get('delta'))}")
-    parts.append(f"共{len(involved)}站{'同步抬升' if path == 'co_rise' else '一致偏高'}")
+    if path == "regional_trend":
+        hold = int(detail.get("trend_hold_slots") or 1)
+        scope = "本小时同步抬升" if hold == 1 else f"连续{hold}个周期上升"
+        parts.append(f"{scope}，共{len(involved)}站持续上升")
+    else:
+        parts.append(f"共{len(involved)}站{'同步抬升' if path == 'co_rise' else '一致偏高'}")
     parts.append("已覆盖涉事站点单站告警")
     return "，".join(parts)
 

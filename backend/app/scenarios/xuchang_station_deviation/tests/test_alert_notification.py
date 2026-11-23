@@ -305,6 +305,31 @@ def test_multi_station_co_rise_region_facts_use_rise_value():
     assert "抬升缺测" not in message
 
 
+def test_multi_station_regional_trend_message():
+    alert = _deviation_alert(
+        target_pollutant="PM2.5", station_id="1012A", station_name="望田路111号",
+        station_value=34.0, rule_type="multi_station_rise", rule="multi_station_rise",
+        detail={
+            "path": "regional_trend", "trend_hold_slots": 1,
+            "involved_stations": [
+                {"station_id": "1012A", "station_name": "望田路111号",
+                 "station_value": 34.0, "baseline": 30.0, "rise": 4.0},
+                {"station_id": "1005A", "station_name": "市一中",
+                 "station_value": 28.0, "baseline": 25.0, "rise": 3.0},
+            ],
+            "region_stations": [
+                {"station_id": "1005A", "station_name": "市一中",
+                 "station_value": 28.0, "baseline": 25.0, "rise": 3.0},
+            ],
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+    assert "望田路111号实测34.0微克/立方米，较基线30.0抬升4.0" in message
+    assert "本小时同步抬升，共2站持续上升" in message
+
+
 def test_fallback_message_matches_main_renderer():
     package = _package([{"alert": _deviation_alert(), "evidence": _deviation_evidence()}])
 

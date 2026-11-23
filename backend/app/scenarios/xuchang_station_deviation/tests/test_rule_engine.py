@@ -1007,6 +1007,111 @@ def test_mr_pure_gradual_co_rise_without_any_sudden_jump():
     assert {item["station_id"] for item in outcome.region_merged} == {"a", "b"}
 
 
+# ---- MR 区域一致上升（2026-11-23：低幅度、多数站、PM2.5 单周期）----
+
+def test_mr_regional_trend_detects_citywide_gradual_pm25_rise():
+    # 六站单小时同步缓慢上升，末跳远低于 DS 半阈值；当前小时即可识别，
+    # 当前浓度最高的望田路（a）为主站。
+    hour0 = datetime(2026, 9, 12, 17, 0, tzinfo=TZ)
+    outcome = _hourly_mr_run({
+        "a": [30.0, 31.0, 32.0, 36.0],
+        "b": [25.0, 26.0, 27.0, 30.0],
+        "c": [20.0, 21.0, 22.0, 25.0],
+        "d": [22.0, 23.0, 24.0, 27.0],
+        "e": [18.0, 19.0, 20.0, 23.0],
+        "f": [24.0, 25.0, 26.0, 29.0],
+    }, hour0)
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    mr = outcome.candidates[0]
+    assert mr["detail"]["path"] == "regional_trend"
+    assert mr["station_id"] == "a"
+    assert mr["detail"]["trend_hold_slots"] == 1
+    assert mr["detail"]["regional_median_rise"] == 3.0
+    assert len(mr["detail"]["involved_stations"]) == 6
+
+
+def test_mr_regional_trend_pm25_triggers_on_first_rising_hour():
+    # PM2.5 第一个上升小时即触发，不再等第二个上升小时。
+    hour0 = datetime(2026, 9, 12, 17, 0, tzinfo=TZ)
+    rows = []
+    for index, sid in enumerate(STATIONS):
+        rows.extend(_hour_rows([
+            (hour0, 20.0 + index), (hour0 + timedelta(hours=1), 22.0 + index),
+        ], sid))
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour0 + timedelta(hours=1),
+        config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    assert outcome.candidates[0]["detail"]["path"] == "regional_trend"
+    assert outcome.candidates[0]["detail"]["trend_hold_slots"] == 1
+
+
+def test_mr_regional_trend_pm25_single_cycle_micro_rise_does_not_trigger():
+    hour0 = datetime(2026, 9, 12, 17, 0, tzinfo=TZ)
+    rows = []
+    for index, sid in enumerate(STATIONS):
+        rows.extend(_hour_rows([
+            (hour0, 20.0 + index), (hour0 + timedelta(hours=1), 21.0 + index),
+        ], sid))
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour0 + timedelta(hours=1),
+        config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    assert outcome.candidates == []
+
+
+def test_mr_regional_trend_five_minute_pollutant_still_requires_two_slots():
+    # PM10 首个上升槽不触发区域趋势；第二个上升槽才满足持续性要求。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        rows.extend(_history_rows(sid, [20.0, 21.0, 23.0, 25.0], slot))
+        rows.append(_row(sid, slot, {"pm10": 27.0}))
+    # 首个上升槽单独构造，确保序列中不含任何未来槽。
+    first_rows = []
+    for sid in STATIONS:
+        first_rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        first_rows.extend(_history_rows(sid, [20.0, 21.0], slot))
+    first = _cycle(first_rows, slot - timedelta(minutes=5))
+    assert first.candidates == []
+    outcome = _cycle(rows, slot)
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    assert outcome.candidates[0]["detail"]["path"] == "regional_trend"
+    assert outcome.candidates[0]["detail"]["trend_hold_slots"] == 2
+
+
+def test_mr_regional_trend_rejects_minority_or_flat_micro_drift():
+    hour0 = datetime(2026, 9, 12, 17, 0, tzinfo=TZ)
+    minority = {sid: [20.0, 21.0, 22.0, 23.0] for sid in STATIONS[:2]}
+    minority.update({sid: [20.0] * 4 for sid in STATIONS[2:]})
+    assert _hourly_mr_run(minority, hour0).candidates == []
+    micro = {sid: [20.0, 20.2, 20.4, 20.6] for sid in STATIONS}
+    assert _hourly_mr_run(micro, hour0).candidates == []
+
+
+def test_mr_regional_trend_ignores_stations_without_pollution_level():
+    # 缺上一小时等级的站不能混入区域趋势（候选构造要求等级可判定）。
+    hour0 = datetime(2026, 9, 12, 17, 0, tzinfo=TZ)
+    rows = []
+    for index, sid in enumerate(STATIONS):
+        series = [20.0 + index, 21.0 + index, 22.0 + index, 25.0 + index]
+        moments = [hour0 + timedelta(hours=i) for i in range(4)]
+        rows.extend(_hour_rows(list(zip(moments[:2], series[:2])), sid))
+        rows.extend(_hour_rows(list(zip(moments[2:], series[2:])), sid))
+        if sid == "f":
+            rows = [row for row in rows if not (
+                row["station_id"] == "f" and row["data_time"] == moments[-1]
+            )]
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour0 + timedelta(hours=3),
+        config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    assert [c["rule_type"] for c in outcome.candidates] == ["multi_station_rise"]
+    assert len(outcome.candidates[0]["detail"]["involved_stations"]) == 5
+
+
 # ---- 推送链协同（引擎产物 → 管控）----
 
 def test_priority_keeps_sudden_rise_over_outlier(tmp_path):

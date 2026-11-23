@@ -595,6 +595,67 @@ def modified_z_score(values: dict[str, float], station_id: str) -> float:
     return 0.6745 * (x - med) / mad
 
 
+def _regional_trend(
+    *,
+    grain: str,
+    slot: datetime,
+    pollutant: str,
+    values: dict[str, float],
+    levels: dict[tuple[str, str], str],
+    series_by_station: dict[str, list[tuple[datetime, float]]],
+    names: dict[str, str],
+    config: AirAlertRuleConfig,
+) -> dict[str, dict[str, Any]]:
+    """路径 C：多数站同向上升；PM2.5 单小时，其余因子连续两个 5 分钟槽。"""
+    if not config.mr_regional_trend_enabled:
+        return {}
+    available = len(values)
+    if available < max(int(config.mr_regional_trend_min_sites), 1):
+        return {}
+    hold = 1 if grain == GRANULARITY_HOUR and pollutant == "PM2.5" else max(
+        int(config.mr_regional_trend_hold_slots), 2
+    )
+    tail_count = hold + 1
+    step = SLOT_STEP[grain]
+    rising: dict[str, dict[str, Any]] = {}
+    for sid in sorted(values):
+        level = levels.get((sid, pollutant))
+        if level is None:
+            continue
+        series = series_by_station.get(sid) or []
+        tail = _tail_values(series, tail_count, step, slot, grain)
+        if tail is None or len(tail) != tail_count:
+            continue
+        gains = [tail[index + 1] - tail[index] for index in range(hold)]
+        # 每槽严格上升，避免平台同值重复上报被当作持续趋势。
+        if any(gain <= 0 for gain in gains):
+            continue
+        rising[sid] = {
+            "station_id": sid,
+            "station_name": names.get(sid, sid),
+            "station_value": values[sid],
+            "baseline": round(tail[0], 3),
+            "rise": round(sum(gains), 3),
+            "rise_window_values": tail,
+            "air_quality_level": levels.get((sid, pollutant)),
+        }
+    if len(rising) < max(int(config.mr_regional_trend_min_sites), 1):
+        return {}
+    if len(rising) / available < float(config.mr_regional_trend_min_ratio):
+        return {}
+    floor = float((config.mr_regional_trend_rise_floor or {}).get(pollutant, 0.0))
+    regional_rise = median(item["rise"] for item in rising.values())
+    if regional_rise < floor:
+        return {}
+    for item in rising.values():
+        item["admission"] = "regional_trend"
+        item["threshold"] = floor
+        item["regional_median_rise"] = round(regional_rise, 3)
+        item["regional_rise_floor"] = floor
+        item["trend_hold_slots"] = hold
+    return rising
+
+
 def evaluate_multi_station_rise(
     outcome: CycleOutcome,
     *,
@@ -616,6 +677,8 @@ def evaluate_multi_station_rise(
     mr_amplitude_ratio×CL 阈值（渐升型，2026-11-22 定版）且过绝对下限；
     反弹守卫拦截低洼基线的微反弹。
     路径 B（co_deviation，空间维度）：OL 触发站 wz<mr_wz_max 且存在同向伴生站。
+    路径 C（regional_trend，区域趋势）：多数站同向上升，区域中位升幅达到
+    较低下限；PM2.5 单小时，其余因子连续多槽。主站取当前浓度最高站。
     触发后覆盖涉事站点的单站 DS/CL/OL 候选（进 region_merged 抑制流水，指回
     MR 事件）；全部涉事站为优档且主站幅度不足全阈值时降级 digest。
     """
@@ -699,6 +762,15 @@ def evaluate_multi_station_rise(
     if len(passed) >= int(config.mr_min_sites):
         path, involved = "co_rise", passed
 
+    # ---- 路径 C：区域一致上升（低幅度、多数站、连续多槽）----
+    if path is None:
+        trend = _regional_trend(
+            grain=grain, slot=slot, pollutant=pollutant, values=values, levels=levels,
+            series_by_station=series_by_station, names=names, config=config,
+        )
+        if trend:
+            path, involved = "regional_trend", trend
+
     # ---- 路径 B：共偏（OL 触发站 wz 有效 + 同向伴生）----
     if path is None:
         for sid in sorted(values):
@@ -749,7 +821,10 @@ def evaluate_multi_station_rise(
         gained = float(entry.get("rise") if "rise" in entry else entry.get("delta") or 0)
         return (gained / threshold) if threshold > 0 else 0.0
 
-    primary_sid = max(sorted(involved), key=lambda s: (_amplitude(involved[s]), s))
+    primary_sid = max(
+        sorted(involved),
+        key=lambda s: (values[s] if path == "regional_trend" else _amplitude(involved[s]), s),
+    )
     primary = involved[primary_sid]
     # 低基线反弹不报送（2026-11-20 需求方定版）：主站基线处当日低分位时，
     # 幅度比会被绝对门槛在低基线上放大（如 5→14 相对阈值 6 达 1.5×），
@@ -761,6 +836,9 @@ def evaluate_multi_station_rise(
     )
     all_excellent = all(entry.get("air_quality_level") == "优" for entry in involved.values())
     tier = "digest" if all_excellent and _amplitude(primary) < 1.0 else "push"
+    if path == "regional_trend":
+        floor = float((config.mr_regional_trend_rise_floor or {}).get(pollutant, 0.0))
+        tier = "digest" if all_excellent and float(primary.get("rise") or 0) < 2 * floor else "push"
     if primary_rebound:
         tier = "digest"
 
@@ -771,7 +849,10 @@ def evaluate_multi_station_rise(
         "region_stations": others,
         "primary_amplitude": round(_amplitude(primary), 3),
         "mr_tier": tier,
-        "threshold": float(primary.get("threshold") or 0),
+        "threshold": float(primary.get("threshold") or primary.get("regional_rise_floor") or 0),
+        "trend_hold_slots": primary.get("trend_hold_slots") if path == "regional_trend" else None,
+        "regional_median_rise": primary.get("regional_median_rise"),
+        "available_station_count": len(values) if path == "regional_trend" else None,
         "wz": (
             {names.get(k, k): (None if wz_map[k] == float("inf") else round(wz_map[k], 2)) for k in sorted(wz_map)}
             or None
@@ -790,7 +871,9 @@ def evaluate_multi_station_rise(
     )
 
     # 覆盖涉事站点的单站候选（共偏路径不覆盖 CL：CL 是时间维度抬升）。
-    covered_rules = {"sudden_rise", "spatial_outlier"} | ({"continuous_rise"} if path == "co_rise" else set())
+    covered_rules = {"sudden_rise", "spatial_outlier"} | (
+        {"continuous_rise"} if path in {"co_rise", "regional_trend"} else set()
+    )
     kept: list[dict[str, Any]] = []
     for alert in outcome.candidates:
         if (
