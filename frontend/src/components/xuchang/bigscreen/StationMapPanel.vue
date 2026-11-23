@@ -161,6 +161,8 @@ const buildMarker = (station, isAlerting) => {
   // AQI 直接按等级上色；污染物按 HJ633 IAQI 折点换算后上色
   const color = metric === 'aqi' ? aqiColor(station.aqi) : iaqiColor(metric, metricValue(station, metric))
   const label = `${station.station_name} ${METRIC_LABELS[metric]} ${text}`
+  const largeShape = ['shengkong', 'office'].includes(station.type)
+  const markerSize = isAlerting ? (largeShape ? 40 : 32) : (largeShape ? 32 : 24)
   const marker = new AMap.Marker({
     position: new AMap.LngLat(station.lon, station.lat),
     // 深色大屏样式：等级色图标（国控=三角形/乡镇=圆形/省控=菱形/办事处=六边形），
@@ -169,7 +171,7 @@ const buildMarker = (station, isAlerting) => {
       <div class="screen-station-dot type-${esc(station.type || 'national')}${isAlerting ? ' alerting' : ''}" style="--dot-color:${esc(color)}">
         <span>${esc(text)}</span>
       </div>`,
-    offset: new AMap.Pixel(isAlerting ? -16 : -12, isAlerting ? -16 : -12),
+    offset: new AMap.Pixel(-markerSize / 2, -markerSize / 2),
     title: label,
     zIndex: isAlerting ? 130 : 110
   })
@@ -535,6 +537,8 @@ watch(displayMetric, renderMarkers)
 
   // 省控站：菱形（背景层旋转 45°，AQI 文字保持水平）
   &.type-shengkong {
+    width: 32px;
+    height: 32px;
     background: transparent;
     border-color: transparent;
     box-shadow: none;
@@ -542,7 +546,7 @@ watch(displayMetric, renderMarkers)
     &::before {
       content: '';
       position: absolute;
-      inset: 4px;
+      inset: 2px;
       background: var(--dot-color);
       border: 2px solid rgba(255, 255, 255, 0.85);
       box-shadow: 0 0 10px color-mix(in srgb, var(--dot-color) 70%, transparent);
@@ -556,6 +560,8 @@ watch(displayMetric, renderMarkers)
 
   // 办事处站：六边形（背景层 clip-path，平顶左右尖）
   &.type-office {
+    width: 32px;
+    height: 32px;
     background: transparent;
     border-color: transparent;
     box-shadow: none;
@@ -590,6 +596,12 @@ watch(displayMetric, renderMarkers)
     width: 32px;
     height: 32px;
     animation: station-pulse 1.4s ease-in-out infinite;
+
+    &.type-shengkong,
+    &.type-office {
+      width: 40px;
+      height: 40px;
+    }
   }
 }
 
