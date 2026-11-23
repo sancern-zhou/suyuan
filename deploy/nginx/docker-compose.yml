@@ -1,6 +1,6 @@
 services:
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.30.7-alpine
     container_name: ${SUYUAN_NGINX_CONTAINER_NAME:-suyuan-nginx}
     network_mode: host
     restart: unless-stopped
