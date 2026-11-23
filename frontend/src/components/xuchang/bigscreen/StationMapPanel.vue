@@ -50,7 +50,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { fetchStationSeries } from '@/api/xuchang/bigScreen.js'
 import { loadAMap } from '@/utils/mapLoader.js'
-import { LEVEL_NAMES, LEVEL_PALETTE, aqiColor, iaqiColor } from './aqiLevels.js'
+import { LEVEL_NAMES, LEVEL_PALETTE, aqiColor, aqiLevelName, iaqi, iaqiColor } from './aqiLevels.js'
 
 const props = defineProps({
   stations: { type: Object, default: () => ({ national: [], townships: [], shengkong: [], office: [] }) },
@@ -94,6 +94,9 @@ const metricOptions = [
   { key: 'co', label: 'CO', unit: 'mg/m³' }
 ]
 const displayMetric = ref('pm25')
+// AQI=100 对应的二级浓度限值；PM 为 24h、其余为 1h 评价口径。
+const SECONDARY_LIMITS = { aqi: 100, pm25: 60, pm10: 120, o3: 200, so2: 500, no2: 200, co: 10 }
+const metricColor = (metric, value) => metric === 'aqi' ? aqiColor(value) : iaqiColor(metric, value)
 let activeInfo = null
 let stationChart = null
 let seriesRequestId = 0
@@ -113,12 +116,30 @@ const renderStationSeries = (payload, station, metric) => {
   stationChart = echarts.init(element)
   const points = payload.points || []
   const option = metricOptions.find(item => item.key === metric)
+  const validPoints = points.filter(item => item.value != null)
+  const latest = validPoints.at(-1)
+  const latestColor = metricColor(metric, latest?.value)
+  const level = metric === 'aqi' ? aqiLevelName(latest?.value) : aqiLevelName(iaqi(metric, latest?.value))
+  const summary = document.getElementById('station-series-summary')
+  if (summary && latest) {
+    summary.innerHTML = `
+      <span>最新 <b style="color:${latestColor}">${latest.value}</b><em>${esc(option?.unit || '')}</em></span>
+      <i style="color:${latestColor};border-color:${latestColor}">${esc(level)}</i>`
+  }
+  const limit = SECONDARY_LIMITS[metric]
   stationChart.setOption({
-    grid: { left: 45, right: 16, top: 30, bottom: 28 },
+    animationDuration: 450,
+    grid: { left: 47, right: 18, top: 35, bottom: 30 },
     tooltip: {
-      trigger: 'axis', backgroundColor: 'rgba(7, 41, 59, 0.96)',
+      trigger: 'axis', backgroundColor: 'rgba(4, 24, 36, 0.97)',
       borderColor: 'rgba(63, 200, 212, 0.4)', textStyle: { color: '#d8ecf1' },
-      valueFormatter: value => value == null ? '缺测' : `${value} ${option?.unit || ''}`
+      axisPointer: { type: 'line', lineStyle: { color: 'rgba(63, 200, 212, 0.45)' } },
+      formatter: params => {
+        const item = params[0]
+        const value = item?.value
+        const color = metricColor(metric, value)
+        return `${String(item?.axisValue || '').replace('T', ' ').slice(5, 16)}<br/>${item?.marker || ''}${option?.label} <b style="color:${color}">${value ?? '缺测'}</b> ${option?.unit || ''}<br/><span style="color:${color}">${metric === 'aqi' ? aqiLevelName(value) : aqiLevelName(iaqi(metric, value))}</span>`
+      }
     },
     xAxis: {
       type: 'category', data: points.map(item => item.time), boundaryGap: false,
@@ -129,15 +150,36 @@ const renderStationSeries = (payload, station, metric) => {
       }
     },
     yAxis: {
-      type: 'value', name: option?.unit || 'AQI', scale: true,
-      nameTextStyle: { color: '#8ab6c2' }, axisLabel: { color: '#8ab6c2' },
+      type: 'value', name: option?.unit || 'AQI', scale: true, min: 0,
+      nameTextStyle: { color: '#8ab6c2', padding: [0, 0, 0, 12] }, axisLabel: { color: '#8ab6c2' },
       splitLine: { lineStyle: { color: 'rgba(138, 163, 174, 0.15)' } }
     },
+    visualMap: {
+      show: false, dimension: 1, seriesIndex: 0,
+      pieces: LEVEL_NAMES.map((name, index) => ({
+        min: index === 0 ? 0 : [50, 100, 150, 200, 300][index - 1],
+        max: [50, 100, 150, 200, 300, Infinity][index],
+        color: LEVEL_PALETTE[index]
+      }))
+    },
     series: [{
-      name: option?.label, type: 'line', data: points.map(item => item.value),
-      connectNulls: false, showSymbol: points.length < 20, symbolSize: 4,
-      lineStyle: { width: 2, color: '#3fc8d4' }, itemStyle: { color: '#3fc8d4' },
-      areaStyle: { color: 'rgba(63, 200, 212, 0.16)' }
+      name: option?.label, type: 'line',
+      data: points.map(item => [
+        item.time,
+        item.value == null ? null : (metric === 'aqi' ? item.value : iaqi(metric, item.value))
+      ]),
+      connectNulls: false, showSymbol: points.length < 20, symbolSize: 5,
+      lineStyle: { width: 2.5 },
+      areaStyle: { opacity: 0.13 },
+      markLine: {
+        silent: true, symbol: 'none',
+        lineStyle: { color: '#e5ae22', type: 'dashed', width: 1.3 },
+        label: {
+          show: true, position: 'insideEndTop', color: '#f2cc65', fontSize: 10,
+          formatter: `二级 ${limit} ${option?.unit || ''}`
+        },
+        data: [{ yAxis: limit }]
+      }
     }]
   })
 }
@@ -151,9 +193,13 @@ const openStationSeries = async (station, marker) => {
   const info = new AMap.InfoWindow({
     content: `
       <div class="screen-station-series">
-        <strong>${esc(station.station_name)} · ${esc(option?.label || metric)}</strong>
-        <small>${esc(TYPE_LABELS[station.type] || '站点')} · 近6小时${granularity}数据</small>
+        <div class="series-heading">
+          <div><strong>${esc(station.station_name)}</strong><span>${esc(option?.label || metric)} 时序</span></div>
+          <div id="station-series-summary" class="series-summary"></div>
+        </div>
+        <small>${esc(TYPE_LABELS[station.type] || '站点')} · 近6小时${granularity}数据<span>折线按IAQI等级着色</span></small>
         <div id="station-series-chart" class="station-series-chart"><span>正在加载时序数据…</span></div>
+        <footer><i></i> 二级标准 ${SECONDARY_LIMITS[metric]} ${esc(option?.unit || '')}<span>${['pm25', 'pm10'].includes(metric) ? '24小时限值' : (metric === 'aqi' ? 'IAQI=100' : '1小时限值')}</span></footer>
       </div>`,
     offset: new AMap.Pixel(0, -18),
     closeWhenClickMap: true
@@ -684,17 +730,76 @@ watch(displayMetric, renderMarkers)
 }
 
 .screen-station-series {
-  width: 390px;
-  padding: 8px 10px 10px;
-  background: #071f2d;
+  width: 410px;
+  padding: 12px 12px 9px;
+  border: 1px solid rgba(63, 200, 212, 0.32);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(8, 39, 55, 0.99), rgba(4, 24, 36, 0.99));
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.36), inset 0 1px rgba(255, 255, 255, 0.04);
 
-  strong { display: block; color: #eaf6f8; font-size: 14px; }
-  small { display: block; margin: 5px 0 4px; color: #8ab6c2; }
+  .series-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+
+    > div:first-child {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    strong {
+      overflow: hidden;
+      color: #eaf6f8;
+      font-size: 15px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    span { color: #3fc8d4; font-size: 12px; white-space: nowrap; }
+  }
+
+  .series-summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
+
+    > span { color: #8ab6c2; font-size: 11px; }
+    b { margin-left: 3px; font-size: 22px; line-height: 1; }
+    em { margin-left: 3px; color: #8ab6c2; font-size: 9px; font-style: normal; }
+    i { padding: 2px 5px; border: 1px solid; border-radius: 3px; font-size: 10px; font-style: normal; }
+  }
+
+  small {
+    display: flex;
+    justify-content: space-between;
+    margin: 8px 0 2px;
+    color: #789aa9;
+    font-size: 10px;
+
+    span { color: #608392; }
+  }
+
+  footer {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(63, 200, 212, 0.12);
+    color: #c5a958;
+    font-size: 10px;
+
+    i { width: 16px; border-top: 1px dashed #e5ae22; }
+    span { margin-left: auto; color: #789aa9; }
+  }
 }
 
 .station-series-chart {
-  width: 370px;
-  height: 220px;
+  width: 384px;
+  height: 230px;
   display: flex;
   align-items: center;
   justify-content: center;
