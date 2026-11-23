@@ -163,6 +163,35 @@ def test_asset_route_404_for_missing_file(client, tmp_path):
     assert response.status_code == 404
 
 
+def test_station_series_queries_selected_metric(client, monkeypatch):
+    async def fake_cube_load(query):
+        assert query["measures"] == ["TownFiveMinute.avgPm25"]
+        assert query["filters"][0]["values"] == ["禹州市范坡镇"]
+        return [{"TownFiveMinute.dataTime": "2026-11-23T21:05:00", "TownFiveMinute.avgPm25": 61.2}]
+
+    monkeypatch.setattr("app.tools.query.xuchang_cube_metrics.tool.cube_load", fake_cube_load)
+    response = client.get("/api/xuchang-dashboard/station-series", params={
+        "station_name": "禹州市范坡镇", "station_type": "township", "metric": "pm25",
+    })
+    assert response.status_code == 200
+    assert response.json()["points"] == [{"time": "2026-11-23T21:05:00", "value": 61}]
+
+
+def test_office_unsupported_metric_returns_empty_without_query(client):
+    response = client.get("/api/xuchang-dashboard/station-series", params={
+        "station_name": "东城区邓庄街道办事处", "station_type": "office", "metric": "o3",
+    })
+    assert response.status_code == 200
+    assert response.json()["points"] == []
+
+
+def test_station_series_rejects_unknown_type(client):
+    response = client.get("/api/xuchang-dashboard/station-series", params={
+        "station_name": "测试站", "station_type": "unknown", "metric": "pm25",
+    })
+    assert response.status_code == 400
+
+
 def test_token_client_without_token_is_401(token_client, tmp_path):
     _write_snapshot(tmp_path, {"schema_version": 1, "header": {"aqi": 82}})
 

@@ -28,6 +28,19 @@ export function dashboardAssetUrl(assetPath) {
   return dashboardUrl('/xuchang-dashboard/asset', { path: assetPath })
 }
 
+export async function fetchStationSeries(station, metric) {
+  const response = await authFetch(dashboardUrl('/xuchang-dashboard/station-series', {
+    station_name: station.station_name,
+    station_type: station.type,
+    metric
+  }), { cache: 'no-store' })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(payload?.detail || `站点时序加载失败（HTTP ${response.status}）`)
+  }
+  return response.json()
+}
+
 /**
  * 拉取大屏整屏快照；携带 If-None-Match 时未变化返回 304。
  * @returns {{notModified: true} | {notModified: false, data: object, etag: string|null}}

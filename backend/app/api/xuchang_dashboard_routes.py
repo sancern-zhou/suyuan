@@ -37,6 +37,17 @@ from app.utils.path_config import get_data_registry
 
 router = APIRouter(prefix="/api/xuchang-dashboard", tags=["xuchang-dashboard"])
 
+_STATION_SERIES_CUBES = {
+    "township": "TownFiveMinute",
+    "shengkong": "ShengkongHour",
+    "office": "OfficeFiveMinute",
+}
+_SERIES_MEASURES = {
+    "pm25": "avgPm25", "pm10": "avgPm10", "o3": "avgO3",
+    "so2": "avgSo2", "no2": "avgNo2", "co": "avgCo",
+}
+_OFFICE_UNSUPPORTED_METRICS = {"o3", "so2", "no2", "co"}
+
 _MEDIA_TYPE = "application/json"
 # 快照资产路径只允许 registry 内的相对路径；.. 与绝对路径一律拒绝
 _UNSAFE_ASSET_PATH = re.compile(r"(^[/\\])|\.\.|[\x00-\x1f]")
@@ -198,6 +209,107 @@ async def get_screen_snapshot(
         media_type=_MEDIA_TYPE,
         headers={"ETag": etag, "Cache-Control": "no-cache"},
     )
+
+
+def _national_station_series(station_name: str, metric: str) -> List[Dict[str, Any]]:
+    """国控站近 6 小时 5 分钟序列；无发布 AQI 时按六参数推算。"""
+    import pyodbc
+
+    from app.fetchers.xuchang_screen_snapshot import STATION_TABLE
+    from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
+    from app.tools.query.query_xcai_city_history.sql_client import get_sql_server_client
+
+    client = get_sql_server_client()
+    connection = pyodbc.connect(client.connection_string, timeout=15)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            f"""
+            SELECT time_point, aqi, pm25, pm10, o3, so2, no2, co
+            FROM {STATION_TABLE}
+            WHERE station_name = ? AND time_point >= ?
+            ORDER BY time_point ASC, id ASC
+            """,
+            station_name, (datetime.now() - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        columns = [column[0] for column in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        connection.close()
+    result = []
+    for row in rows:
+        raw = row.get(metric)
+        if metric == "aqi":
+            raw = row.get("aqi")
+            if raw in (None, 0, -99):
+                raw = hourly_aqi_and_primary({
+                key: row.get(key) for key in ("pm25", "pm10", "o3", "so2", "no2", "co")
+            })[0]
+        value = None if raw in (None, -99) else float(raw)
+        result.append({"time": row["time_point"].isoformat(), "value": value})
+    return result
+
+
+@router.get("/station-series")
+async def get_station_series(
+    station_name: str = Query(..., min_length=1, max_length=80),
+    station_type: str = Query(...),
+    metric: str = Query(...),
+    user: CurrentUser | None = Depends(require_dashboard_reader),
+) -> Dict[str, Any]:
+    """站点近 6 小时曲线：国控/乡镇/办事处为 5 分钟，省控为小时。"""
+    import asyncio
+
+    from app.tools.query.xuchang_cube_metrics.tool import cube_load
+
+    if metric not in {"aqi", *_SERIES_MEASURES}:
+        raise HTTPException(status_code=400, detail="不支持的指标")
+    if station_type == "office" and metric in _OFFICE_UNSUPPORTED_METRICS:
+        return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": []}
+    if station_type == "national":
+        points = await asyncio.to_thread(_national_station_series, station_name, metric)
+        return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": points}
+    cube = _STATION_SERIES_CUBES.get(station_type)
+    if not cube:
+        raise HTTPException(status_code=400, detail="不支持的站点类型")
+    measures = [f"{cube}.{member}" for member in (
+        _SERIES_MEASURES.values() if metric == "aqi" and station_type != "office"
+        else ["avgPm25", "avgPm10"] if metric == "aqi"
+        else [_SERIES_MEASURES[metric]]
+    )]
+    now = datetime.now()
+    rows = await cube_load({
+        "measures": measures,
+        "dimensions": [f"{cube}.dataTime"],
+        "timeDimensions": [{
+            "dimension": f"{cube}.dataTime",
+            "dateRange": [(now - timedelta(hours=6)).isoformat(), (now + timedelta(minutes=5)).isoformat()],
+        }],
+        "filters": [{"member": f"{cube}.stationName", "operator": "equals", "values": [station_name]}],
+        "order": {f"{cube}.dataTime": "asc"},
+        "limit": 100,
+    })
+    points = []
+    for row in rows:
+        values = {
+            key: row.get(f"{cube}.{member}") for key, member in _SERIES_MEASURES.items()
+        }
+        if metric == "aqi":
+            from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
+            raw = hourly_aqi_and_primary(values)[0]
+        else:
+            raw = values[metric]
+        value = float(raw) if raw is not None else None
+        if metric != "co" and value is not None:
+            value = round(value)
+        points.append({
+            "time": row.get(f"{cube}.dataTime"),
+            "value": value,
+        })
+    return {
+        "station_name": station_name, "metric": metric,
+        "granularity": "hour" if station_type == "shengkong" else "5min", "points": points,
+    }
 
 
 @router.get("/asset")

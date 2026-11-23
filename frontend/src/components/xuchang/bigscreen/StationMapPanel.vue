@@ -46,7 +46,9 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import * as echarts from 'echarts'
+import { fetchStationSeries } from '@/api/xuchang/bigScreen.js'
 import { loadAMap } from '@/utils/mapLoader.js'
 import { LEVEL_NAMES, LEVEL_PALETTE, aqiColor, iaqiColor } from './aqiLevels.js'
 
@@ -92,6 +94,95 @@ const metricOptions = [
   { key: 'co', label: 'CO', unit: 'mg/m³' }
 ]
 const displayMetric = ref('pm25')
+let activeInfo = null
+let stationChart = null
+let seriesRequestId = 0
+
+const closeStationSeries = () => {
+  seriesRequestId += 1
+  stationChart?.dispose()
+  stationChart = null
+  activeInfo?.close()
+  activeInfo = null
+}
+
+const renderStationSeries = (payload, station, metric) => {
+  const element = document.getElementById('station-series-chart')
+  if (!element) return
+  stationChart?.dispose()
+  stationChart = echarts.init(element)
+  const points = payload.points || []
+  const option = metricOptions.find(item => item.key === metric)
+  stationChart.setOption({
+    grid: { left: 45, right: 16, top: 30, bottom: 28 },
+    tooltip: {
+      trigger: 'axis', backgroundColor: 'rgba(7, 41, 59, 0.96)',
+      borderColor: 'rgba(63, 200, 212, 0.4)', textStyle: { color: '#d8ecf1' },
+      valueFormatter: value => value == null ? '缺测' : `${value} ${option?.unit || ''}`
+    },
+    xAxis: {
+      type: 'category', data: points.map(item => item.time), boundaryGap: false,
+      axisLine: { lineStyle: { color: 'rgba(138, 163, 174, 0.4)' } },
+      axisLabel: {
+        color: '#8ab6c2', fontSize: 10, interval: Math.max(Math.floor(points.length / 4) - 1, 0),
+        formatter: value => String(value).slice(11, 16)
+      }
+    },
+    yAxis: {
+      type: 'value', name: option?.unit || 'AQI', scale: true,
+      nameTextStyle: { color: '#8ab6c2' }, axisLabel: { color: '#8ab6c2' },
+      splitLine: { lineStyle: { color: 'rgba(138, 163, 174, 0.15)' } }
+    },
+    series: [{
+      name: option?.label, type: 'line', data: points.map(item => item.value),
+      connectNulls: false, showSymbol: points.length < 20, symbolSize: 4,
+      lineStyle: { width: 2, color: '#3fc8d4' }, itemStyle: { color: '#3fc8d4' },
+      areaStyle: { color: 'rgba(63, 200, 212, 0.16)' }
+    }]
+  })
+}
+
+const openStationSeries = async (station, marker) => {
+  closeStationSeries()
+  const metric = displayMetric.value
+  const requestId = ++seriesRequestId
+  const option = metricOptions.find(item => item.key === metric)
+  const granularity = station.type === 'shengkong' ? '小时' : '5分钟'
+  const info = new AMap.InfoWindow({
+    content: `
+      <div class="screen-station-series">
+        <strong>${esc(station.station_name)} · ${esc(option?.label || metric)}</strong>
+        <small>${esc(TYPE_LABELS[station.type] || '站点')} · 近6小时${granularity}数据</small>
+        <div id="station-series-chart" class="station-series-chart"><span>正在加载时序数据…</span></div>
+      </div>`,
+    offset: new AMap.Pixel(0, -18),
+    closeWhenClickMap: true
+  })
+  activeInfo = info
+  info.on('close', () => {
+    if (activeInfo !== info) return
+    seriesRequestId += 1
+    stationChart?.dispose()
+    stationChart = null
+    activeInfo = null
+  })
+  info.open(map, marker.getPosition())
+  await nextTick()
+  try {
+    const payload = await fetchStationSeries(station, metric)
+    if (requestId !== seriesRequestId || activeInfo !== info) return
+    if (!payload.points?.length) {
+      const element = document.getElementById('station-series-chart')
+      if (element) element.innerHTML = '<span>该站点当前指标暂无时序数据</span>'
+      return
+    }
+    renderStationSeries(payload, station, metric)
+  } catch (exc) {
+    if (requestId !== seriesRequestId) return
+    const element = document.getElementById('station-series-chart')
+    if (element) element.innerHTML = `<span>${esc(exc.message || '时序数据加载失败')}</span>`
+  }
+}
 
 // 视角切换：地图以 3D 模式初始化（pitch=0 视觉等同平面），
 // 切换 2.5D 即设置俯仰角并按市界 bounds 自适应视野（构图更满、便于截图）；
@@ -175,22 +266,7 @@ const buildMarker = (station, isAlerting) => {
     title: label,
     zIndex: isAlerting ? 130 : 110
   })
-  marker.on('click', () => {
-    const conc = metricOptions
-      .filter(item => item.key !== 'aqi')
-      .map(item => `${item.label} ${formatMetric(station, item.key)}`)
-      .join(' · ')
-    const info = new AMap.InfoWindow({
-      content: `
-        <div class="screen-station-info">
-          <strong>${esc(station.station_name)}</strong>
-          <p>AQI ${formatMetric(station, 'aqi')} · ${conc}</p>
-          <small>${esc(TYPE_LABELS[station.type] || '站点')}${station.quality ? ' · ' + esc(station.quality) : ''}${station.primary ? ' · 首要 ' + esc(station.primary) : ''}${station.aqi_estimated ? ' · AQI按HJ633推算' : ''} · ${esc(String(station.data_time || '').replace('T', ' ').slice(0, 16))}</small>
-        </div>`,
-      offset: new AMap.Pixel(0, -14)
-    })
-    info.open(map, marker.getPosition())
-  })
+  marker.on('click', () => openStationSeries(station, marker))
   return marker
 }
 
@@ -212,6 +288,7 @@ const applyLayerVisibility = () => {
 
 const renderMarkers = () => {
   if (!map || !AMap) return
+  closeStationSeries()
   clearMarkers()
   const alerting = alertKeys()
   ;(props.stations?.national || []).forEach(station => {
@@ -316,6 +393,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  closeStationSeries()
   clearMarkers()
   boundaryPolygon = null
   boundaryBounds = null
@@ -605,11 +683,23 @@ watch(displayMetric, renderMarkers)
   }
 }
 
-.screen-station-info {
-  padding: 4px 2px;
-  strong { font-size: 14px; }
-  p { margin: 4px 0 2px; }
-  small { color: #6f95a3; }
+.screen-station-series {
+  width: 390px;
+  padding: 8px 10px 10px;
+  background: #071f2d;
+
+  strong { display: block; color: #eaf6f8; font-size: 14px; }
+  small { display: block; margin: 5px 0 4px; color: #8ab6c2; }
+}
+
+.station-series-chart {
+  width: 370px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8ab6c2;
+  font-size: 12px;
 }
 
 @keyframes station-pulse {
