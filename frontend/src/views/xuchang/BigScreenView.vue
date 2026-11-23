@@ -9,7 +9,7 @@
 
     <ScreenHeader
       :header="store.header"
-      :data-cutoff-hour="store.snapshot?.data_cutoff_hour || ''"
+      :data-cutoff-hour="store.snapshot?.latest_station_time || store.snapshot?.data_cutoff_hour || ''"
       :generated-at="store.snapshot?.generated_at || ''"
       :loading="store.loading"
       :error="store.error"

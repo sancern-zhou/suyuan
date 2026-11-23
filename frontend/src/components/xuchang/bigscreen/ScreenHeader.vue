@@ -14,7 +14,7 @@
     >{{ fullscreen ? '⛶ 退出全屏' : '⛶ 全屏' }}</button>
 
     <div class="meta-block">
-      <p>数据截止 <strong>{{ formatDateTime(dataCutoffHour) }}</strong></p>
+      <p>站点最新 <strong>{{ formatDateTime(dataCutoffHour) }}</strong></p>
       <p class="status-line" :class="{ stale: error }">
         <i aria-hidden="true"></i>{{ error ? '数据刷新异常，展示最近一次快照' : (loading ? '正在刷新…' : '运行正常') }}
       </p>

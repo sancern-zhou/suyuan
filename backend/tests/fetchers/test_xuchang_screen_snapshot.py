@@ -117,6 +117,8 @@ def _default_handlers() -> dict[str, Any]:
             "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
             "maxAqi": None,
         }),
+        "ShengkongHour.count": [],
+        "OfficeFiveMinute.count": [],
     }
 
 
@@ -228,6 +230,7 @@ async def test_fetch_and_store_writes_full_snapshot(
 
     assert snapshot["schema_version"] == 2
     assert snapshot["data_cutoff_hour"] == CUTOFF
+    assert snapshot["latest_station_time"] == TOWN_SLOT
     assert snapshot["errors"] is None
     # header
     assert snapshot["header"]["aqi"] == 82

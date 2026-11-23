@@ -244,10 +244,18 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         )
         quality = await self._guarded("quality", errors, self._quality)
 
+        station_data_times = [
+            _text(item.get("data_time"))
+            for layer in (stations or {}).values()
+            for item in (layer or [])
+            if _text(item.get("data_time"))
+        ]
+        latest_station_time = max(station_data_times, default=None)
         snapshot = {
             "schema_version": SNAPSHOT_SCHEMA_VERSION,
             "generated_at": now.isoformat(),
             "data_cutoff_hour": cutoff,
+            "latest_station_time": latest_station_time,
             "header": header,
             "city_hour_rank": city_rank,
             "county_hour_rank": county_rank,
