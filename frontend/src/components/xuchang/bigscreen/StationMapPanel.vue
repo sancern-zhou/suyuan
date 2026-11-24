@@ -112,12 +112,14 @@ const closeStationSeries = () => {
   activeStationLayer = null
 }
 
-const waitForStationSeriesElement = async (requestId, info) => {
+const waitForStationSeriesElement = async (requestId, info, chartId) => {
   // 高德 InfoWindow 的内容在部分 Android WebView 中异步插入 DOM。
   // 快速接口可能先于节点挂载返回，此时不能静默 return，否则永久显示加载中。
+  // 关闭的弹窗内容会留在文档里，图表容器 id 必须按请求编号唯一，
+  // 否则 getElementById 命中的是最早的隐藏旧节点，曲线画进了看不见的地方。
   for (let attempt = 0; attempt < 120; attempt += 1) {
     if (requestId !== seriesRequestId || activeInfo !== info) return null
-    const element = document.getElementById('station-series-chart')
+    const element = document.getElementById(chartId)
     if (element) return element
     await new Promise(resolve => setTimeout(resolve, 16))
   }
@@ -133,7 +135,7 @@ const renderStationSeries = (payload, station, metric, element) => {
   const latest = validPoints.at(-1)
   const latestColor = metricColor(metric, latest?.value)
   const level = metric === 'aqi' ? aqiLevelName(latest?.value) : aqiLevelName(iaqi(metric, latest?.value))
-  const summary = document.getElementById('station-series-summary')
+  const summary = element.closest('.screen-station-series')?.querySelector('.series-summary')
   if (summary && latest) {
     summary.innerHTML = `
       <span>最新 <b style="color:${latestColor}">${latest.value}</b><em>${esc(option?.unit || '')}</em></span>
@@ -202,6 +204,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   const metric = displayMetric.value
   const requestId = ++seriesRequestId
   activeStationLayer = layerKey
+  const chartId = `station-series-chart-${requestId}`
   const option = metricOptions.find(item => item.key === metric)
   const granularity = station.type === 'shengkong' ? '小时' : '5分钟'
   const info = new AMap.InfoWindow({
@@ -209,10 +212,10 @@ const openStationSeries = async (station, marker, layerKey) => {
       <div class="screen-station-series">
         <div class="series-heading">
           <div><strong>${esc(station.station_name)}</strong><span>${esc(option?.label || metric)} 时序</span></div>
-          <div id="station-series-summary" class="series-summary"></div>
+          <div class="series-summary"></div>
         </div>
         <small>${esc(TYPE_LABELS[station.type] || '站点')} · 近6小时${granularity}数据<span>折线按IAQI等级着色</span></small>
-        <div id="station-series-chart" class="station-series-chart"><span>正在加载时序数据…</span></div>
+        <div id="${chartId}" class="station-series-chart"><span>正在加载时序数据…</span></div>
         <footer><i></i> 二级标准 ${SECONDARY_LIMITS[metric]} ${esc(option?.unit || '')}<span>${['pm25', 'pm10'].includes(metric) ? '24小时限值' : (metric === 'aqi' ? 'IAQI=100' : '1小时限值')}</span></footer>
       </div>`,
     offset: new AMap.Pixel(0, -18),
@@ -232,7 +235,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   try {
     const payload = await fetchStationSeries(station, metric)
     if (requestId !== seriesRequestId || activeInfo !== info) return
-    const element = await waitForStationSeriesElement(requestId, info)
+    const element = await waitForStationSeriesElement(requestId, info, chartId)
     if (!element) return
     if (!payload.points?.length) {
       element.innerHTML = '<span>该站点当前指标暂无时序数据</span>'
@@ -242,7 +245,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   } catch (exc) {
     if (requestId !== seriesRequestId || activeInfo !== info) return
     try {
-      const element = await waitForStationSeriesElement(requestId, info)
+      const element = await waitForStationSeriesElement(requestId, info, chartId)
       if (element) element.innerHTML = `<span>${esc(exc.message || '时序数据加载失败')}</span>`
     } catch {
       // 弹窗已关闭时无需再更新错误信息；请求编号防止旧请求污染新弹窗。
