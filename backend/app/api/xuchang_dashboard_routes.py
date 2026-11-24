@@ -211,33 +211,48 @@ async def get_screen_snapshot(
     )
 
 
-def _national_station_series(station_name: str, metric: str) -> List[Dict[str, Any]]:
-    """国控站近 6 小时 5 分钟序列；无发布 AQI 时按六参数推算。"""
+def _national_station_series(
+    station_name: str, metric: str, granularity: str = "5min"
+) -> List[Dict[str, Any]]:
+    """国控站近 6 小时序列；5 分钟无发布 AQI 时按六参数推算。"""
     import pyodbc
 
-    from app.fetchers.xuchang_screen_snapshot import STATION_TABLE
+    from app.fetchers.xuchang_screen_snapshot import STATION_HOUR_TABLE, STATION_TABLE
     from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
+    from app.scenarios.xuchang_city_exceedance.station_catalog import NATIONAL_STATION_META
+    from app.tools.xuchang.station_catalog.coordinates import normalize_station_name
     from app.tools.query.query_xcai_city_history.sql_client import get_sql_server_client
 
+    hourly = granularity == "hour"
+    table = STATION_HOUR_TABLE if hourly else STATION_TABLE
+    quality_filter = "AND data_table_type = 'Act' AND parameter_type = 'gp'" if hourly else ""
     client = get_sql_server_client()
     connection = pyodbc.connect(client.connection_string, timeout=15)
     try:
         cursor = connection.cursor()
         cursor.execute(
             f"""
-            SELECT time_point, aqi, pm25, pm10, o3, so2, no2, co
-            FROM {STATION_TABLE}
-            WHERE station_name = ? AND time_point >= ?
+            SELECT station_name, time_point, aqi, pm25, pm10, o3, so2, no2, co
+            FROM {table}
+            WHERE time_point >= ? {quality_filter}
             ORDER BY time_point ASC, id ASC
             """,
-            station_name, (datetime.now() - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S"),
+            (datetime.now() - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S"),
         )
         columns = [column[0] for column in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
     finally:
         connection.close()
+    # 地图使用规范展示名，分钟表可能使用另一套站点别名，按同一目录匹配。
+    target_name = normalize_station_name(station_name)
     result = []
     for row in rows:
+        raw_name = str(row.get("station_name") or "").strip()
+        if target_name not in {
+            normalize_station_name(raw_name),
+            normalize_station_name(NATIONAL_STATION_META.get(raw_name, {}).get("name", "")),
+        }:
+            continue
         raw = row.get(metric)
         if metric == "aqi":
             raw = row.get("aqi")
@@ -258,25 +273,27 @@ async def get_station_series(
     granularity: str = Query(default="5min", pattern="^(5min|hour)$"),
     user: CurrentUser | None = Depends(require_dashboard_reader),
 ) -> Dict[str, Any]:
-    """站点近 6 小时曲线：国控/乡镇/办事处为 5 分钟，省控为小时。"""
+    """站点近 6 小时曲线；省控源仅有小时观测，不提供 5 分钟伪切换。"""
     import asyncio
 
     from app.tools.query.xuchang_cube_metrics.tool import cube_load
 
     if metric not in {"aqi", *_SERIES_MEASURES}:
         raise HTTPException(status_code=400, detail="不支持的指标")
-    if station_type == "office" and metric in _OFFICE_UNSUPPORTED_METRICS:
+    if station_type == "office" and granularity == "5min" and metric in _OFFICE_UNSUPPORTED_METRICS:
         return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": []}
     if station_type == "national":
-        points = await asyncio.to_thread(_national_station_series, station_name, metric)
-        return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": points}
-    if granularity == "hour" and station_type not in {"township", "office"}:
+        points = await asyncio.to_thread(_national_station_series, station_name, metric, granularity)
+        return {"station_name": station_name, "metric": metric, "granularity": granularity, "points": points}
+    if station_type == "shengkong" and granularity == "5min":
+        return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": []}
+    if granularity == "hour" and station_type not in {"township", "office", "shengkong"}:
         raise HTTPException(status_code=400, detail="该站点类型不支持小时粒度切换")
     cube = "TownHour" if station_type == "township" and granularity == "hour" else _STATION_SERIES_CUBES.get(station_type)
-    if station_type == "office" and granularity == "hour":
+    if station_type in {"office", "shengkong"} and granularity == "hour":
         from app.scenarios.xuchang_town_high_value.repository import TownHourRepository
         points = await TownHourRepository().station_series(
-            station_name=station_name, metric=metric, now=now, office=True, hour=True,
+            station_name=station_name, metric=metric, now=datetime.now(), station_type=station_type,
         )
         return {"station_name": station_name, "metric": metric, "granularity": "hour", "points": points}
     if not cube:

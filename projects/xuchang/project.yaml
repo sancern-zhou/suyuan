@@ -443,16 +443,16 @@ backend:
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
     - xuchang_zhongda_city_hour_fetcher
-    # 空气质量信息联网系统(旧云平台)：乡镇站5分钟数据(TownStationData 2026-10-21 停更后的替代源)，仅保留30天
+    # 空气质量信息联网系统(许昌市空气质量管控平台)：乡镇站5分钟数据(TownStationData 2026-10-21 停更后的替代源)，仅保留30天
     - xuchang_town_five_minute_fetcher
-    # 旧云平台：乡镇站小时/日数据回写 TownStationData 原表(原始+审核同值双写，恢复 view_dat_town_* 视图)
+    # 许昌市空气质量管控平台：乡镇站小时/日数据回写 TownStationData 原表(原始+审核同值双写，恢复 view_dat_town_* 视图)
     - xuchang_town_hour_fetcher
     - xuchang_town_day_fetcher
-    # 旧云平台：办事处站(tstype=9)5分钟 PM2.5/PM10（必须带 tsno 逐站查询，仅保留30天）
+    # 许昌市空气质量管控平台：办事处站(tstype=9)5分钟 PM2.5/PM10（必须带 tsno 逐站查询，仅保留30天）
     - xuchang_office_five_minute_fetcher
-    # 旧云平台：办事处站小时 PM2.5/PM10（供小时地图与空间高值提醒）
+    # 许昌市空气质量管控平台：办事处站小时 PM2.5/PM10（供小时地图与空间高值提醒）
     - xuchang_office_hour_fetcher
-    # 旧云平台：省控站(tstype=3)小时六参数（平台省控仅小时粒度，仅保留30天）
+    # 许昌市空气质量管控平台：省控站(tstype=3)小时六参数（平台省控仅小时粒度，仅保留30天）
     - xuchang_shengkong_station_fetcher
     # ④污染原因分析：许昌PM2.5日均高于相邻五市均值30%（轻度污染及以上为20%）触发通报（微信群+APP）
     - xuchang_pollution_cause_trigger_fetcher

@@ -56,12 +56,15 @@ async def test_five_minute_catalog_fills_missing_station_names(monkeypatch):
         async def execute(self, query, *_args):
             self.station_query = "SELECT Tsno, StationName FROM TownStationFiveMinute" in query
             self.office_query = "FROM OfficeStationFiveMinute" in query
+            self.shengkong_query = "FROM ShengkongStationHour" in query
 
         async def fetchall(self):
             if self.station_query:
                 return [("411025103", "襄城县山头店镇")]
             if self.office_query:
                 return [{"Tsno": "411002001", "StationName": "魏都区丁庄街道办事处"}]
+            if self.shengkong_query:
+                return [{"Tsno": "41102403", "StationName": "鄢陵县梅园"}]
             return [{"Tsno": "411025103", "StationName": None}]
 
     class Connection:
@@ -80,6 +83,48 @@ async def test_five_minute_catalog_fills_missing_station_names(monkeypatch):
         now=NOW
     )
     assert rows[0]["StationName"] == "襄城县山头店镇"
+    assert rows[-1]["StationName"] == "鄢陵县梅园"
+    assert all(row.get("CountyName") and row.get("StationType") for row in rows)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("station_type", ["office", "shengkong"])
+async def test_station_series_sql_is_valid_for_extra_station_types(monkeypatch, station_type):
+    from app.scenarios.xuchang_town_high_value import repository
+
+    captured = []
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, query, params):
+            captured.append((query, params))
+
+        async def fetchall(self):
+            return [(HOUR, 26.3)]
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def close(self):
+            pass
+
+    async def connect(**_kwargs):
+        return Connection()
+
+    monkeypatch.setattr(repository.aiomysql, "connect", connect)
+    points = await repository.TownHourRepository("mysql://user:pass@localhost/DataCrawler").station_series(
+        station_name="测试站", metric="pm25", now=NOW, station_type=station_type,
+    )
+    assert points == [{"time": HOUR.isoformat(), "value": 26.3}]
+    sql = captured[0][0].replace("\n", " ")
+    assert "AND AND" not in sql
+    assert ("IsHour=1" in sql) == (station_type == "office")
 
 
 def rows_for(high_pm25=(), high_pm10=()):
@@ -162,25 +207,80 @@ async def test_pollutants_are_counted_and_grouped_independently(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_equipment_extremes_do_not_send_but_leave_audit(monkeypatch, tmp_path):
-    # PM2.5=500：严重污染 vs 优，等级差5；PM10=600 同判极端。
-    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[500], high_pm10=[600]))
+async def test_equipment_extremes_send_fixed_message_without_map(monkeypatch, tmp_path):
+    # 使用真实站名验证属地提取；异常与污染提醒分别幂等。
+    rows = rows_for(high_pm10=[965.84])
+    rows[-1]["StationName"] = "鄢陵县彭店镇"
+    rows[-1]["CountyName"] = "鄢陵县"
+    rows[-1]["StationType"] = "township"
+    fetcher, sent = build(monkeypatch, tmp_path, rows)
     result = await fetcher.fetch_and_store()
-    assert result["sent"] == 0 and result["equipment_filtered"] == 2
-    assert sent == []
-    history = fetcher.state._load()["history"]
-    assert {entry["status"] for entry in history} == {"equipment_filtered"}
+    assert result["sent"] == 0 and result["equipment_sent"] == 1
+    assert sent[0][0][1] == "【乡镇高值提醒】鄢陵县彭店镇站点PM10浓度显示异常，请鄢陵县核实数据异常原因，并及时反馈。"
+    assert sent[0][1]["media"] == []
+    assert sent[0][1]["metadata"]["alert_kind"] == "equipment_anomaly"
+    second = await fetcher.fetch_and_store()
+    assert second["status"] == "completed" and second["equipment_sent"] == 0
+    assert len(sent) == 1
 
 
-def test_modified_z_extreme_is_equipment_anomaly():
+def regional_rows(extra=()):
+    rows = []
+    for index in range(10):
+        rows.append({"Tsno": f"normal-{index}", "StationName": f"普通镇{index}",
+                     "CollectionTime": HOUR, "PM25": 17 + index * 0.2, "PM10": 35})
+    for index, value in enumerate(extra):
+        rows.append({"Tsno": f"high-{index}", "StationName": f"高值镇{index}",
+                     "CollectionTime": HOUR, "PM25": value, "PM10": 35})
+    return rows
+
+
+def test_unique_polluted_station_survives_regional_candidate_group():
+    rows = regional_rows([90.7, 59.7, 49.05, 48.96, 48.2, 44.8, 42.8])
+    _, groups = detect_high_value_groups(rows)
+    group = groups[0]
+    assert len(group["alerts"]) == 7
+    assert not group["out_of_scope"]
+    assert [item["value"] for item in group["stations"]] == [90.7]
+    assert group["stations"][0]["level_name"] == "轻度污染"
+
+
+def test_structured_county_and_station_type_reach_detector_and_llm():
+    rows = regional_rows([90.7])
+    rows[-1]["CountyName"] = "建安区"
+    rows[-1]["StationType"] = "township"
+    _, groups = detect_high_value_groups(rows)
+    item = groups[0]["stations"][0]
+    assert item["county_name"] == "建安区" and item["station_type"] == "township"
+    evidence = __import__("app.scenarios.xuchang_town_high_value.message", fromlist=["message_evidence"]).message_evidence(groups[0], {})
+    assert evidence["stations"][0]["county_name"] == "建安区"
+
+
+def test_light_pollution_extreme_level_gap_is_not_equipment_anomaly():
+    rows = regional_rows([111])
+    _, groups = detect_high_value_groups(rows)
+    item = groups[0]["stations"][0]
+    assert item["level_name"] == "轻度污染"
+    assert item["level_difference"] >= 2
+    assert not item["equipment_suspected"]
+
+
+def test_moderate_extreme_is_filtered_but_does_not_hide_other_isolated_station():
+    rows = regional_rows([125.3, 90.7, 59.7, 49.05, 48.96, 48.2, 44.8, 42.8])
+    _, groups = detect_high_value_groups(rows)
+    group = groups[0]
+    assert any(item["equipment_reason"] == "moderate_or_worse_modified_z" for item in group["alerts"])
+    assert [item["value"] for item in group["stations"]] == [90.7]
+
+
+def test_modified_z_is_evidence_not_equipment_anomaly():
     rows = rows_for(high_pm25=[95])
-    # MAD=0 不判 z；注入非零 MAD 且远超 z 阈值。
     for index, row in enumerate(rows[:10]):
         row["PM25"] = 20 + (index % 3) * 3
     _, groups = detect_high_value_groups(rows)
     item = groups[0]["alerts"][0]
     assert item["modified_z"] >= 8
-    assert item["equipment_suspected"] and not groups[0]["stations"]
+    assert not item["equipment_suspected"] and groups[0]["stations"] == [item]
 
 
 @pytest.mark.asyncio

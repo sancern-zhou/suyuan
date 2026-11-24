@@ -74,15 +74,37 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
             lookback_hours=self.config.weather_lookback_hours,
         )
         sent = 0
-        skipped_equipment = 0
+        equipment_sent = 0
         failed_groups = 0
         for group in groups:
             for item in group["alerts"]:
-                if item["equipment_suspected"]:
-                    skipped_equipment += 1
-                    self.state.record(group["group_id"], "equipment_filtered", {
-                        "station_id": item["station_id"], "reason": item["equipment_reason"]
+                if not item["equipment_suspected"]:
+                    continue
+                equipment_id = f"{group['group_id']}-equipment-{item['station_id']}"
+                if self.state.already_sent(equipment_id):
+                    continue
+                county = item.get("county_name")
+                if not county:
+                    self.state.record(equipment_id, "missing_county", {
+                        "station_id": item["station_id"], "station_name": item["station_name"],
                     })
+                    logger.warning("town_high_value_equipment_county_missing", station=item["station_name"])
+                    continue
+                message = (
+                    f"【乡镇高值提醒】{item['station_name']}站点{group['pollutant']}浓度显示异常，"
+                    f"请{county}核实数据异常原因，并及时反馈。"
+                )
+                record = self.enqueue(
+                    "town_high_value", message, media=[],
+                    metadata={"group_id": equipment_id, "hour": hour.isoformat(),
+                              "pollutant": group["pollutant"], "station_ids": item["station_id"],
+                              "alert_kind": "equipment_anomaly"},
+                )
+                self.state.record(equipment_id, "sent", {
+                    "station_ids": [item["station_id"]], "reason": item["equipment_reason"],
+                    "message_id": (record or {}).get("id"),
+                })
+                equipment_sent += 1
             stations = group["stations"]
             if not stations:
                 continue
@@ -123,5 +145,5 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
                 sent += 1
         return {
             "status": "completed", "hour": hour.isoformat(), "sent": sent,
-            "equipment_filtered": skipped_equipment, "failed_groups": failed_groups,
+            "equipment_sent": equipment_sent, "failed_groups": failed_groups,
         }

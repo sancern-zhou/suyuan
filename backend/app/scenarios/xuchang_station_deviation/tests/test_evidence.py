@@ -9,6 +9,10 @@ from app.scenarios.xuchang_station_deviation.evidence import (
 )
 
 
+async def _not_applicable_traffic(alert, event_time):
+    return {"status": "not_applicable", "snapshots": []}
+
+
 class _WeatherRepo:
     async def get_observed_data(self, station_id, start_time, end_time):
         return [
@@ -53,6 +57,7 @@ async def test_collect_records_partial_evidence_without_losing_source_screening(
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(collector, "_load_air_quality", fail_air_quality)
+    monkeypatch.setattr(collector, "_load_traffic", _not_applicable_traffic)
     source_screening = {"status": "insufficient_meteorology", "data": {"hourly_meteorology": []}}
 
     result = await collector.collect(alert=_alert(), source_screening=source_screening)
@@ -74,6 +79,7 @@ async def test_collect_marks_failed_source_screening_as_partial(monkeypatch):
     collector = XuchangStationDeviationEvidenceCollector(
         weather_repo=_WeatherRepo(),
     )
+    monkeypatch.setattr(collector, "_load_traffic", _not_applicable_traffic)
     monkeypatch.setattr(
         collector,
         "_load_air_quality",

@@ -169,6 +169,11 @@ def fake_catalog(monkeypatch, tmp_path):
         catalog_module, "load_station_coordinates", lambda: STATION_COORDINATES
     )
     monkeypatch.setattr(catalog_module, "HenanSsfbClient", FakeSsfbClient)
+    monkeypatch.setattr(catalog_module, "load_oldcloud_township_directory", lambda: [
+        {"tsno": "411082113", "name": "长葛市和尚桥镇", "networkingStatusStr": "在线"},
+        {"tsno": "411023114", "name": "示范区尚集镇", "networkingStatusStr": "在线"},
+        {"tsno": "411025116", "name": "襄城县城关镇", "networkingStatusStr": "在线"},
+    ])
     return tmp_path
 
 
@@ -239,6 +244,19 @@ def test_build_catalog_with_fake_client(fake_catalog):
     assert townships["1107B"]["district"] == "长葛市"
     assert townships["1037B"]["district"] == "示范区"
     assert townships["1050B"]["district"] == "襄城县"
+
+
+def test_oldcloud_codes_merge_into_formal_catalog(fake_catalog):
+    catalog = build_catalog()
+    townships = {item["station_name"]: item for item in catalog["townships"]}
+    assert townships["示范区尚集镇"]["station_code"] == "1037B"
+    assert townships["示范区尚集镇"]["platform_station_code"] == "411023114"
+    assert townships["示范区尚集镇"]["district"] == "示范区"
+    assert townships["襄城县城关镇"]["station_code"] == "411025116"
+    assert townships["襄城县城关镇"]["platform_station_code"] == "411025116"
+    assert townships["襄城县城关镇"]["district"] == "襄城县"
+    resolved = resolve_stations(catalog, station_codes=["411082113"])
+    assert [item["station_code"] for item in resolved] == ["1107B"]
 
 
 def test_township_coordinates_are_joined_by_station_name(fake_catalog):
@@ -313,7 +331,7 @@ def test_resolve_stations_by_fuzzy_name_and_code(fake_catalog):
     assert [item["station_name"] for item in by_code] == ["芙蓉广场"]
 
     by_district = resolve_stations(catalog, districts=["襄城"])
-    assert [item["station_code"] for item in by_district] == ["1050B", "23"]
+    assert [item["station_code"] for item in by_district] == ["411025116", "1050B", "23"]
 
 
 def test_resolve_stations_type_filter(fake_catalog):

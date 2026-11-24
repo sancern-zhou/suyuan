@@ -1,6 +1,6 @@
 // 省控站小时空气质量语义模型 — 一行 = 站点 × 小时（原始口径）
 // 口径来源: DataCrawler.ShengkongStationHour（xuchang_shengkong_station_fetcher
-// 抓取空气质量信息联网系统（旧云平台）省控站，tstype=3&type=4 逐站查询，
+// 抓取空气质量信息联网系统（许昌市空气质量管控平台）省控站，tstype=3&type=4 逐站查询，
 // 仅保留最近 30 天）。
 // 口径注意:
 // - 平台省控站仅小时粒度（5 分钟各因子集实测均 0 行），为本表最优粒度;

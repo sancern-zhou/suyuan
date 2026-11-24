@@ -58,7 +58,9 @@ def detect_high_value_groups(
     """返回最新完整小时及高值组；候选设备异常记录保留在组内供流水留痕。
 
     浓度差与相对差须同时达到阈值，避免低浓度小绝对差、高浓度小比例差误报。
-    modified z 使用其他有效站的 MAD；MAD=0 时不以 z 判设备异常。
+    modified z 对良/轻度污染仅作空间孤立证据，避免误删真实单站污染；
+    设备异常仅保留中度及以上且跨 4 级或 modified z 极高的极端离群。
+    大范围候选中若只有一站达到轻度及以上，该站优先单独提醒，普通良站作区域背景。
     """
     config = config or HighValueConfig()
     valid_hours = [value for row in rows if (value := _time(row)) is not None]
@@ -89,10 +91,19 @@ def detect_high_value_groups(
             mad = median(deviations)
             modified_z = 0.6745 * (value - baseline) / mad if mad > 0 else None
             equipment_reason = None
-            if level_difference >= config.equipment_level_difference:
-                equipment_reason = "level_difference"
-            elif modified_z is not None and modified_z >= config.equipment_modified_z:
-                equipment_reason = "modified_z"
+            # 轻度污染仍可能是用户关注的孤立高值，不因相对等级差或 z 值误删。
+            # 仅中度及以上、且空间离群达到极端程度时才转设备异常核实。
+            if (
+                level >= 3
+                and (
+                    level_difference >= config.equipment_level_difference
+                    or (
+                        modified_z is not None
+                        and modified_z >= config.equipment_modified_z
+                    )
+                )
+            ):
+                equipment_reason = "moderate_or_worse_modified_z"
             if (
                 level_difference < config.min_level_difference
                 or absolute < config.min_absolute_difference
@@ -103,6 +114,8 @@ def detect_high_value_groups(
             alerts.append({
                 "station_id": _station_id(row),
                 "station_name": _station_name(row),
+                "county_name": str(row.get("CountyName") or row.get("county_name") or "").strip() or None,
+                "station_type": str(row.get("StationType") or row.get("station_type") or "").strip() or None,
                 "value": value,
                 "baseline": baseline,
                 "absolute_difference": absolute,
@@ -121,6 +134,9 @@ def detect_high_value_groups(
             continue
         alerts.sort(key=lambda item: (item["station_id"], item["station_name"]))
         deliverable = [item for item in alerts if not item["equipment_suspected"]]
+        polluted = [item for item in deliverable if item["level"] >= 2]
+        if len(deliverable) > config.max_alert_stations and len(polluted) == 1:
+            deliverable = polluted
         groups.append({
             "group_id": f"{latest:%Y%m%d%H}-{pollutant}",
             "pollutant": pollutant,

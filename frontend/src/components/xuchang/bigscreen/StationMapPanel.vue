@@ -2,7 +2,7 @@
   <section class="map-panel" data-testid="station-map">
     <div ref="mapContainer" class="map-container" aria-label="许昌市站点空气质量地图"></div>
 
-    <div v-if="capture" class="capture-title">乡镇及办事处站{{ townshipGranularity === 'hour' ? '小时' : '5分钟' }}{{ metricLabel }}</div>
+    <div v-if="capture" class="capture-title">站点{{ townshipGranularity === 'hour' ? '小时' : '5分钟' }}{{ metricLabel }}</div>
 
     <div class="map-controls">
       <div v-if="townshipStations.length || townshipHourStations.length" class="layer-toggle township-granularity-toggle">
@@ -112,10 +112,17 @@ const townshipStations = computed(() => props.stations?.townships || [])
 const townshipHourStations = computed(() => props.stations?.townships_hour || [])
 const activeTownships = computed(() => townshipGranularity.value === 'hour' ? townshipHourStations.value : townshipStations.value)
 const metricLabel = computed(() => metricOptions.find(item => item.key === displayMetric.value)?.label || displayMetric.value)
-const activeTownshipsWithOffice = computed(() => townshipGranularity.value === 'hour'
-  ? [...activeTownships.value, ...(props.stations?.office_hour || [])]
-  : activeTownships.value)
-const townshipDataTime = computed(() => activeTownshipsWithOffice.value.map(item => item.data_time || item.dataTime).find(Boolean) || '')
+const activeStations = computed(() => {
+  const suffix = townshipGranularity.value === 'hour' ? '_hour' : ''
+  return {
+    national: props.stations?.[`national${suffix}`] || [],
+    townships: activeTownships.value,
+    // 许昌市空气质量管控平台省控站只有小时数据，5 分钟模式没有对应观测值。
+    shengkong: townshipGranularity.value === 'hour' ? (props.stations?.shengkong_hour || []) : [],
+    office: props.stations?.[`office${suffix}`] || []
+  }
+})
+const townshipDataTime = computed(() => Object.values(activeStations.value).flat().map(item => item.data_time || item.dataTime).find(Boolean) || '')
 // AQI=100 对应的二级浓度限值；PM 为 24h、其余为 1h 评价口径。
 const SECONDARY_LIMITS = { aqi: 100, pm25: 60, pm10: 120, o3: 200, so2: 500, no2: 200, co: 10 }
 const metricColor = (metric, value) => metric === 'aqi' ? aqiColor(value) : iaqiColor(metric, value)
@@ -244,7 +251,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   activeStationLayer = layerKey
   const chartId = `station-series-chart-${requestId}`
   const option = metricOptions.find(item => item.key === metric)
-    const granularity = station.type === 'shengkong' || (station.type === 'township' || station.type === 'office') && townshipGranularity.value === 'hour' ? '小时' : '5分钟'
+  const granularity = townshipGranularity.value === 'hour' ? '小时' : '5分钟'
 
   const info = new AMap.InfoWindow({
     content: `
@@ -276,7 +283,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   isolateInfoContentEvents(requestId, info, chartId)
   await nextTick()
   try {
-    const payload = await fetchStationSeries(station, metric, station.type === 'township' || station.type === 'office' ? townshipGranularity.value : '5min')
+    const payload = await fetchStationSeries(station, metric, townshipGranularity.value)
     if (requestId !== seriesRequestId || activeInfo !== info) return
     const element = await waitForStationSeriesElement(requestId, info, chartId)
     if (!element) return
@@ -425,10 +432,7 @@ const applyLayerVisibility = () => {
 
 const renderMarkers = () => {
   if (!map || !AMap) return
-  updateMarkerGroup('national', props.stations?.national || [])
-  updateMarkerGroup('townships', activeTownshipsWithOffice.value)
-  updateMarkerGroup('shengkong', props.stations?.shengkong || [])
-  updateMarkerGroup('office', props.stations?.office || [])
+  Object.entries(activeStations.value).forEach(([key, stations]) => updateMarkerGroup(key, stations))
   applyLayerVisibility()
   renderedGranularity = townshipGranularity.value
   nextTick(notifyReady)
@@ -457,7 +461,7 @@ const notifyReady = () => {
     emit('ready', {
       townshipGranularity: townshipGranularity.value,
       townshipDataTime: townshipDataTime.value,
-      townshipCount: activeTownshipsWithOffice.value.length,
+      townshipCount: activeStations.value.townships.length,
       metric: displayMetric.value,
       layers: visibleLayers.value
     })

@@ -1,6 +1,6 @@
 // 乡镇站 5 分钟空气质量语义模型 — 一行 = 站点 × 5 分钟（原始口径）
 // 口径来源: DataCrawler.TownStationFiveMinute（xuchang_town_five_minute_fetcher
-// 抓取空气质量信息联网系统（旧云平台）替代源，TownStationData 2026-10-21 起停更
+// 抓取空气质量信息联网系统（许昌市空气质量管控平台）替代源，TownStationData 2026-10-21 起停更
 // 后启用，仅保留最近 30 天）。
 // 口径注意:
 // - 该平台 5 分钟数据无审核流，IsAudit 恒为 0（原始/未审核口径），schema 直接过滤;

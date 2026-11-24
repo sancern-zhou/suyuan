@@ -1,4 +1,4 @@
-"""乡镇站小时/日抓取器单元测试（旧云平台替代源，回写 TownStationData 原表）。"""
+"""乡镇站小时/日抓取器单元测试（许昌市空气质量管控平台替代源，回写 TownStationData 原表）。"""
 
 from datetime import datetime
 

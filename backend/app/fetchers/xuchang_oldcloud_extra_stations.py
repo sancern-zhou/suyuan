@@ -1,4 +1,4 @@
-"""抓取空气质量信息联网系统（旧云平台）办事处站 5 分钟与省控站小时数据。
+"""抓取空气质量信息联网系统（许昌市空气质量管控平台）办事处站 5 分钟与省控站小时数据。
 
 2026-11-23 实测定版的平台协议（漏带 tsno 曾致两次"平台不提供"误判）：
 - airData/page **必须携带 tsno=<站码>**，不带 tsno 时 tstype 参数被平台
@@ -214,7 +214,9 @@ def office_record_from_row(
     }
 
 
-def shengkong_record_from_row(row: dict[str, Any], tsno: str, county: str | None) -> dict[str, Any] | None:
+def shengkong_record_from_row(
+    row: dict[str, Any], tsno: str, county: str | None, is_hour: bool = True
+) -> dict[str, Any] | None:
     """平台 airData 行（type=4 省控因子集）→ 落库记录；缺时间戳丢弃。"""
     collection_time = _parse_time(row.get("collectionTime"))
     if collection_time is None:
@@ -342,7 +344,7 @@ class XuchangOfficeFiveMinuteFetcher(_PerStationOldCloudFetcher):
         super().__init__(client=client, storage=self.storage, now_factory=now_factory)
         self.name = "xuchang_office_five_minute_fetcher"
         self.description = (
-            "抓取空气质量信息联网系统(旧云平台)办事处站5分钟PM2.5/PM10入库DataCrawler"
+            "抓取空气质量信息联网系统(许昌市空气质量管控平台)办事处站5分钟PM2.5/PM10入库DataCrawler"
             "(tstype=9&type=5逐站查询,仅保留30天)"
         )
         self.schedule = "4,9,15,25,35,45 * * * *"
@@ -391,7 +393,7 @@ class XuchangOfficeHourFetcher(XuchangOfficeFiveMinuteFetcher):
         super().__init__(client=client, storage=storage, now_factory=now_factory)
         self.name = "xuchang_office_hour_fetcher"
         self.description = (
-            "抓取空气质量信息联网系统(旧云平台)办事处站小时PM2.5/PM10"
+            "抓取空气质量信息联网系统(许昌市空气质量管控平台)办事处站小时PM2.5/PM10"
             "入OfficeStationFiveMinute(IsHour=1，仅保留30天)"
         )
         # 乡镇小时 :11、省控 :13、大屏 :16、高值提醒 :21，均错峰。
@@ -430,7 +432,7 @@ class XuchangShengkongStationFetcher(_PerStationOldCloudFetcher):
         super().__init__(client=client, storage=self.storage, now_factory=now_factory)
         self.name = "xuchang_shengkong_station_fetcher"
         self.description = (
-            "抓取空气质量信息联网系统(旧云平台)省控站小时六参数入库DataCrawler"
+            "抓取空气质量信息联网系统(许昌市空气质量管控平台)省控站小时六参数入库DataCrawler"
             "(tstype=3&type=4逐站查询,仅保留30天)"
         )
         self.schedule = "13 * * * *"

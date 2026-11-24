@@ -137,7 +137,7 @@ class Settings(BaseSettings):
         description="单次登录尝试上限；平台连续失败3次即锁10分钟，重试过多会自我续锁",
     )
 
-    # 空气质量信息联网系统（旧云平台，许昌乡镇站 5 分钟/小时/日数据替代源）。
+    # 空气质量信息联网系统（许昌市空气质量管控平台，许昌乡镇站 5 分钟/小时/日数据替代源）。
     # TownStationData 2026-10-21 起停更后启用；账号密码环境变量注入。
     town_cloud_api_base_url: str = Field(default="http://117.159.53.11:60601")
     town_cloud_username: str = Field(default="")

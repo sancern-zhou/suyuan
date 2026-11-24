@@ -12,7 +12,7 @@ episode_state.json；播报读定时任务结构化结果表。
 
 地图站点层用 5 分钟数据（2026-10-27 起）：国控站读中大平台站点
 5 分钟表（XcAiDb ``dbo.dat_zhongda_station_minute``），乡镇站读
-TownFiveMinute（旧云平台替代源，TownStationData 2026-10-21 起停更）。
+TownFiveMinute（许昌市空气质量管控平台替代源，TownStationData 2026-10-21 起停更）。
 两个 5 分钟源都不发布 AQI，气泡 AQI/首要污染物按 HJ633 由六参数
 推算（aqi_estimated=True，前端标注"推算"）；区县代表点无 5 分钟源，
 仍用 SsfbCountyHour 最新可用小时。
@@ -41,6 +41,7 @@ from app.fetchers.base.fetcher_interface import DataFetcher
 # AQI，气泡 AQI 按 HJ633 由六参数推算）。
 from app.fetchers.xuchang_zhongda_station import (
     CITY_HOUR_TABLE,
+    STATION_HOUR_TABLE,
     STATION_TABLE,
 )
 from app.tools.query.xuchang_cube_metrics.tool import cube_load
@@ -815,8 +816,13 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
     # ------------------------------------------------------------ 地图站点段
     async def _stations(self, alert_names: set[str]) -> dict[str, Any]:
         national = await asyncio.to_thread(self._national_stations, alert_names)
+        try:
+            national_hour = await asyncio.to_thread(self._national_hour_stations, alert_names)
+        except Exception as exc:
+            logger.warning("xuchang_screen_national_hour_failed", error=str(exc))
+            national_hour = []
         townships = await self._township_stations()
-        # 小时图层独立降级：旧云平台小时数据暂时不可用时，不影响默认 5 分钟地图。
+        # 小时图层独立降级：许昌市空气质量管控平台小时数据暂时不可用时，不影响默认 5 分钟地图。
         try:
             townships_hour = await self._township_hour_stations()
         except Exception as exc:
@@ -828,16 +834,19 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         except Exception as exc:
             logger.warning("xuchang_screen_office_hour_failed", error=str(exc))
         shengkong = await self._shengkong_stations()
+        shengkong_hour = [{**item, "granularity": "hour"} for item in shengkong]
         office = await self._office_stations()
         # counties（区县代表点）已从地图下线（2026-11-23 改为真实省控/办事处站），
         # 但 FieldWatchView 的"区县实况"面板仍消费该段，保留在快照中
         counties = await self._county_stations()
         return {
             "national": national,
+            "national_hour": national_hour,
             "townships": townships,
             "townships_hour": townships_hour,
             "office_hour": office_hour,
             "shengkong": shengkong,
+            "shengkong_hour": shengkong_hour,
             "office": office,
             "counties": counties,
         }
@@ -924,11 +933,17 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         now = self.now_factory().replace(minute=0, second=0, microsecond=0)
         return now.strftime("%Y-%m-%dT%H:%M:%S")
 
-    def _national_stations(self, alert_names: set[str]) -> List[dict[str, Any]]:
-        """国控站点位（内置坐标）+ 中大平台 5 分钟值。
+    def _national_hour_stations(self, alert_names: set[str]) -> List[dict[str, Any]]:
+        return self._national_stations(alert_names, granularity="hour")
+
+    def _national_stations(
+        self, alert_names: set[str], granularity: str = "5min"
+    ) -> List[dict[str, Any]]:
+        """国控站点位（内置坐标）+ 中大平台 5 分钟或官方小时值。
 
         5 分钟口径不发布 AQI（列恒 0），气泡 AQI/首要污染物按 HJ633
-        由六参数推算（aqi_estimated=True，前端标注"推算"）。
+        由六参数推算（aqi_estimated=True，前端标注"推算"）。小时口径
+        固定 Act+gp，使用平台发布的 AQI。
         """
         from app.scenarios.xuchang_city_exceedance.station_catalog import (
             NATIONAL_STATION_META,
@@ -939,6 +954,13 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         )
 
         now = self.now_factory()
+        hourly = granularity == "hour"
+        table = STATION_HOUR_TABLE if hourly else STATION_TABLE
+        window_start = now - timedelta(hours=3 if hourly else 0, minutes=0 if hourly else 60)
+        quality_filter = (
+            "AND data_table_type = 'Act' AND parameter_type = 'gp'" if hourly
+            else "AND aqi IS NOT NULL"
+        )
         client = get_sql_server_client()
         connection = pyodbc.connect(client.connection_string, timeout=30)
         try:
@@ -946,13 +968,13 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             cursor.execute(
                 f"""
                 SELECT TOP 80 station_name, time_point, aqi, pm25, pm10, o3, so2, no2, co
-                FROM {STATION_TABLE}
-                WHERE time_point >= ? AND aqi IS NOT NULL
+                FROM {table}
+                WHERE time_point >= ? {quality_filter}
                 ORDER BY time_point DESC,
                   CASE parameter_type WHEN 'Act' THEN 0 WHEN 'App' THEN 1 ELSE 2 END,
                   id DESC
                 """,
-                (now - timedelta(minutes=60)).strftime("%Y-%m-%d %H:%M:%S"),
+                window_start.strftime("%Y-%m-%d %H:%M:%S"),
             )
             columns = [column[0] for column in cursor.description]
             raw = [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -996,6 +1018,8 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "station_id": code,
                 "station_name": meta["name"],
                 "type": "national",
+                "granularity": "hour" if hourly else "5min",
+                "caliber": "Act+gp" if hourly else "src",
                 "lon": meta["lon"],
                 "lat": meta["lat"],
                 "data_time": _iso(row.get("time_point")),
@@ -1015,7 +1039,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
     async def _township_stations(self) -> List[dict[str, Any]]:
         """乡镇站点位（TSV 坐标）+ TownFiveMinute 最新 5 分钟值。
 
-        旧云平台替代源（TownStationData 2026-10-21 起停更），原始未审核
+        许昌市空气质量管控平台替代源（TownStationData 2026-10-21 起停更），原始未审核
         口径；5 分钟不发布 AQI，气泡 AQI 按 HJ633 由六参数推算并标注。
         """
         from app.tools.xuchang.station_catalog.catalog import load_township_coordinates
@@ -1024,19 +1048,8 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         now = self.now_factory()
         start = (now - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%S")
         end = (now + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
-        probe = await cube_load({
-            "measures": ["TownFiveMinute.count"],
-            "dimensions": ["TownFiveMinute.dataTime"],
-            "timeDimensions": [{
-                "dimension": "TownFiveMinute.dataTime",
-                "dateRange": [start, end],
-            }],
-            "order": {"TownFiveMinute.dataTime": "desc"},
-            "limit": 1,
-        })
-        latest_time = _text(probe[0].get("TownFiveMinute.dataTime")) if probe else None
-        if not latest_time:
-            return []
+        # 各站发布并不同步，不能锁全平台最新槽位：新槽位只到了少数站时，
+        # 其余站应保留各自最近有效值，而不是从地图消失。
         rows = await cube_load({
             "measures": [
                 "TownFiveMinute.avgPm25", "TownFiveMinute.avgPm10",
@@ -1044,23 +1057,25 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "TownFiveMinute.avgCo", "TownFiveMinute.avgO3",
                 "TownFiveMinute.maxAqi",
             ],
-            "dimensions": ["TownFiveMinute.stationName"],
+            "dimensions": ["TownFiveMinute.stationName", "TownFiveMinute.dataTime"],
             "timeDimensions": [{
-                "dimension": "TownFiveMinute.dataTime",
-                "dateRange": _minute_range(latest_time),
+                "dimension": "TownFiveMinute.dataTime", "dateRange": [start, end],
             }],
-            "order": {"TownFiveMinute.avgPm25": "desc"},
-            "limit": MAX_TOWNSHIPS,
+            "order": {"TownFiveMinute.dataTime": "desc"},
+            "limit": 1000,
         })
         coordinates = load_township_coordinates()
-        stations = []
+        latest_by_station = {}
         for item in _flat(rows, "TownFiveMinute"):
             name = _text(item.get("stationName"))
-            if not name:
-                continue
+            if name and name not in latest_by_station:
+                latest_by_station[name] = item
+        stations = []
+        for name, item in latest_by_station.items():
             coord = coordinates.get(normalize_station_name(name))
             if not coord:
                 continue
+            latest_time = _text(item.get("dataTime"))
             conc = {
                 "so2": _clean_conc(item.get("avgSo2")),
                 "no2": _clean_conc(item.get("avgNo2")),
@@ -1181,7 +1196,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
     async def _shengkong_stations(self) -> List[dict[str, Any]]:
         """省控站点位（平台 listMap 坐标）+ ShengkongHour 最新小时值。
 
-        旧云平台省控站（tstype=3，8 站；襄城县政府/鄢陵县县政府自
+        许昌市空气质量管控平台省控站（tstype=3，8 站；襄城县政府/鄢陵县县政府自
         2026-04 起通讯中断，其余 6 站正常报数）。平台省控仅小时粒度
         （5 分钟各因子集均无数据），气泡 AQI 按 HJ633 由六参数推算并标注。
         """
@@ -1257,7 +1272,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
     async def _office_stations(self) -> List[dict[str, Any]]:
         """办事处站点位（平台 listMap 坐标）+ OfficeFiveMinute 最新 5 分钟值。
 
-        旧云平台办事处站（tstype=9，31 个街道办事处，平台仅发布
+        许昌市空气质量管控平台办事处站（tstype=9，31 个街道办事处，平台仅发布
         PM2.5/PM10 两因子），气泡 AQI 按 HJ633 由两因子推算并标注。
         """
         from app.tools.xuchang.station_catalog.catalog import load_office_coordinates
@@ -1266,40 +1281,29 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         now = self.now_factory()
         start = (now - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%S")
         end = (now + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
-        probe = await cube_load({
-            "measures": ["OfficeFiveMinute.count"],
-            "dimensions": ["OfficeFiveMinute.dataTime"],
-            "timeDimensions": [{
-                "dimension": "OfficeFiveMinute.dataTime",
-                "dateRange": [start, end],
-            }],
-            "order": {"OfficeFiveMinute.dataTime": "desc"},
-            "limit": 1,
-        })
-        latest_time = _text(probe[0].get("OfficeFiveMinute.dataTime")) if probe else None
-        if not latest_time:
-            return []
         rows = await cube_load({
             "measures": [
                 "OfficeFiveMinute.avgPm25", "OfficeFiveMinute.avgPm10",
             ],
-            "dimensions": ["OfficeFiveMinute.stationName"],
+            "dimensions": ["OfficeFiveMinute.stationName", "OfficeFiveMinute.dataTime"],
             "timeDimensions": [{
-                "dimension": "OfficeFiveMinute.dataTime",
-                "dateRange": _minute_range(latest_time),
+                "dimension": "OfficeFiveMinute.dataTime", "dateRange": [start, end],
             }],
-            "order": {"OfficeFiveMinute.avgPm25": "desc"},
-            "limit": 40,
+            "order": {"OfficeFiveMinute.dataTime": "desc"},
+            "limit": 400,
         })
         coordinates = load_office_coordinates()
-        stations = []
+        latest_by_station = {}
         for item in _flat(rows, "OfficeFiveMinute"):
             name = _text(item.get("stationName"))
-            if not name:
-                continue
+            if name and name not in latest_by_station:
+                latest_by_station[name] = item
+        stations = []
+        for name, item in latest_by_station.items():
             coord = coordinates.get(normalize_station_name(name))
             if not coord:
                 continue
+            latest_time = _text(item.get("dataTime"))
             conc = {
                 "pm10": _clean_conc(item.get("avgPm10")),
                 "pm25": _clean_conc(item.get("avgPm25")),

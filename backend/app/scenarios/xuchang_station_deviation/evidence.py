@@ -12,7 +12,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pyodbc
+from sqlalchemy import text
 
+from app.db.database import async_session
 from app.db.repositories.weather_repo import WeatherRepository
 from app.integrations.xcai_station_sql import xcai_connection_string
 from app.scenarios.xuchang_city_exceedance.station_catalog import (
@@ -29,6 +31,8 @@ POLLUTANT_COLUMNS = {"PM2.5": "pm25", "O3": "o3", "NOX": "no2"}
 AIR_QUALITY_LOOKBACK_HOURS = 12
 OBSERVED_WEATHER_LOOKBACK_HOURS = 3
 CALM_WIND_THRESHOLD_MS = 1.5
+TRAFFIC_POLLUTANTS = {"NO2", "CO"}
+TRAFFIC_LOOKBACK_MINUTES = 18
 
 
 def _event_hour(value: str) -> datetime:
@@ -389,9 +393,10 @@ class XuchangStationDeviationEvidenceCollector:
         event_hour = _event_hour(alert["occurred_at"])
         air_start = event_hour - timedelta(hours=AIR_QUALITY_LOOKBACK_HOURS)
         weather_start = event_time - timedelta(hours=OBSERVED_WEATHER_LOOKBACK_HOURS)
-        air_result, observed_result = await asyncio.gather(
+        air_result, observed_result, traffic_result = await asyncio.gather(
             asyncio.to_thread(self._load_air_quality, air_start, event_time, alert),
             self._load_observed_weather(weather_start, event_time),
+            self._load_traffic(alert, event_time),
             return_exceptions=True,
         )
 
@@ -414,6 +419,17 @@ class XuchangStationDeviationEvidenceCollector:
             }
         else:
             observed_meteorology = observed_result
+
+        if isinstance(traffic_result, BaseException):
+            traffic = {
+                "status": "failed",
+                "reason": "traffic_query_failed",
+                "error": str(traffic_result),
+                "station_id": alert.get("station_id"),
+                "snapshots": [],
+            }
+        else:
+            traffic = traffic_result
 
         computed_indicators = {
             "calculation_status": "success" if air_quality.get("local_station_hour_records") else "unavailable",
@@ -458,6 +474,7 @@ class XuchangStationDeviationEvidenceCollector:
             "source_screening": source_screening,
             "air_quality_context": air_quality,
             "observed_meteorology": observed_meteorology,
+            "traffic_context": traffic,
             "computed_indicators": computed_indicators,
             "collection": {
                 "status": collection_status,
@@ -554,6 +571,49 @@ class XuchangStationDeviationEvidenceCollector:
                 station_id=alert_station_id,
                 field=alert_field,
             ),
+        }
+
+    async def _load_traffic(self, alert: dict[str, Any], event_time: datetime) -> dict[str, Any]:
+        """读取告警前最近三个历史时隙，不调用实时接口，也不影响告警判定。"""
+        station_id = str(alert.get("station_id") or "")
+        base = {
+            "source": "traffic_snapshot + traffic_section（百度地图，6分钟时隙）",
+            "station_id": station_id,
+            "event_time": event_time.isoformat(),
+            "max_snapshot_age_minutes": TRAFFIC_LOOKBACK_MINUTES,
+            "snapshots": [],
+        }
+        if str(alert.get("target_pollutant") or "").upper() not in TRAFFIC_POLLUTANTS:
+            return {**base, "status": "not_applicable"}
+        # slot_at 为 UTC；同时携带 event_time 的带时区参数，避免 naive datetime 被当 UTC。
+        start = (event_time - timedelta(minutes=TRAFFIC_LOOKBACK_MINUTES)).astimezone(ZoneInfo("UTC"))
+        async with async_session() as session:
+            rows = (await session.execute(text("""
+                SELECT s.id, s.station_code, s.slot_at, s.evaluation_status,
+                       s.evaluation_desc, s.description, s.road_count,
+                       s.congestion_section_count,
+                       COALESCE(jsonb_agg(jsonb_build_object(
+                           'road_name', sec.road_name, 'section_desc', sec.section_desc,
+                           'speed_km_h', sec.speed_km_h,
+                           'congestion_distance_m', sec.congestion_distance_m,
+                           'congestion_trend', sec.congestion_trend
+                       ) ORDER BY sec.id) FILTER (WHERE sec.id IS NOT NULL), '[]') AS sections
+                FROM traffic_snapshot s
+                LEFT JOIN traffic_section sec ON sec.snapshot_id = s.id
+                WHERE s.station_code = :station_id AND s.slot_at >= :start AND s.slot_at <= :event_time
+                GROUP BY s.id
+                ORDER BY s.slot_at DESC
+                LIMIT 3
+            """), {"station_id": station_id, "start": start, "event_time": event_time})).mappings().all()
+        return {
+            **base,
+            "status": "success" if rows else "unavailable",
+            "reason": None if rows else "no_snapshot_within_18_minutes",
+            "snapshots": [
+                {**{key: _json_value(value) for key, value in row.items() if key != "id"},
+                 "sections": row["sections"]}
+                for row in rows
+            ],
         }
 
     async def _load_observed_weather(self, start: datetime, end: datetime) -> dict[str, Any]:

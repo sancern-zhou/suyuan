@@ -291,8 +291,72 @@ def _qc_clause(alerts: list[dict[str, Any]]) -> str:
     return f"{'；'.join(parts)}，相关时段数据可能受运维质控影响，须与污染事实区分"
 
 
+def _traffic_clauses(alerts: list[dict[str, Any]]) -> list[str]:
+    """NO2/CO 告警附告警前最近时隙路况；缺数/过期数据不输出本条目。"""
+    clauses: list[str] = []
+    seen: set[str] = set()
+    for item in alerts:
+        alert = item.get("alert") or {}
+        if str(alert.get("target_pollutant") or "").upper() not in {"NO2", "CO"}:
+            continue
+        traffic = (item.get("evidence") or {}).get("traffic_context") or {}
+        snapshots = traffic.get("snapshots") or []
+        station_id = str(alert.get("station_id") or traffic.get("station_id") or "")
+        if traffic.get("status") != "success" or not snapshots or station_id in seen:
+            continue
+        valid_snapshots = []
+        occurred = _parse_moment(alert.get("occurred_at"))
+        if occurred is None:
+            continue
+        for snapshot in snapshots:
+            moment = _parse_moment(snapshot.get("slot_at"))
+            if moment is None:
+                continue
+            age = (occurred - moment).total_seconds() / 60
+            if 0 <= age <= 18:
+                valid_snapshots.append((snapshot, moment, age))
+        if not valid_snapshots:
+            continue
+        valid_snapshots.sort(key=lambda item: item[1], reverse=True)
+        latest, moment, latest_age = valid_snapshots[0]
+        seen.add(station_id)
+        station = str(alert.get("station_name") or station_id or "未知站点")
+        status = str(latest.get("evaluation_desc") or "路况未知")
+        parts = [f"{station}周边1公里{status}"]
+        congested = [
+            (snapshot, slot) for snapshot, slot, age in valid_snapshots
+            if (snapshot.get("congestion_section_count") or 0) > 0
+            or snapshot.get("sections")
+            or snapshot.get("evaluation_status") in (3, 4)
+            or any(word in str(snapshot.get("evaluation_desc") or "") for word in ("拥堵", "缓行"))
+        ]
+        if len(valid_snapshots) > 1 and congested:
+            first_slot = congested[-1][1]
+            duration = round((moment - first_slot).total_seconds() / 60) + 6
+            parts.append(f"告警前18分钟窗口内{len(congested)}个时隙有缓行/拥堵记录，本次记录持续约{duration}分钟")
+        elif len(valid_snapshots) > 1:
+            parts.append(f"告警前18分钟窗口内{len(valid_snapshots)}个时隙均未记录缓行/拥堵")
+        sections = latest.get("sections") or []
+        for section in sections[:3]:
+            road = str(section.get("road_name") or "未知道路")
+            details = []
+            if section.get("speed_km_h") is not None:
+                details.append(f"车速{_dec(section.get('speed_km_h'))}公里/小时")
+            if section.get("congestion_distance_m") is not None:
+                details.append(f"拥堵{_dec(section.get('congestion_distance_m'), 0)}米")
+            if section.get("section_desc"):
+                details.append(str(section.get("section_desc")))
+            parts.append(road + ("（" + "、".join(details) + "）" if details else "存在拥堵路段"))
+        if len(sections) > 3:
+            parts.append(f"另有{len(sections) - 3}个拥堵路段")
+        timestamp = moment.astimezone(TZ_SHANGHAI).strftime("%H:%M")
+        age = round(latest_age)
+        clauses.append(f"{timestamp}（较告警早{age}分钟）" + "；".join(parts))
+    return clauses
+
+
 def compose_station_alert_message(package: dict[str, Any]) -> str:
-    """从证据包确定性渲染 6 条目紧凑通报（微信 RPA/App 广播共用一份文案）。"""
+    """从证据包确定性渲染紧凑通报（微信 RPA/App 广播共用一份文案）。"""
     alerts = package.get("alerts") or []
     if not alerts:
         raise RuntimeError("证据包不含告警因子，无法生成通报")
@@ -332,6 +396,9 @@ def compose_station_alert_message(package: dict[str, Any]) -> str:
         f"5.气象情况：{_meteorology_clause(first_evidence, occurred_at)}",
         f"6.质控关联：{_qc_clause(alerts)}",
     ]
+    traffic_clauses = _traffic_clauses(alerts)
+    if traffic_clauses:
+        lines.append(f"7.周边路况（百度地图）：{'；'.join(traffic_clauses)}（反映道路拥堵而非直接车流量/排放量，仅作现场排查参考，不作为污染来源判定依据）")
     return "\n".join(lines)
 
 

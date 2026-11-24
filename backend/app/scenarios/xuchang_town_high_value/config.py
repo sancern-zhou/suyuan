@@ -19,7 +19,7 @@ class HighValueConfig:
     min_absolute_difference: float = 20.0
     min_relative_difference: float = 0.5
     minimum_peer_stations: int = 5
-    # 单因子有效高值达到 5 站属于大范围污染，不由本场景推送。
+    # 单因子有效高值达到 5 站通常视为大范围污染；若仅一站轻度及以上则优先孤立提醒。
     max_alert_stations: int = 4
     equipment_level_difference: int = 4
     equipment_modified_z: float = 8.0

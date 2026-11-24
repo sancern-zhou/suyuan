@@ -126,7 +126,7 @@ def load_township_coordinates() -> dict[str, dict[str, Any]]:
 
 
 def _load_platform_coordinates(path: Path) -> dict[str, dict[str, Any]]:
-    """加载旧云平台办事处/省控站坐标 TSV（listMap 权威拉取，GCJ-02）。
+    """加载许昌市空气质量管控平台办事处/省控站坐标 TSV（listMap 权威拉取，GCJ-02）。
 
     列：站名<TAB>区县<TAB>经度<TAB>纬度；键用与 township 表相同的
     归一化（去空白、臺->台）。
@@ -399,6 +399,48 @@ def load_ssfb_directory(
         return {"henan_cities": [], "henan_districts": [], "county_stations": []}
 
 
+def load_oldcloud_township_directory() -> list[dict[str, Any]]:
+    """许昌市空气质量管控平台乡镇目录；失败时保留中台目录，不阻断整个目录构建。"""
+    try:
+        from app.integrations.xuchang.town_cloud_client import TownCloudClient
+        return TownCloudClient().fetch_station_directory("4")
+    except Exception as exc:  # 平台验证码/网络故障不应拖垮既有中台目录
+        logger.warning("xuchang_station_catalog_oldcloud_unavailable", error=str(exc))
+        return []
+
+
+def merge_oldcloud_townships(
+    townships: list[dict[str, Any]], platform_rows: list[dict[str, Any]], district_names: list[str]
+) -> list[dict[str, Any]]:
+    """按正式站名关联中台 10xxB 与许昌市空气质量管控平台数字站码，保留两种采集编码。"""
+    by_name = {
+        _normalize_station_name(item.get("station_name")): item for item in townships
+    }
+    hidden = load_hidden_stations()
+    hidden_names = {_normalize_station_name(name) for name in hidden.values()}
+    for row in platform_rows:
+        code = str(row.get("tsno") or "").strip()
+        name = str(row.get("name") or "").strip()
+        if not code or not name or code.upper() in hidden or _normalize_station_name(name) in hidden_names:
+            continue
+        item = by_name.get(_normalize_station_name(name))
+        if item is None:
+            district, _ = split_township_name(name, district_names)
+            item = {
+                "station_code": code, "station_name": name, "district": district,
+                "city": CITY_NAME, "station_type": "township", "type_name": "乡镇站",
+                "longitude": None, "latitude": None, "address": "",
+                "coordinate_source": None, "data_source": "oldcloud:airNetwork/page",
+            }
+            townships.append(item)
+            by_name[_normalize_station_name(name)] = item
+        item["platform_station_code"] = code
+        item["platform_data_source"] = "oldcloud:airNetwork/page"
+        item["platform_networking_status"] = row.get("networkingStatusStr")
+        item["platform_collection_time"] = row.get("collectionTime")
+    return sorted(townships, key=lambda item: (item["district"], item["station_name"]))
+
+
 def build_catalog() -> dict[str, Any]:
     """从中台拉取并构建站点目录（不读缓存）"""
     client = get_airdata_platform_client()
@@ -426,11 +468,15 @@ def build_catalog() -> dict[str, Any]:
         size=1000,
     )["rows"]
 
+    townships = normalize_townships(town_rows, district_names, coordinate_rows)
+    townships = merge_oldcloud_townships(
+        townships, load_oldcloud_township_directory(), district_names
+    )
     return {
         "generated_at": time.time(),
         "city": {"name": CITY_NAME, "areacode": CITY_CODE},
         "districts": districts,
-        "townships": normalize_townships(town_rows, district_names, coordinate_rows),
+        "townships": townships,
         "regular_stations": normalize_regular_stations(
             station_rows, districts, station_coordinates
         ),
@@ -449,9 +495,14 @@ def load_catalog(force_refresh: bool = False) -> dict[str, Any]:
             has_stations = payload.get("townships") or payload.get("regular_stations")
             # 部署目录扩展前生成的旧缓存缺少 ssfb 城市块，视为过期触发重建。
             has_henan_directory = payload.get("henan_cities") is not None
+            # 旧缓存没有许昌市空气质量管控平台数字站码时重建，避免站名/辖区补全等待 7 天 TTL。
+            has_platform_codes = any(
+                item.get("platform_station_code") for item in payload.get("townships") or []
+            )
             if (
                 has_stations
                 and has_henan_directory
+                and has_platform_codes
                 and time.time() - generated_at < CACHE_TTL_HOURS * 3600
             ):
                 payload["from_cache"] = True
@@ -521,6 +572,7 @@ def resolve_stations(
         if has_name_or_code_filter:
             code_hit = bool(wanted_codes) and (
                 str(payload.get("station_code") or "") in wanted_codes
+                or str(payload.get("platform_station_code") or "") in wanted_codes
                 or str(payload.get("unique_code") or "") in wanted_codes
             )
             if not (code_hit or _name_match(payload)):

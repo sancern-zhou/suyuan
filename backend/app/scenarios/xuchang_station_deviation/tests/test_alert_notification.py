@@ -434,6 +434,90 @@ def test_qc_citywide_legacy_records_are_filtered_to_alert_scope():
     )
 
 
+def _traffic_evidence(slot_at="2026-09-13T11:54:00+08:00"):
+    return _deviation_evidence(traffic_context={
+        "status": "success",
+        "snapshots": [{
+            "slot_at": slot_at,
+            "evaluation_desc": "严重拥堵",
+            "sections": [
+                {"road_name": "建安大道", "speed_km_h": 12.5,
+                 "congestion_distance_m": 650, "section_desc": "西向东"},
+                {"road_name": "学院路", "speed_km_h": 18.0,
+                 "congestion_distance_m": 300},
+            ],
+        }],
+    })
+
+
+def test_no2_notice_appends_latest_pre_alert_traffic_snapshot():
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": _traffic_evidence()},
+    ]))
+
+    assert "7.周边路况（百度地图）：11:54（较告警早6分钟）开发区周边1公里严重拥堵；" in message
+    assert "建安大道（车速12.5公里/小时、拥堵650米、西向东）" in message
+    assert "学院路（车速18.0公里/小时、拥堵300米）" in message
+    assert "仅作现场排查参考，不作为污染来源判定依据" in message
+
+
+def test_traffic_clause_supports_co_and_deduplicates_same_station():
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(target_pollutant="CO", station_value=1.5),
+         "evidence": _traffic_evidence()},
+        {"alert": _deviation_alert(target_pollutant="NO2"),
+         "evidence": _traffic_evidence()},
+    ]))
+    assert message.count("7.周边路况（百度地图）") == 1
+    assert message.count("开发区周边1公里") == 1
+
+
+def test_traffic_clause_summarizes_congestion_duration_and_clear_window():
+    congested = _traffic_evidence()
+    snapshots = congested["traffic_context"]["snapshots"]
+    snapshots.append({"slot_at": "2026-09-13T11:48:00+08:00", "evaluation_status": 3,
+                      "evaluation_desc": "拥堵", "congestion_section_count": 1, "sections": [{}]})
+    snapshots.append({"slot_at": "2026-09-13T11:42:00+08:00", "evaluation_status": 3,
+                      "evaluation_desc": "拥堵", "congestion_section_count": 1, "sections": [{}]})
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": congested},
+    ]))
+    assert "告警前18分钟窗口内3个时隙有缓行/拥堵记录，本次记录持续约18分钟" in message
+
+    clear = _traffic_evidence()
+    clear["traffic_context"]["snapshots"] = [
+        {"slot_at": "2026-09-13T11:54:00+08:00", "evaluation_status": 1,
+         "evaluation_desc": "畅通", "congestion_section_count": 0, "sections": []},
+        {"slot_at": "2026-09-13T11:48:00+08:00", "evaluation_status": 1,
+         "evaluation_desc": "畅通", "congestion_section_count": 0, "sections": []},
+        {"slot_at": "2026-09-13T11:42:00+08:00", "evaluation_status": 1,
+         "evaluation_desc": "畅通", "congestion_section_count": 0, "sections": []},
+    ]
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": clear},
+    ]))
+    assert "告警前18分钟窗口内3个时隙均未记录缓行/拥堵" in message
+
+
+def test_traffic_clause_omits_stale_future_missing_and_other_pollutants():
+    for slot_at in ("2026-09-13T11:30:00+08:00", "2026-09-13T12:06:00+08:00"):
+        message = compose_station_alert_message(_package([
+            {"alert": _deviation_alert(), "evidence": _traffic_evidence(slot_at)},
+        ]))
+        assert "周边路况" not in message
+    for evidence in (_deviation_evidence(), _deviation_evidence(
+            traffic_context={"status": "failed", "snapshots": []})):
+        message = compose_station_alert_message(_package([
+            {"alert": _deviation_alert(), "evidence": evidence},
+        ]))
+        assert "周边路况" not in message
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(target_pollutant="PM10"),
+         "evidence": _traffic_evidence()},
+    ]))
+    assert "周边路况" not in message
+
+
 def test_collect_media_deduplicates_and_keeps_existing_files(tmp_path):
     existing = tmp_path / "chart.png"
     existing.write_bytes(b"png")

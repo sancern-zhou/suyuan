@@ -1,6 +1,6 @@
 // 办事处站 5 分钟空气质量语义模型 — 一行 = 站点 × 5 分钟（原始口径）
 // 口径来源: DataCrawler.OfficeStationFiveMinute（xuchang_office_five_minute_fetcher
-// 抓取空气质量信息联网系统（旧云平台）办事处站，tstype=9&type=5 逐站查询，
+// 抓取空气质量信息联网系统（许昌市空气质量管控平台）办事处站，tstype=9&type=5 逐站查询，
 // 仅保留最近 30 天）。
 // 口径注意:
 // - 平台办事处站仅 PM2.5/PM10 两因子（SO2/NO2/CO/O3 恒 null，schema 不建这些成员）;

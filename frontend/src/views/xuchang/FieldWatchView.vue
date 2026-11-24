@@ -106,6 +106,16 @@ onMounted(() => {
 onBeforeUnmount(() => store.stopPolling())
 </script>
 
+<style lang="scss">
+/* 快报是独立整页，不保留主工作区的固定高度/裁剪，滚动交给 WebView 文档层。 */
+#app:has(.fieldwatch) {
+  height: auto;
+  min-height: 100vh;
+  overflow: visible;
+  background: #051a28;
+}
+</style>
+
 <style lang="scss" scoped>
 .fieldwatch {
   max-width: 560px;
@@ -115,6 +125,7 @@ onBeforeUnmount(() => store.stopPolling())
   background:
     radial-gradient(600px 280px at 20% -5%, rgba(17, 96, 134, 0.4), transparent 70%),
     #051a28;
+  /* 使用 WebView 原生文档滚动；嵌套 overflow 容器滑动后会被该机型的合成层清空。 */
   min-height: 100vh;
 }
 

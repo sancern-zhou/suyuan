@@ -415,7 +415,7 @@ cubes:
   TownFiveMinute:
     dataset: DataCrawler.TownStationFiveMinute
     grain: 一行 = 乡镇站 × 5分钟
-    applicability: 许昌乡镇站76个的5分钟实时数据（TownStationData停更后的旧云平台替代源）
+    applicability: 许昌乡镇站76个的5分钟实时数据（TownStationData停更后的许昌市空气质量管控平台替代源）
     source_window: 2026-10-27起，滚动保留最近30天
     limitations:
       - 平台5分钟无审核流，全部为原始（未审核）口径

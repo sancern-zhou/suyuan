@@ -113,7 +113,8 @@ def _default_handlers() -> dict[str, Any]:
             "dataTime": TOWN_SLOT, "count": 1,
         }),
         "TownFiveMinute.avgPm25": _cube_rows("TownFiveMinute", {
-            "stationName": "禹州市范坡镇", "avgPm25": 61, "avgPm10": 90,
+            "stationName": "禹州市范坡镇", "dataTime": TOWN_SLOT,
+            "avgPm25": 61, "avgPm10": 90,
             "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
             "maxAqi": None,
         }),
@@ -125,6 +126,7 @@ def _default_handlers() -> dict[str, Any]:
         }),
         "ShengkongHour.count": [],
         "OfficeFiveMinute.count": [],
+        "OfficeFiveMinute.avgPm25": [],
         # 左侧统计/考核/排名段
         "ProvinceMonth.count": _cube_rows("ProvinceMonth", {
             "dataMonth": "2026-09-01T00:00:00.000", "count": 19,
@@ -217,11 +219,11 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
     )
     monkeypatch.setattr(
         XuchangScreenSnapshotFetcher, "_national_stations",
-        lambda self, alert_names: [{
+        lambda self, alert_names, granularity="5min": [{
             "station_id": "1008A", "station_name": "许昌学院", "type": "national",
-            "lon": 113.8611, "lat": 34.0443, "data_time": CUTOFF,
-            "aqi": 85, "pm25": 60, "pm10": 100, "o3": 110,
-            "so2": 9, "no2": 31, "co": 0.7, "alerting": False,
+            "granularity": granularity, "lon": 113.8611, "lat": 34.0443,
+            "data_time": CUTOFF, "aqi": 85, "pm25": 60 if granularity == "5min" else 58,
+            "pm10": 100, "o3": 110, "so2": 9, "no2": 31, "co": 0.7, "alerting": False,
         }],
     )
     monkeypatch.setattr(
@@ -281,7 +283,8 @@ async def test_fetch_and_store_writes_full_snapshot(
         "dataTime": TOWN_SLOT, "count": 1,
     })
     handlers["TownFiveMinute.avgPm25"] = _cube_rows("TownFiveMinute", {
-        "stationName": "禹州市范坡镇", "avgPm25": 61, "avgPm10": 90,
+        "stationName": "禹州市范坡镇", "dataTime": TOWN_SLOT,
+        "avgPm25": 61, "avgPm10": 90,
         "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
         "maxAqi": None,
     })
@@ -320,6 +323,9 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert snapshot["alerts"][0]["lon"] == 113.8611
     # 站点：国控（monkeypatch 桩）+ 乡镇 5 分钟（AQI 按 HJ633 推算）
     assert snapshot["stations"]["national"][0]["station_id"] == "1008A"
+    assert snapshot["stations"]["national"][0]["granularity"] == "5min"
+    assert snapshot["stations"]["national_hour"][0]["granularity"] == "hour"
+    assert snapshot["stations"]["national_hour"][0]["pm25"] == 58
     townships = snapshot["stations"]["townships"]
     est_aqi, est_primary = hourly_aqi_and_primary({
         "so2": 10, "no2": 30, "o3": 100, "co": 0.7, "pm10": 90, "pm25": 61,
@@ -448,6 +454,34 @@ def test_broadcast_runs_on_db_bridge_pool(monkeypatch):
 
     assert XuchangScreenSnapshotFetcher()._broadcast() == []
     assert called["query"] == {"page": 1, "page_size": 10}
+
+
+@pytest.mark.parametrize("kind", ["township", "office"])
+async def test_five_minute_map_keeps_each_stations_latest_slot(monkeypatch, kind):
+    fetcher = XuchangScreenSnapshotFetcher(now_factory=lambda: NOW)
+    older = "2026-10-24T14:30:00.000"
+    rows = [
+        {"stationName": "禹州市范坡镇" if kind == "township" else "魏都区丁庄街道办事处",
+         "dataTime": TOWN_SLOT, "avgPm25": 61, "avgPm10": 90},
+        {"stationName": "禹州市顺店镇" if kind == "township" else "魏都区北大街道办事处",
+         "dataTime": older, "avgPm25": 20, "avgPm10": 30},
+        {"stationName": "禹州市范坡镇" if kind == "township" else "魏都区丁庄街道办事处",
+         "dataTime": older, "avgPm25": 10, "avgPm10": 20},
+    ]
+
+    async def fake_load(_query):
+        return _cube_rows("TownFiveMinute" if kind == "township" else "OfficeFiveMinute", {}) + [
+            {f"{'TownFiveMinute' if kind == 'township' else 'OfficeFiveMinute'}.{key}": value
+             for key, value in row.items()} for row in rows
+        ]
+
+    monkeypatch.setattr("app.fetchers.xuchang_screen_snapshot.cube_load", fake_load)
+    stations = await (fetcher._township_stations() if kind == "township" else fetcher._office_stations())
+    assert len(stations) == 2
+    assert stations[0]["pm25"] == 61
+    assert stations[0]["data_time"] == TOWN_SLOT
+    assert stations[1]["pm25"] == 20
+    assert stations[1]["data_time"] == older
 
 
 def test_screen_snapshot_fetcher_is_registered_for_xuchang():

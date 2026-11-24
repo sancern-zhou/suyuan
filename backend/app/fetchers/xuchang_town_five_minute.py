@@ -1,7 +1,7 @@
-"""抓取空气质量信息联网系统（旧云平台）许昌乡镇站 5 分钟数据。
+"""抓取空气质量信息联网系统（许昌市空气质量管控平台）许昌乡镇站 5 分钟数据。
 
 Crawler MySQL 的 TownStationData（乡镇站小时/日值）自 2026-10-21 起由
-政府侧停更，本抓取器从旧云平台替代源拉取 5 分钟粒度数据，落库到
+政府侧停更，本抓取器从许昌市空气质量管控平台替代源拉取 5 分钟粒度数据，落库到
 DataCrawler.TownStationFiveMinute，并只保留最近 30 天（过期行每轮删除）。
 
 - 数据窗口每轮回看 3 小时（平台 5 分钟数据限查 3 天以内，回看窗口
@@ -199,7 +199,7 @@ class TownFiveMinuteMySqlStorage:
 
 
 class XuchangTownFiveMinuteFetcher(DataFetcher):
-    """乡镇站 5 分钟数据抓取（旧云平台替代源，保留 30 天）。"""
+    """乡镇站 5 分钟数据抓取（许昌市空气质量管控平台替代源，保留 30 天）。"""
 
     def __init__(
         self,
@@ -209,7 +209,7 @@ class XuchangTownFiveMinuteFetcher(DataFetcher):
     ) -> None:
         super().__init__(
             name="xuchang_town_five_minute_fetcher",
-            description="抓取空气质量信息联网系统(旧云平台)许昌乡镇站5分钟数据入库DataCrawler(仅保留30天)",
+            description="抓取空气质量信息联网系统(许昌市空气质量管控平台)许昌乡镇站5分钟数据入库DataCrawler(仅保留30天)",
             schedule="2-57/5 * * * *",
             version="1.0.0",
         )

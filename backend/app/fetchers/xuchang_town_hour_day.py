@@ -1,13 +1,13 @@
-"""抓取空气质量信息联网系统（旧云平台）许昌乡镇站小时/日数据，回写原表。
+"""抓取空气质量信息联网系统（许昌市空气质量管控平台）许昌乡镇站小时/日数据，回写原表。
 
 TownStationData（乡镇站小时/日值）2026-10-20 21:00 起原始流、10-19 起审核流
-由政府侧停更，本抓取器从旧云平台 airData/page（timeStep=2 小时 / 3 日）拉取
+由政府侧停更，本抓取器从许昌市空气质量管控平台 airData/page（timeStep=2 小时 / 3 日）拉取
 数据，回写 DataCrawler.TownStationData 原表（uk 幂等 upsert），恢复下游
 view_dat_town_hour/day_app|src 四个视图与 TownHour/TownDay cube。
 
 - 口径：平台 isAudit=0/1 对小时/日数据返回同一套行（同 id 同值，2026-10-29
   实测），即平台发布值本身；每行同值双写 IsAudit=0 与 IsAudit=1，与停更前
-  "审核行由旧云平台链路产出"的语义一致，下游官方口径（app 视图）与原始
+  "审核行由许昌市空气质量管控平台链路产出"的语义一致，下游官方口径（app 视图）与原始
   口径（src 视图）同时恢复；
 - AQI/污染等级/首要污染物用平台值（pollutionLevelStr，如"良"）；
   IAQI 平台不提供，按 TownStationData 历史行实测口径补算——旧 HJ633 浓度
@@ -225,7 +225,7 @@ class TownStationDataMySqlStorage:
 
 
 class XuchangTownAirDataFetcher(DataFetcher):
-    """乡镇站小时/日数据抓取（旧云平台替代源，回写 TownStationData 原表）。
+    """乡镇站小时/日数据抓取（许昌市空气质量管控平台替代源，回写 TownStationData 原表）。
 
     data_kind="hour"：airData timeStep=2，调度 11 * * * *；
     data_kind="day"：airData timeStep=3，调度 5 8 * * *。
@@ -245,9 +245,9 @@ class XuchangTownAirDataFetcher(DataFetcher):
         super().__init__(
             name=f"xuchang_town_{data_kind}_fetcher",
             description=(
-                "抓取空气质量信息联网系统(旧云平台)许昌乡镇站小时数据回写TownStationData原表(原始+审核同值双写)"
+                "抓取空气质量信息联网系统(许昌市空气质量管控平台)许昌乡镇站小时数据回写TownStationData原表(原始+审核同值双写)"
                 if is_hour else
-                "抓取空气质量信息联网系统(旧云平台)许昌乡镇站日数据回写TownStationData原表(原始+审核同值双写)"
+                "抓取空气质量信息联网系统(许昌市空气质量管控平台)许昌乡镇站日数据回写TownStationData原表(原始+审核同值双写)"
             ),
             schedule="11 * * * *" if is_hour else "5 8 * * *",
             version="1.0.0",

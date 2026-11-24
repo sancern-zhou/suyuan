@@ -185,6 +185,57 @@ def test_office_unsupported_metric_returns_empty_without_query(client):
     assert response.json()["points"] == []
 
 
+def test_national_station_series_uses_hour_table_and_caliber(client, monkeypatch):
+    async def fake_to_thread(func, *args):
+        assert args == ("许昌学院", "pm25", "hour")
+        return [{"time": "2026-11-24T09:00:00", "value": 58}]
+
+    monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
+    response = client.get("/api/xuchang-dashboard/station-series", params={
+        "station_name": "许昌学院", "station_type": "national", "metric": "pm25",
+        "granularity": "hour",
+    })
+    assert response.status_code == 200
+    assert response.json()["granularity"] == "hour"
+
+
+def test_national_series_normalizes_platform_station_suffix(monkeypatch):
+    from datetime import datetime
+
+    from app.api.xuchang_dashboard_routes import _national_station_series
+
+    class Cursor:
+        description = [("station_name",), ("time_point",), ("aqi",), ("pm25",),
+                       ("pm10",), ("o3",), ("so2",), ("no2",), ("co",)]
+
+        def execute(self, sql, *params):
+            assert "dat_zhongda_station_hour" in sql
+
+        def fetchall(self):
+            return [("望田路111号（启用20250213）", datetime(2026, 11, 24, 23),
+                     50, 26, 40, 30, 4, 30, 0.5)]
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("pyodbc.connect", lambda *args, **kwargs: Connection())
+    points = _national_station_series("望田路111号", "pm25", "hour")
+    assert points == [{"time": "2026-11-24T23:00:00", "value": 26.0}]
+
+
+def test_shengkong_does_not_fake_five_minute_series(client):
+    response = client.get("/api/xuchang-dashboard/station-series", params={
+        "station_name": "禹州神龙公司", "station_type": "shengkong", "metric": "pm25",
+        "granularity": "5min",
+    })
+    assert response.status_code == 200
+    assert response.json()["points"] == []
+
+
 def test_station_series_rejects_unknown_type(client):
     response = client.get("/api/xuchang-dashboard/station-series", params={
         "station_name": "测试站", "station_type": "unknown", "metric": "pm25",

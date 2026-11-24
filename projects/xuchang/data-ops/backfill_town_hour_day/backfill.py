@@ -1,4 +1,4 @@
-"""一次性回补 TownStationData 乡镇站小时/日断档（旧云平台替代源）。
+"""一次性回补 TownStationData 乡镇站小时/日断档（许昌市空气质量管控平台替代源）。
 
 用法（宿主机，conda 环境 backend_py311，cwd=backend）：
 
