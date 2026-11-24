@@ -30,7 +30,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** 对话 tab 的常驻底栏；键盘弹出（或输入框聚焦兜底）时滑出隐藏（微信式），避免顶跳输入区。 */
+/** 对话 tab 的常驻底栏；键盘弹出占位时滑出隐藏（微信式），避免顶跳输入区。隐藏信号的取法见调用方。 */
 @Composable
 internal fun BottomNavBar(
     currentTab: String,

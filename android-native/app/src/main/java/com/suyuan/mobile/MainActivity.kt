@@ -17,6 +17,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.view.View
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.webkit.WebView
@@ -101,6 +102,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -116,6 +118,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -409,9 +413,24 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             BuildConfig.DASHBOARD_ACCESS_TOKEN.isNotBlank() &&
             dashboardEntryUrl(BuildConfig.WEB_FRONTEND_URL, "/fieldwatch", BuildConfig.DASHBOARD_ACCESS_TOKEN) != null
     }
-    // 底部 tab 栏隐藏信号：IME insets（API 30+ 可靠）或输入框聚焦（全版本兜底）。
-    val imeVisible = WindowInsets.isImeVisible
     var inputFocused by remember { mutableStateOf(false) }
+    // 底部 tab 栏隐藏信号 = 键盘真实占位。不用 WindowInsets.isImeVisible：它读的是系统的
+    // "可见性"标志位，且只在该类 inset 发生变化时刷新；本应用未开边到边，Compose 侧 IME
+    // inset 通常恒为 0，标志位会停在首帧的值（HarmonyOS 实测停在 true，底栏永久隐藏）。
+    // 输入框聚焦也不等于键盘弹出：收起键盘后焦点往往还在，只作为不下发 IME inset 的
+    // API 30 以下的退路。
+    val view = LocalView.current
+    // 窗口根 inset 不是 Compose 状态：DecorView 为键盘让位（内容区尺寸变化）时重读 IME 高度。
+    var rootImeBottom by remember { mutableIntStateOf(0) }
+    fun refreshRootIme() {
+        rootImeBottom = ViewCompat.getRootWindowInsets(view)
+            ?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+    }
+    val keyboardUp = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        currentTab == "chat" && inputFocused
+    } else {
+        WindowInsets.ime.getBottom(LocalDensity.current) > 0 || rootImeBottom > 0
+    }
     LaunchedEffect(currentTab, showHistory) {
         viewModel.setChatVisible(currentTab == "chat" && !showHistory)
     }
@@ -539,9 +558,9 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(SuyuanColors.background)) {
+    Box(Modifier.fillMaxSize().background(SuyuanColors.background).onSizeChanged { refreshRootIme() }) {
         Column(Modifier.fillMaxSize()) {
-        AppTopBar(
+            AppTopBar(
             currentTab = currentTab,
             showHistory = showHistory,
             tasksSubTab = tasksSubTab,
@@ -801,9 +820,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             currentTab = currentTab,
             showWatch = dashboardConfigured,
             taskBadge = state.reportUnreadCount,
-            // 双条件隐藏：IME insets 在 Android 8/9（API<30）不上报，isImeVisible 恒 false，
-            // 输入框聚焦状态作为全版本可靠的兜底信号（聚焦必有键盘，收键盘必失焦）。
-            hidden = imeVisible || (currentTab == "chat" && inputFocused)
+            hidden = keyboardUp,
         ) { tab ->
             showHistory = false
             if (tab == "tasks" && currentTab != "tasks") viewModel.refreshScheduledTasks()
