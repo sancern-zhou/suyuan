@@ -26,6 +26,7 @@ EPISODE_EVIDENCE_SCHEMAS = {
     "xuchang_station_deviation_episode_evidence/v1",
     "xuchang_station_deviation_evidence/v2",
     "xuchang_station_deviation_evidence/v3",
+    "xuchang_station_deviation_evidence/v4",
 }
 ANALYSIS_STATE_SCHEMA = "xuchang_daily_review_analysis_state/v1"
 REGIONAL_RESPONSE_PROFILE = "xuchang_regional_response_thresholds/v2"

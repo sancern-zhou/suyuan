@@ -106,7 +106,7 @@ def test_compose_deviation_notification_compact_six_items():
         "绝对偏差15.6，相对偏差80.4%"
     )
     assert lines[4] == "5.气象情况：温度22.2℃，相对湿度77%，西南偏南风，风速0.8米/秒"
-    assert lines[5] == "6.质控关联：前一小时内无质控记录"
+    assert lines[5] == "6.质控关联：告警站点及因子均无质控标记记录"
     # 观测时间必须换算为本地时区且取告警前最近一条（213° 那条而非更早的 68°）
     assert "东北偏东风" not in message
     assert "backend/" not in message  # 不暴露本地路径
@@ -336,7 +336,7 @@ def test_fallback_message_matches_main_renderer():
     assert compose_station_alert_fallback_message(package) == compose_station_alert_message(package)
 
 
-def test_missing_meteorology_and_qc_marks_rendered_honestly():
+def test_qc_marks_at_alert_station_and_pollutant_are_named():
     evidence = _deviation_evidence(
         observed_meteorology={"status": "unavailable", "station_hour_records": []},
     )
@@ -349,16 +349,18 @@ def test_missing_meteorology_and_qc_marks_rendered_honestly():
     ]))
 
     assert "5.气象情况：暂无可用气象观测" in message
-    assert "6.质控关联：前一小时内存在2条带质控标记的监测记录" in message
+    assert (
+        "6.质控关联：开发区NO2存在2条质控标记记录（最近09-13 12:00），"
+        "相关时段数据可能受运维质控影响，须与污染事实区分" in message
+    )
 
 
-def test_maintenance_qc_review_takes_priority():
+def test_qc_only_other_pollutant_mark_at_alert_station_does_not_claim_impact():
     evidence = _deviation_evidence(
         air_quality_context={
             "maintenance_qc_review": {
                 "required": True,
                 "records": [{"time": "2026-09-13T12:00:00+08:00", "marks": {"pm10_mark": "质控"}}],
-                "instruction": "存在质控标记",
             }
         },
     )
@@ -366,7 +368,70 @@ def test_maintenance_qc_review_takes_priority():
         {"alert": _deviation_alert(), "evidence": evidence},
     ]))
 
-    assert "6.质控关联：前一小时内存在1条质控标记记录，相关时段数据受运维质控影响" in message
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+
+
+def test_qc_only_other_station_mark_does_not_claim_impact():
+    evidence = _deviation_evidence(
+        air_quality_context={
+            "maintenance_qc_review": {
+                "required": True,
+                "records": [
+                    {"time": "2026-09-13T12:00:00+08:00", "station_id": "1005A", "marks": {"no2_mark": "质控"}}
+                ],
+            }
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+
+
+def test_qc_matching_station_and_pollutant_claim_impact():
+    evidence = _deviation_evidence(
+        air_quality_context={
+            "maintenance_qc_review": {
+                "required": True,
+                "station_id": "1003A",
+                "pollutant_mark_field": "no2_mark",
+                "records": [
+                    {"time": "2026-09-13T11:55:00+08:00", "station_id": "1003A", "source": "minute",
+                     "marks": {"no2_mark": "质控"}},
+                    {"time": "2026-09-13T12:00:00+08:00", "station_id": "1003A", "source": "hour",
+                     "marks": {"no2_mark": "零校准"}},
+                ],
+            }
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert (
+        "6.质控关联：开发区NO2存在2条质控标记记录（最近09-13 12:00），"
+        "相关时段数据可能受运维质控影响，须与污染事实区分" in message
+    )
+
+
+def test_qc_citywide_legacy_records_are_filtered_to_alert_scope():
+    """旧证据包的 maintenance_qc_review 为全市任站任因子口径：渲染期过滤后，
+    只有告警站点+告警因子的记录计入，且无命中时不再误报。"""
+    legacy_records = [
+        {"time": "2026-09-13T11:50:00+08:00", "station_id": "1005A", "marks": {"o3_mark": "质控"}},
+        {"time": "2026-09-13T11:55:00+08:00", "station_id": "1003A", "marks": {"pm10_mark": "零校准"}},
+        {"time": "2026-09-13T12:00:00+08:00", "station_id": "1003A", "marks": {"no2_mark": "质控"}},
+    ]
+    evidence = _deviation_evidence(
+        air_quality_context={"maintenance_qc_review": {"required": True, "records": legacy_records}},
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+    assert (
+        "6.质控关联：开发区NO2存在1条质控标记记录（最近09-13 12:00）" in message
+    )
 
 
 def test_collect_media_deduplicates_and_keeps_existing_files(tmp_path):

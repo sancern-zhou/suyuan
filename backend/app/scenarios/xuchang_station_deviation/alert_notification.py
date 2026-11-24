@@ -236,26 +236,59 @@ def _meteorology_clause(evidence: dict[str, Any], occurred_at: str) -> str:
     return "，".join(parts) if parts else "暂无可用气象观测"
 
 
-def _qc_clause(evidence: dict[str, Any]) -> str:
+_POLLUTANT_MARK_FIELDS = {"PM2.5": "pm25_mark", "O3": "o3_mark", "NOX": "no2_mark"}
+
+
+def _pollutant_mark_field(pollutant: str) -> str:
+    return _POLLUTANT_MARK_FIELDS.get(pollutant) or f"{pollutant.lower()}_mark"
+
+
+def _scoped_qc_records(alert: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    """质控关联按告警站点+告警因子隔离。渲染期防御过滤：旧证据包的
+    maintenance_qc_review 是“全市任一站任一因子”口径，也在此收敛为告警口径，
+    他站/他因子的质控标记不得触发“数据受质控影响”表述。"""
+    station_id = str(alert.get("station_id") or "")
+    mark_field = _pollutant_mark_field(str(alert.get("target_pollutant") or ""))
     context = evidence.get("air_quality_context") or {}
     qc = evidence.get("maintenance_qc_review") or context.get("maintenance_qc_review")
-    if qc:
-        marked = qc.get("records") or []
-        if marked:
-            return (
-                f"前一小时内存在{len(marked)}条质控标记记录，"
-                "相关时段数据受运维质控影响，须与污染事实区分"
-            )
-        return "存在质控标记记录，相关时段数据受运维质控影响，须与污染事实区分"
-    indicators = evidence.get("computed_indicators") or {}
-    process = indicators.get("station_5min_process") or {}
-    records = process.get("marked_quality_records") or []
-    if records:
-        return (
-            f"前一小时内存在{len(records)}条带质控标记的监测记录，"
-            "标记时段不作为污染异常事实直接解释"
-        )
-    return "前一小时内无质控记录"
+    records: list[dict[str, Any]] = list(qc.get("records") or []) if qc else []
+    process = (evidence.get("computed_indicators") or {}).get("station_5min_process") or {}
+    records.extend(process.get("marked_quality_records") or [])
+    matched: list[dict[str, Any]] = []
+    for record in records:
+        if station_id and str(record.get("station_id") or "") != station_id:
+            continue
+        marks = record.get("marks")
+        if isinstance(marks, dict):
+            if any(
+                str(key) == mark_field and value not in (None, "")
+                for key, value in marks.items()
+            ):
+                matched.append(record)
+        elif record.get("mark") not in (None, ""):
+            # marked_quality_records 在证据层已按告警因子过滤，站点匹配即可。
+            matched.append(record)
+    return matched
+
+
+def _qc_clause(alerts: list[dict[str, Any]]) -> str:
+    """第 6 条质控关联：逐告警项（站点×因子）隔离判断，命中才说明可能有影响。"""
+    hits: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in alerts:
+        alert = item.get("alert") or {}
+        station = str(alert.get("station_name") or alert.get("station_id") or "未知站点")
+        pollutant = str(alert.get("target_pollutant") or "未知因子")
+        matched = _scoped_qc_records(alert, item.get("evidence") or {})
+        if matched:
+            hits.setdefault((station, pollutant), []).extend(matched)
+    if not hits:
+        return "告警站点及因子均无质控标记记录"
+    parts: list[str] = []
+    for (station, pollutant), records in hits.items():
+        moments = [moment for moment in (_parse_moment(r.get("time")) for r in records) if moment]
+        recent = f"（最近{max(moments).strftime('%m-%d %H:%M')}）" if moments else ""
+        parts.append(f"{station}{pollutant}存在{len(records)}条质控标记记录{recent}")
+    return f"{'；'.join(parts)}，相关时段数据可能受运维质控影响，须与污染事实区分"
 
 
 def compose_station_alert_message(package: dict[str, Any]) -> str:
@@ -297,7 +330,7 @@ def compose_station_alert_message(package: dict[str, Any]) -> str:
         f"3.污染指标：{pollutant_line}",
         f"4.告警情况：{'；'.join(facts)}",
         f"5.气象情况：{_meteorology_clause(first_evidence, occurred_at)}",
-        f"6.质控关联：{_qc_clause(first_evidence)}",
+        f"6.质控关联：{_qc_clause(alerts)}",
     ]
     return "\n".join(lines)
 

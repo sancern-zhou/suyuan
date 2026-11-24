@@ -220,7 +220,7 @@ def _station_indicators(
 
 
 def _station_5min_indicators(alert: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
-    field = POLLUTANT_COLUMNS.get(str(alert.get("target_pollutant"))) or str(alert.get("target_pollutant", "")).lower()
+    field = _pollutant_field(alert.get("target_pollutant"))
     station_id = str(alert.get("station_id") or "")
     parsed = []
     for row in rows:
@@ -317,24 +317,53 @@ def _weather_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _maintenance_qc_review(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Return QC evidence only when the target station has an actual mark."""
-    mark_names = ("pm25_mark", "pm10_mark", "o3_mark", "no2_mark", "so2_mark", "co_mark", "nox_mark")
-    marked = [
-        {
+def _pollutant_field(target_pollutant: Any) -> str:
+    value = str(target_pollutant or "")
+    return POLLUTANT_COLUMNS.get(value) or value.lower()
+
+
+def _maintenance_qc_review(
+    minute_rows: list[dict[str, Any]],
+    hour_rows: list[dict[str, Any]],
+    *,
+    station_id: str,
+    field: str,
+) -> dict[str, Any] | None:
+    """质控关联按告警站点+告警因子隔离（2026-11-24）：只有告警站点的目标
+    因子带标记才产出质控证据，他站/他因子标记不得触发“数据受质控影响”表述。
+    分钟标记覆盖近 1 小时运维操作；小时行标记是告警小时值被标无效的直接依据。"""
+    mark_field = f"{field}_mark"
+
+    def _marked(row: dict[str, Any], source: str) -> dict[str, Any] | None:
+        if str(row.get("station_id") or "") != station_id:
+            return None
+        mark = row.get(mark_field)
+        if mark in (None, ""):
+            return None
+        return {
             "time": row.get("time"),
             "station_id": row.get("station_id"),
-            "marks": {name: row.get(name) for name in mark_names if row.get(name) not in (None, "")},
+            "source": source,
+            "marks": {mark_field: mark},
         }
+
+    records = [
+        marked
+        for source, rows in (("minute", minute_rows), ("hour", hour_rows))
         for row in rows
-        if any(row.get(name) not in (None, "") for name in mark_names)
+        if (marked := _marked(row, source)) is not None
     ]
-    if not marked:
+    if not records:
         return None
     return {
         "required": True,
-        "records": marked,
-        "instruction": "存在质控标记；相关污染物数据可能受运维质控操作影响，不应直接归因于污染变化。",
+        "station_id": station_id,
+        "pollutant_mark_field": mark_field,
+        "records": records,
+        "instruction": (
+            "告警站点的告警因子存在质控标记；相关时段数据可能受运维质控操作影响，"
+            "不应直接归因于污染变化。"
+        ),
     }
 
 
@@ -361,7 +390,7 @@ class XuchangStationDeviationEvidenceCollector:
         air_start = event_hour - timedelta(hours=AIR_QUALITY_LOOKBACK_HOURS)
         weather_start = event_time - timedelta(hours=OBSERVED_WEATHER_LOOKBACK_HOURS)
         air_result, observed_result = await asyncio.gather(
-            asyncio.to_thread(self._load_air_quality, air_start, event_time),
+            asyncio.to_thread(self._load_air_quality, air_start, event_time, alert),
             self._load_observed_weather(weather_start, event_time),
             return_exceptions=True,
         )
@@ -423,7 +452,7 @@ class XuchangStationDeviationEvidenceCollector:
         else:
             collection_status = "failed"
         return {
-            "schema_version": "xuchang_station_deviation_evidence/v3",
+            "schema_version": "xuchang_station_deviation_evidence/v4",
             "generated_at": datetime.now(TZ_SHANGHAI).isoformat(),
             "event": dict(alert),
             "source_screening": source_screening,
@@ -440,9 +469,11 @@ class XuchangStationDeviationEvidenceCollector:
             },
         }
 
-    def _load_air_quality(self, start: datetime, end: datetime) -> dict[str, Any]:
+    def _load_air_quality(self, start: datetime, end: datetime, alert: dict[str, Any]) -> dict[str, Any]:
         start_value = start.replace(tzinfo=None)
         end_value = end.replace(tzinfo=None)
+        alert_station_id = str(alert.get("station_id") or "")
+        alert_field = _pollutant_field(alert.get("target_pollutant"))
         placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         connection = pyodbc.connect(self.connection_string_factory(), timeout=30)
         try:
@@ -450,7 +481,8 @@ class XuchangStationDeviationEvidenceCollector:
             cursor.execute(
                 f"""
                 SELECT station_code, station_name, time_point AS time,
-                       aqi, pm25, pm10, o3, no2, so2, co
+                       aqi, pm25, pm10, o3, no2, so2, co,
+                       pm25_mark, pm10_mark, o3_mark, no2_mark, so2_mark, co_mark
                 FROM dbo.dat_zhongda_station_hour
                 WHERE data_table_type = 'Act' AND parameter_type = 'gp'
                   AND station_code IN ({placeholders})
@@ -459,6 +491,7 @@ class XuchangStationDeviationEvidenceCollector:
                 """,
                 [*NATIONAL_STATION_CODES, start_value, end_value],
             )
+            hour_rows = _rows(cursor)
             station_rows = [
                 {
                     "time": row["time"], "station_id": str(row["station_code"]),
@@ -469,7 +502,22 @@ class XuchangStationDeviationEvidenceCollector:
                     "no2": row["no2"], "so2": row["so2"], "co": row["co"],
                     "aqi": row["aqi"],
                 }
-                for row in _rows(cursor)
+                for row in hour_rows
+            ]
+            # 小时表 mark 列仅供告警站点+告警因子的质控关联判断（与图表把
+            # 标记时段画断线的口径一致），不并入 local_station_hour_records。
+            hour_mark_rows = [
+                {
+                    "time": row["time"],
+                    "station_id": str(row["station_code"]),
+                    "pm25_mark": row.get("pm25_mark"),
+                    "pm10_mark": row.get("pm10_mark"),
+                    "o3_mark": row.get("o3_mark"),
+                    "no2_mark": row.get("no2_mark"),
+                    "so2_mark": row.get("so2_mark"),
+                    "co_mark": row.get("co_mark"),
+                }
+                for row in hour_rows
             ]
             minute_start_value = (end - timedelta(hours=1)).replace(tzinfo=None)
             cursor.execute(
@@ -500,7 +548,12 @@ class XuchangStationDeviationEvidenceCollector:
                 "local_station_hours": len(station_rows),
                 "local_station_5min": len(station_minute_rows),
             },
-            "maintenance_qc_review": _maintenance_qc_review(station_minute_rows),
+            "maintenance_qc_review": _maintenance_qc_review(
+                station_minute_rows,
+                hour_mark_rows,
+                station_id=alert_station_id,
+                field=alert_field,
+            ),
         }
 
     async def _load_observed_weather(self, start: datetime, end: datetime) -> dict[str, Any]:
