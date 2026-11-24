@@ -126,6 +126,23 @@ const waitForStationSeriesElement = async (requestId, info, chartId) => {
   throw new Error('时序图表容器挂载超时，请关闭弹窗后重试')
 }
 
+// 弹窗内容挂在高德地图容器内，上面的触摸/点击会冒泡成地图事件（误拖地图、误触地图交互）。
+// 在内容根节点按冒泡阶段拦截：事件先正常到达图表等子元素（tooltip 不受影响），
+// 到根节点即停止继续向上。高德内容是异步插入的，与图表容器一样轮询等待挂载。
+const isolateInfoContentEvents = async (requestId, info, chartId) => {
+  const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick',
+    'touchstart', 'touchend', 'touchmove', 'wheel']
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    if (requestId !== seriesRequestId || activeInfo !== info) return
+    const root = document.getElementById(chartId)?.closest('.screen-station-series')
+    if (root) {
+      for (const type of types) root.addEventListener(type, event => event.stopPropagation())
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 16))
+  }
+}
+
 const renderStationSeries = (payload, station, metric, element) => {
   stationChart?.dispose()
   stationChart = echarts.init(element)
@@ -219,7 +236,10 @@ const openStationSeries = async (station, marker, layerKey) => {
         <footer><i></i> 二级标准 ${SECONDARY_LIMITS[metric]} ${esc(option?.unit || '')}<span>${['pm25', 'pm10'].includes(metric) ? '24小时限值' : (metric === 'aqi' ? 'IAQI=100' : '1小时限值')}</span></footer>
       </div>`,
     offset: new AMap.Pixel(0, -18),
-    closeWhenClickMap: true
+    // 点地图不关弹窗：触屏上点站点后的合成 click、以及看弹窗时误碰地图，
+    // 都会被当成"点击地图"把弹窗关掉（用户反馈"一打开就自己没了"）。
+    // 关闭只走右上角 ×、点其他站点切换、离开页面。
+    closeWhenClickMap: false
   })
   activeInfo = info
   info.on('close', () => {
@@ -231,6 +251,7 @@ const openStationSeries = async (station, marker, layerKey) => {
     activeStationLayer = null
   })
   info.open(map, marker.getPosition())
+  isolateInfoContentEvents(requestId, info, chartId)
   await nextTick()
   try {
     const payload = await fetchStationSeries(station, metric)
