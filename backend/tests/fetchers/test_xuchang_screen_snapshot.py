@@ -117,6 +117,12 @@ def _default_handlers() -> dict[str, Any]:
             "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
             "maxAqi": None,
         }),
+        "TownHour.count": _cube_rows("TownHour", {"dataTime": CUTOFF, "count": 1}),
+        "TownHour.avgPm25": _cube_rows("TownHour", {
+            "stationName": "禹州市范坡镇", "avgPm25": 60, "avgPm10": 88,
+            "avgSo2": 9, "avgNo2": 29, "avgCo": 0.6, "avgO3": 98,
+            "maxAqi": 86, "quality": "良", "primaryPollutant": "PM2.5",
+        }),
         "ShengkongHour.count": [],
         "OfficeFiveMinute.count": [],
         # 左侧统计/考核/排名段
@@ -331,6 +337,10 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert townships[0]["so2"] == 10
     assert townships[0]["no2"] == 30
     assert townships[0]["co"] == 0.7
+    hourly = snapshot["stations"]["townships_hour"]
+    assert hourly and hourly[0]["caliber"] == "app"
+    assert hourly[0]["granularity"] == "hour"
+    assert hourly[0]["pm25"] == 60 and hourly[0]["quality"] == "良"
     # 区县代表点：仅内置坐标表中的区县 + 最新小时值
     counties = snapshot["stations"]["counties"]
     assert counties and counties[0]["station_name"] == "建安区"

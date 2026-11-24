@@ -28,11 +28,12 @@ export function dashboardAssetUrl(assetPath) {
   return dashboardUrl('/xuchang-dashboard/asset', { path: assetPath })
 }
 
-export async function fetchStationSeries(station, metric) {
+export async function fetchStationSeries(station, metric, granularity = '5min') {
   const response = await authFetch(dashboardUrl('/xuchang-dashboard/station-series', {
     station_name: station.station_name,
     station_type: station.type,
-    metric
+    metric,
+    granularity
   }), { cache: 'no-store' })
   if (!response.ok) {
     const payload = await response.json().catch(() => null)

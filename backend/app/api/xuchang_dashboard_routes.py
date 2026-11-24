@@ -255,6 +255,7 @@ async def get_station_series(
     station_name: str = Query(..., min_length=1, max_length=80),
     station_type: str = Query(...),
     metric: str = Query(...),
+    granularity: str = Query(default="5min", pattern="^(5min|hour)$"),
     user: CurrentUser | None = Depends(require_dashboard_reader),
 ) -> Dict[str, Any]:
     """站点近 6 小时曲线：国控/乡镇/办事处为 5 分钟，省控为小时。"""
@@ -269,7 +270,9 @@ async def get_station_series(
     if station_type == "national":
         points = await asyncio.to_thread(_national_station_series, station_name, metric)
         return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": points}
-    cube = _STATION_SERIES_CUBES.get(station_type)
+    if granularity == "hour" and station_type != "township":
+        raise HTTPException(status_code=400, detail="该站点类型不支持小时粒度切换")
+    cube = "TownHour" if station_type == "township" and granularity == "hour" else _STATION_SERIES_CUBES.get(station_type)
     if not cube:
         raise HTTPException(status_code=400, detail="不支持的站点类型")
     measures = [f"{cube}.{member}" for member in (
@@ -285,7 +288,11 @@ async def get_station_series(
             "dimension": f"{cube}.dataTime",
             "dateRange": [(now - timedelta(hours=6)).isoformat(), (now + timedelta(minutes=5)).isoformat()],
         }],
-        "filters": [{"member": f"{cube}.stationName", "operator": "equals", "values": [station_name]}],
+        "filters": [
+            {"member": f"{cube}.stationName", "operator": "equals", "values": [station_name]},
+            *([{"member": "TownHour.caliber", "operator": "equals", "values": ["app"]}]
+              if cube == "TownHour" else []),
+        ],
         "order": {f"{cube}.dataTime": "asc"},
         "limit": 100,
     })
@@ -308,7 +315,7 @@ async def get_station_series(
         })
     return {
         "station_name": station_name, "metric": metric,
-        "granularity": "hour" if station_type == "shengkong" else "5min", "points": points,
+        "granularity": "hour" if station_type == "shengkong" or cube == "TownHour" else "5min", "points": points,
     }
 
 

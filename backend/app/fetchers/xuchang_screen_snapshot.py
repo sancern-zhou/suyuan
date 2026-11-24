@@ -816,6 +816,12 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
     async def _stations(self, alert_names: set[str]) -> dict[str, Any]:
         national = await asyncio.to_thread(self._national_stations, alert_names)
         townships = await self._township_stations()
+        # 小时图层独立降级：旧云平台小时数据暂时不可用时，不影响默认 5 分钟地图。
+        try:
+            townships_hour = await self._township_hour_stations()
+        except Exception as exc:
+            logger.warning("xuchang_screen_township_hour_failed", error=str(exc))
+            townships_hour = []
         shengkong = await self._shengkong_stations()
         office = await self._office_stations()
         # counties（区县代表点）已从地图下线（2026-11-23 改为真实省控/办事处站），
@@ -824,6 +830,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         return {
             "national": national,
             "townships": townships,
+            "townships_hour": townships_hour,
             "shengkong": shengkong,
             "office": office,
             "counties": counties,
@@ -1074,6 +1081,62 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "so2": conc["so2"],
                 "no2": conc["no2"],
                 "co": conc["co"],
+            })
+        return stations
+
+    async def _township_hour_stations(self) -> List[dict[str, Any]]:
+        """乡镇站最新小时地图数据，固定 app 口径，供高值提醒切换和截图。"""
+        from app.tools.xuchang.station_catalog.catalog import load_township_coordinates
+        from app.tools.xuchang.station_catalog.coordinates import normalize_station_name
+
+        now = self.now_factory()
+        probe = await cube_load({
+            "measures": ["TownHour.count"],
+            "dimensions": ["TownHour.dataTime"],
+            "timeDimensions": [{
+                "dimension": "TownHour.dataTime",
+                "dateRange": [
+                    (now - timedelta(hours=3)).strftime("%Y-%m-%dT%H:00:00"),
+                    (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:00:00"),
+                ],
+            }],
+            "filters": [{"member": "TownHour.caliber", "operator": "equals", "values": ["app"]}],
+            "order": {"TownHour.dataTime": "desc"},
+            "limit": 1,
+        })
+        latest_time = _text(probe[0].get("TownHour.dataTime")) if probe else None
+        if not latest_time:
+            return []
+        rows = await cube_load({
+            "measures": [
+                "TownHour.avgPm25", "TownHour.avgPm10", "TownHour.avgSo2",
+                "TownHour.avgNo2", "TownHour.avgCo", "TownHour.avgO3",
+                "TownHour.maxAqi",
+            ],
+            "dimensions": ["TownHour.stationName", "TownHour.quality", "TownHour.primaryPollutant"],
+            "timeDimensions": [{
+                "dimension": "TownHour.dataTime", "dateRange": _hour_range(latest_time),
+            }],
+            "filters": [{"member": "TownHour.caliber", "operator": "equals", "values": ["app"]}],
+            "limit": MAX_TOWNSHIPS,
+        })
+        coordinates = load_township_coordinates()
+        stations = []
+        for item in _flat(rows, "TownHour"):
+            name = _text(item.get("stationName"))
+            coord = coordinates.get(normalize_station_name(name)) if name else None
+            if not coord:
+                continue
+            stations.append({
+                "station_name": name, "type": "township", "granularity": "hour",
+                "caliber": "app", "lon": coord["longitude"], "lat": coord["latitude"],
+                "data_time": latest_time, "aqi": _clean_aqi(item.get("maxAqi")),
+                "quality": _text(item.get("quality")), "primary": _text(item.get("primaryPollutant")),
+                "aqi_estimated": False,
+                **{key: _clean_conc(item.get(member)) for key, member in {
+                    "pm25": "avgPm25", "pm10": "avgPm10", "o3": "avgO3",
+                    "so2": "avgSo2", "no2": "avgNo2", "co": "avgCo",
+                }.items()},
             })
         return stations
 

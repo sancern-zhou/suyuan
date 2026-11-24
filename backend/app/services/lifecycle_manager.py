@@ -68,6 +68,7 @@ try:
         XuchangOfficeFiveMinuteFetcher,
         XuchangShengkongStationFetcher,
     )
+    from app.fetchers.xuchang_town_high_value_alert import XuchangTownHighValueAlertFetcher
 except ImportError:  # xuchang 分支专属模块，main 工作树上不存在（可选导入）
     XuchangPollutionCauseTriggerFetcher = None
     XuchangMonthlyReviewEvidenceFetcher = None
@@ -76,6 +77,7 @@ except ImportError:  # xuchang 分支专属模块，main 工作树上不存在�
     XuchangTownAirDataFetcher = None
     XuchangOfficeFiveMinuteFetcher = None
     XuchangShengkongStationFetcher = None
+    XuchangTownHighValueAlertFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -198,6 +200,8 @@ def _configured_fetchers(project_context):
         factories["xuchang_monthly_review_evidence_fetcher"] = XuchangMonthlyReviewEvidenceFetcher
     if XuchangEnterpriseClueWeeklyFetcher is not None:
         factories["xuchang_enterprise_clue_weekly_fetcher"] = XuchangEnterpriseClueWeeklyFetcher
+    if XuchangTownHighValueAlertFetcher is not None:
+        factories["xuchang_town_high_value_alert_fetcher"] = XuchangTownHighValueAlertFetcher
     from app.services.station_operation_monitor.runtime import config_path
     if config_path().is_file():
         from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher

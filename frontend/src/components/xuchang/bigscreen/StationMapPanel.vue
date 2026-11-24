@@ -1,8 +1,14 @@
 <template>
-  <section class="map-panel">
+  <section class="map-panel" data-testid="station-map">
     <div ref="mapContainer" class="map-container" aria-label="许昌市站点空气质量地图"></div>
 
+    <div v-if="capture" class="capture-title">乡镇站{{ townshipGranularity === 'hour' ? '小时' : '5分钟' }}{{ metricLabel }}</div>
+
     <div class="map-controls">
+      <div v-if="townshipStations.length || townshipHourStations.length" class="layer-toggle township-granularity-toggle">
+        <button type="button" :class="{ on: townshipGranularity === '5min' }" @click="setTownshipGranularity('5min')">5分钟</button>
+        <button type="button" :class="{ on: townshipGranularity === 'hour' }" @click="setTownshipGranularity('hour')">小时</button>
+      </div>
       <div class="layer-toggle">
         <button
           v-for="layer in layerOptions"
@@ -46,7 +52,7 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { fetchStationSeries } from '@/api/xuchang/bigScreen.js'
 import { loadAMap } from '@/utils/mapLoader.js'
@@ -55,20 +61,26 @@ import { LEVEL_NAMES, LEVEL_PALETTE, aqiColor, aqiLevelName, iaqi, iaqiColor } f
 const props = defineProps({
   stations: { type: Object, default: () => ({ national: [], townships: [], shengkong: [], office: [] }) },
   alerts: { type: Array, default: () => [] },
-  compact: { type: Boolean, default: false }
+  compact: { type: Boolean, default: false },
+  capture: { type: Boolean, default: false },
+  townshipGranularity: { type: String, default: '5min' },
+  metric: { type: String, default: 'pm25' },
+  layers: { type: String, default: '' }
 })
 
-const emit = defineEmits(['tilt-change'])
+const emit = defineEmits(['tilt-change', 'ready'])
 
 const mapContainer = ref(null)
 const error = ref('')
-const visibleLayers = ref(['national', 'townships', 'shengkong', 'office'])
 const layerOptions = [
   { key: 'national', label: '国控站' },
   { key: 'townships', label: '乡镇站' },
   { key: 'shengkong', label: '省控站' },
   { key: 'office', label: '办事处' }
 ]
+const visibleLayers = ref(props.capture && props.layers
+  ? props.layers.split(',').filter(key => layerOptions.some(layer => layer.key === key))
+  : ['national', 'townships', 'shengkong', 'office'])
 const legendLevels = LEVEL_NAMES.map((label, index) => ({
   label: label.replace('污染', ''),
   color: LEVEL_PALETTE[index]
@@ -94,7 +106,13 @@ const metricOptions = [
   { key: 'no2', label: 'NO2', unit: 'μg/m³' },
   { key: 'co', label: 'CO', unit: 'mg/m³' }
 ]
-const displayMetric = ref('pm25')
+const displayMetric = ref(metricOptions.some(item => item.key === props.metric) ? props.metric : 'pm25')
+const townshipGranularity = ref(props.townshipGranularity === 'hour' ? 'hour' : '5min')
+const townshipStations = computed(() => props.stations?.townships || [])
+const townshipHourStations = computed(() => props.stations?.townships_hour || [])
+const activeTownships = computed(() => townshipGranularity.value === 'hour' ? townshipHourStations.value : townshipStations.value)
+const metricLabel = computed(() => metricOptions.find(item => item.key === displayMetric.value)?.label || displayMetric.value)
+const townshipDataTime = computed(() => activeTownships.value.map(item => item.data_time || item.dataTime).find(Boolean) || '')
 // AQI=100 对应的二级浓度限值；PM 为 24h、其余为 1h 评价口径。
 const SECONDARY_LIMITS = { aqi: 100, pm25: 60, pm10: 120, o3: 200, so2: 500, no2: 200, co: 10 }
 const metricColor = (metric, value) => metric === 'aqi' ? aqiColor(value) : iaqiColor(metric, value)
@@ -206,7 +224,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   activeStationLayer = layerKey
   const chartId = `station-series-chart-${requestId}`
   const option = metricOptions.find(item => item.key === metric)
-  const granularity = station.type === 'shengkong' ? '小时' : '5分钟'
+  const granularity = station.type === 'shengkong' ? '小时' : station.type === 'township' && townshipGranularity.value === 'hour' ? '小时' : '5分钟'
   const info = new AMap.InfoWindow({
     content: `
       <div class="screen-station-series">
@@ -233,7 +251,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   info.open(map, marker.getPosition())
   await nextTick()
   try {
-    const payload = await fetchStationSeries(station, metric)
+    const payload = await fetchStationSeries(station, metric, station.type === 'township' ? townshipGranularity.value : '5min')
     if (requestId !== seriesRequestId || activeInfo !== info) return
     const element = await waitForStationSeriesElement(requestId, info, chartId)
     if (!element) return
@@ -383,10 +401,12 @@ const applyLayerVisibility = () => {
 const renderMarkers = () => {
   if (!map || !AMap) return
   updateMarkerGroup('national', props.stations?.national || [])
-  updateMarkerGroup('townships', props.stations?.townships || [])
+  updateMarkerGroup('townships', activeTownships.value)
   updateMarkerGroup('shengkong', props.stations?.shengkong || [])
   updateMarkerGroup('office', props.stations?.office || [])
   applyLayerVisibility()
+  renderedGranularity = townshipGranularity.value
+  nextTick(notifyReady)
 }
 
 const toggleLayer = key => {
@@ -398,6 +418,25 @@ const toggleLayer = key => {
     visibleLayers.value.push(key)
   }
   applyLayerVisibility()
+}
+
+const setTownshipGranularity = value => {
+  closeStationSeries()
+  townshipGranularity.value = value
+}
+
+let mapReady = false
+let renderedGranularity = ''
+const notifyReady = () => {
+  if (props.capture && map && mapReady && renderedGranularity === townshipGranularity.value) {
+    emit('ready', {
+      townshipGranularity: townshipGranularity.value,
+      townshipDataTime: townshipDataTime.value,
+      townshipCount: activeTownships.value.length,
+      metric: displayMetric.value,
+      layers: visibleLayers.value
+    })
+  }
 }
 
 // 许昌市界高亮：边界 GeoJSON 本地打包（public/geo/xuchang_bound.json），
@@ -468,7 +507,10 @@ onMounted(async () => {
       console.warn('[StationMapPanel] 当前浏览器 WebGL 不可用，地图已降级为 2D 渲染，2.5D 视角不可用')
     }
     renderCityBoundary()
+    mapReady = true
     renderMarkers()
+    await nextTick()
+    notifyReady()
   } catch (exc) {
     error.value = exc?.message || '地图加载失败'
   }
@@ -485,6 +527,7 @@ onBeforeUnmount(() => {
 
 watch(() => [props.stations, props.alerts], renderMarkers, { deep: true })
 watch(displayMetric, renderMarkers)
+watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady() }))
 </script>
 
 <style lang="scss" scoped>
@@ -572,10 +615,11 @@ watch(displayMetric, renderMarkers)
   align-items: center;
 }
 
-// 2.5D / 平面视角切换，置于右下角（与底部控件条同高，避让页头）
+// 2.5D / 平面视角切换，置于右上角（顶部因子条下方），
+// 避开底部站点/空气质量等级图例，防止窄屏下与图例重叠
 .view-toggle {
   position: absolute;
-  bottom: 52px;
+  top: 52px;
   right: 16px;
   /* 需盖过 BigScreenView 的 .side-panel（z 200）/panel-handle（z 210），
      否则右侧数据面板展开时整块透明容器会拦截按钮点击 */
@@ -603,6 +647,24 @@ watch(displayMetric, renderMarkers)
     color: #e5ae22;
     border-color: #e5ae22;
   }
+}
+
+.capture-title {
+  position: absolute;
+  top: 62px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  color: #eaf6f8;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-shadow: 0 2px 6px #04141f;
+  white-space: nowrap;
+}
+
+.township-granularity-toggle {
+  flex: none;
 }
 
 .map-legend {
@@ -883,7 +945,7 @@ watch(displayMetric, renderMarkers)
 
   .view-toggle {
     right: 10px;
-    bottom: 58px;
+    top: 46px;
     padding: 5px 9px;
     font-size: 11px;
   }

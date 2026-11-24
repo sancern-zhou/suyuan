@@ -1,13 +1,18 @@
 <template>
-  <main ref="viewportEl" class="bigscreen-viewport" :class="{ 'is-embedded': embedded }">
+  <main ref="viewportEl" class="bigscreen-viewport" :class="{ 'is-embedded': embedded, 'is-capture': capture }" data-testid="bigscreen-capture-root">
     <StationMapPanel
       class="map-layer"
       :stations="store.stations"
       :alerts="store.alerts"
+      :capture="capture"
+      :township-granularity="townshipGranularity"
+      :metric="metric"
+      :layers="layers"
+      @ready="onMapReady"
       @tilt-change="onTiltChange"
     />
 
-    <ScreenHeader
+    <ScreenHeader v-if="!capture"
       :header="store.header"
       :data-cutoff-hour="store.snapshot?.latest_station_time || store.snapshot?.data_cutoff_hour || ''"
       :generated-at="store.snapshot?.generated_at || ''"
@@ -17,6 +22,7 @@
       @toggle-fullscreen="toggleFullscreen"
     />
 
+    <template v-if="!capture">
     <button
       class="panel-handle handle-left"
       :class="{ open: leftOpen }"
@@ -49,6 +55,7 @@
     </aside>
 
     <BroadcastTicker :items="store.broadcast" />
+    </template>
   </main>
 </template>
 
@@ -78,6 +85,14 @@ const viewportEl = ref(null)
 const leftOpen = ref(true)
 const rightOpen = ref(true)
 const isFullscreen = ref(false)
+const captureParams = new URLSearchParams(window.location.search)
+const capture = captureParams.get('capture') === '1'
+const townshipGranularity = captureParams.get('township_granularity') === 'hour' ? 'hour' : '5min'
+const metric = captureParams.get('metric') || 'pm25'
+const layers = captureParams.get('layers') || ''
+const onMapReady = detail => {
+  window.__XUCHANG_BIGSCREEN_CAPTURE__ = { ready: true, page: 'bigscreen', ...detail }
+}
 
 const syncFullscreenState = () => {
   isFullscreen.value = document.fullscreenElement === viewportEl.value
@@ -124,6 +139,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', syncFullscreenState)
   store.stopPolling()
+  delete window.__XUCHANG_BIGSCREEN_CAPTURE__
 })
 </script>
 

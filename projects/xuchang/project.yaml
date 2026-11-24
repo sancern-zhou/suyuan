@@ -458,6 +458,8 @@ backend:
     - xuchang_monthly_review_evidence_fetcher
     # ②企业核查线索周报（代理口径，CEMS 接入前）：每周一上风向筛查线索（APP）
     - xuchang_enterprise_clue_weekly_fetcher
+    # 乡镇站 PM2.5/PM10 小时高值：单因子 1~2 站逐站提醒，>2 站聚合一条并附小时地图
+    - xuchang_town_high_value_alert_fetcher
     - gems_xuchang_image_fetcher
   weather_history:
     bootstrap_days: 90
