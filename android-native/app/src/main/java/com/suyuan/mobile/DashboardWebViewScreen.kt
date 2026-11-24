@@ -2,6 +2,7 @@ package com.suyuan.mobile
 
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -80,6 +81,13 @@ internal fun DashboardWebViewScreen(entryUrl: String?, allowedBaseUrl: String) {
         AndroidView(
             factory = { context ->
                 WebView(context).apply {
+                    // WebView 按自身 LayoutParams 判断高度是否固定；Compose 托管的 View 默认是
+                    // 包裹内容，WebView 会把页面布局视口的高度当作 0，100vh / height:100% 全部
+                    // 解析为 0，页面内容被外壳的 overflow:hidden 裁成空白。
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false
