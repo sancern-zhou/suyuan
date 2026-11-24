@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -95,7 +97,7 @@ internal fun BottomNavBar(
         NavigationBarItem(
             selected = currentTab == "tasks",
             onClick = { onTab("tasks") },
-            icon = { TabIcon(R.drawable.ic_history, "任务", badge = taskBadge) },
+            icon = { TabIcon(R.drawable.ic_tab_tasks, "任务", badge = taskBadge) },
 
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = SuyuanColors.primary,
@@ -128,36 +130,42 @@ private fun TabIcon(drawableRes: Int, contentDescription: String, badge: Int) {
     }
 }
 
-/** 任务 tab 内的子切换（定时任务 | 广播消息）；广播未读角标挂在子切换钮上。 */
+/** 任务 tab 内的子切换（定时任务 | 广播消息）：分段控件样式，广播未读角标随标签。 */
 @Composable
 internal fun TasksSubTabRow(selected: String, broadcastBadge: Int, onSelect: (String) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .background(Color(0xFFEDEEF1), RoundedCornerShape(10.dp))
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         listOf("reports" to "定时任务", "broadcasts" to "广播消息").forEach { (key, label) ->
-            Box {
-                Surface(
-                    color = if (selected == key) SuyuanColors.primary.copy(alpha = 0.12f) else SuyuanColors.panel,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.clickable { onSelect(key) }
+            val active = selected == key
+            Surface(
+                color = if (active) Color.White else Color.Transparent,
+                shape = RoundedCornerShape(8.dp),
+                shadowElevation = if (active) 1.dp else 0.dp,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelect(key) }
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         label,
-                        color = if (selected == key) SuyuanColors.primary else SuyuanColors.text,
+                        color = if (active) SuyuanColors.text else SuyuanColors.secondaryText,
                         fontSize = 13.sp,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal
                     )
-                }
-                if (key == "broadcasts" && broadcastBadge > 0) {
-                    Box(
-                        Modifier
-                            .size(8.dp)
-                            .background(SuyuanColors.error, CircleShape)
-                            .align(Alignment.TopEnd)
-                    )
+                    if (key == "broadcasts" && broadcastBadge > 0) {
+                        Spacer(Modifier.size(5.dp))
+                        Box(Modifier.size(6.dp).background(SuyuanColors.error, CircleShape))
+                    }
                 }
             }
         }

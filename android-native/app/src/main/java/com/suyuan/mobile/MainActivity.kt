@@ -97,6 +97,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -114,6 +115,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
@@ -237,17 +239,32 @@ private fun FilterDropdown(
 ) {
     Box(modifier) {
         var expanded by remember { mutableStateOf(false) }
-        TextButton(
-            onClick = { expanded = true },
-            modifier = Modifier.defaultMinSize(minWidth = 1.dp),
-            contentPadding = PaddingValues(horizontal = 4.dp),
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White, RoundedCornerShape(8.dp))
+                .border(
+                    1.dp,
+                    if (selected == null) SuyuanColors.border else SuyuanColors.primary.copy(alpha = 0.45f),
+                    RoundedCornerShape(8.dp),
+                )
+                .clickable { expanded = true }
+                .padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
         ) {
             Text(
                 if (selected == null) "$label: 全部" else "$label: $selected",
-                color = SuyuanColors.primary,
+                color = if (selected == null) SuyuanColors.secondaryText else SuyuanColors.primary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                painterResource(R.drawable.ic_chevron_down),
+                contentDescription = null,
+                tint = SuyuanColors.secondaryText,
+                modifier = Modifier.size(14.dp),
             )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -263,6 +280,22 @@ private fun FilterDropdown(
             }
         }
     }
+}
+
+/** 广播卡片上的站点/污染物小标签 */
+@Composable
+private fun BroadcastTag(text: String) {
+    Text(
+        text,
+        fontSize = 10.sp,
+        color = Color(0xFF4A5058),
+        maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        modifier = Modifier
+            .padding(end = 6.dp)
+            .background(Color(0xFFF0F1F4), RoundedCornerShape(4.dp))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+    )
 }
 
 @Composable
@@ -434,7 +467,6 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     LaunchedEffect(currentTab, showHistory) {
         viewModel.setChatVisible(currentTab == "chat" && !showHistory)
     }
-    var selectedTaskId by remember { mutableStateOf<String?>(null) }
     // 系统返回（侧滑/返回键）：历史面板先收起，非对话 tab 回对话，而不是直接退出 Activity。
     BackHandler(enabled = showHistory || currentTab != "chat") {
         if (showHistory) showHistory = false else currentTab = "chat"
@@ -563,10 +595,6 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             AppTopBar(
             currentTab = currentTab,
             showHistory = showHistory,
-            tasksSubTab = tasksSubTab,
-            taskTitles = state.scheduledTasks.map { it.taskId to it.name },
-            unreadBroadcastCount = state.unreadBroadcastCount,
-            onSelectTask = { selectedTaskId = it },
             onHistory = { showHistory = true },
             onBack = { showHistory = false },
             onNew = { showHistory = false; viewModel.newConversation() },
@@ -587,7 +615,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 allowedBaseUrl = BuildConfig.WEB_FRONTEND_URL
             )
         } else if (currentTab == "tasks") {
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().background(Color(0xFFF4F5F7))) {
                 TasksSubTabRow(tasksSubTab, state.unreadBroadcastCount) { sub ->
                     tasksSubTab = sub
                     if (sub == "broadcasts") viewModel.openBroadcasts()
@@ -595,7 +623,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 if (tasksSubTab == "broadcasts") {
                     BroadcastPanel(state, viewModel)
                 } else {
-                    ScheduledTaskPanel(state, viewModel, selectedTaskId, onSession = { currentTab = "chat" })
+                    ScheduledTaskPanel(state, viewModel, onSession = { currentTab = "chat" })
                 }
             }
         } else if (showHistory) {
@@ -726,7 +754,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                         contentAlignment = androidx.compose.ui.Alignment.Center,
                     ) {
                         Icon(
-                            painterResource(R.drawable.ic_voice_right),
+                            painterResource(R.drawable.ic_voice_wave),
                             contentDescription = if (recording) "松开停止" else "按住切换语音输入",
                             tint = if (recording) SuyuanColors.error else SuyuanColors.controlIcon,
                             modifier = Modifier.size(16.dp),
@@ -875,17 +903,13 @@ private fun VoiceRecordingOverlay(offsetX: Float, offsetY: Float, cancelArmed: B
 private fun AppTopBar(
     currentTab: String,
     showHistory: Boolean,
-    tasksSubTab: String,
-    taskTitles: List<Pair<String, String>>,
-    unreadBroadcastCount: Int,
-    onSelectTask: (String) -> Unit,
     onHistory: () -> Unit,
     onBack: () -> Unit,
     onNew: () -> Unit,
 ) {
-    var taskMenuExpanded by remember { mutableStateOf(false) }
     // 对话/现状两个 tab 的名称由底部 tab 栏表达，顶栏不重复显示；
     // 历史会话（对话内覆盖层）与任务中心仍带标题。空标题时顶栏仅作状态栏留白。
+    // 定时任务的任务切换由 ScheduledTaskPanel 内可见的任务切换器承担。
     val title = when {
         showHistory -> "历史会话"
         currentTab == "tasks" -> "任务中心"
@@ -910,18 +934,6 @@ private fun AppTopBar(
             }
         }
         when {
-            currentTab == "tasks" && tasksSubTab == "reports" -> {
-                Box {
-                    IconButton(onClick = { taskMenuExpanded = true }) {
-                        Icon(painterResource(R.drawable.ic_menu), contentDescription = "切换任务", tint = SuyuanColors.text)
-                    }
-                    DropdownMenu(expanded = taskMenuExpanded, onDismissRequest = { taskMenuExpanded = false }) {
-                        taskTitles.forEach { (id, title) ->
-                            DropdownMenuItem(text = { Text(title) }, onClick = { onSelectTask(id); taskMenuExpanded = false })
-                        }
-                    }
-                }
-            }
             currentTab == "chat" -> IconButton(onClick = onNew) {
                 Icon(painterResource(R.drawable.ic_new_chat), contentDescription = "新建对话", tint = SuyuanColors.text, modifier = Modifier.size(28.dp))
             }
@@ -1220,7 +1232,7 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel) {
             }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             FilterDropdown(
                 label = "站点",
                 options = state.broadcastMessages.mapNotNull { it.stationName }.distinct().sorted(),
@@ -1238,8 +1250,11 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel) {
             TextButton(
                 onClick = { unreadOnly = !unreadOnly },
                 modifier = Modifier.defaultMinSize(minWidth = 1.dp),
-                contentPadding = PaddingValues(horizontal = 4.dp),
-            ) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = if (unreadOnly) SuyuanColors.primary.copy(alpha = 0.12f) else Color.Transparent,
+                ),
+            ) { Text("未读", color = if (unreadOnly) SuyuanColors.primary else SuyuanColors.secondaryText, fontSize = 12.sp) }
             if (state.broadcastMessages.any { !it.read }) {
                 TextButton(
                     onClick = { viewModel.markAllBroadcastsRead() },
@@ -1252,7 +1267,10 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
         } else if (state.broadcastError != null && state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                Text(state.broadcastError, color = SuyuanColors.error, fontSize = 14.sp)
+                Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                    Text(state.broadcastError, color = SuyuanColors.error, fontSize = 14.sp)
+                    TextButton(onClick = { viewModel.openBroadcasts() }) { Text("重试") }
+                }
             }
         } else if (state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无广播消息", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
@@ -1266,46 +1284,71 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel) {
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 16.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
             ) {
+                if (filteredMessages.isEmpty()) {
+                    item(key = "broadcast-filtered-empty") {
+                        Box(Modifier.fillParentMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                            Text("没有符合筛选条件的广播", color = SuyuanColors.secondaryText, fontSize = 14.sp)
+                        }
+                    }
+                }
                 items(filteredMessages, key = { it.messageId }) { broadcast ->
                     val expanded = expandedMessageId == broadcast.messageId
+                    var actionsExpanded by remember { mutableStateOf(false) }
                     Surface(
-                        color = if (expanded) SuyuanColors.panel else Color.White,
+                        color = Color.White,
                         shape = RoundedCornerShape(12.dp),
-                        tonalElevation = 1.dp,
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            expandedMessageId = if (expanded) null else broadcast.messageId
-                            viewModel.markBroadcastRead(broadcast)
-                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFFECEEF1), RoundedCornerShape(12.dp))
+                            .clickable {
+                                expandedMessageId = if (expanded) null else broadcast.messageId
+                                viewModel.markBroadcastRead(broadcast)
+                            },
                     ) {
-                        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 12.dp)) {
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                // 未读用圆点 + 正文加粗表达，不再占用一行文字标签
                                 if (!broadcast.read) {
-                                    Text("未读", color = SuyuanColors.primary, fontSize = 12.sp)
+                                    Box(Modifier.size(6.dp).background(SuyuanColors.primary, CircleShape))
+                                    Spacer(Modifier.size(6.dp))
                                 }
+                                broadcast.stationName?.takeIf { it.isNotBlank() }?.let { BroadcastTag(it) }
+                                broadcast.pollutant?.takeIf { it.isNotBlank() }?.let { BroadcastTag(it) }
                                 Spacer(Modifier.weight(1f))
                                 broadcast.timestamp?.let { Text(it.replace('T', ' ').take(16), color = SuyuanColors.secondaryText, fontSize = 11.sp) }
-                                IconButton(onClick = { deleteMessage = broadcast }) {
-                                    Icon(painterResource(R.drawable.ic_more), contentDescription = "广播消息操作", tint = SuyuanColors.secondaryText)
+                                Box {
+                                    IconButton(onClick = { actionsExpanded = true }, modifier = Modifier.size(28.dp)) {
+                                        Icon(painterResource(R.drawable.ic_more), contentDescription = "广播消息操作", tint = SuyuanColors.secondaryText, modifier = Modifier.size(18.dp))
+                                    }
+                                    DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text("删除消息", color = SuyuanColors.error) },
+                                            onClick = { actionsExpanded = false; deleteMessage = broadcast },
+                                        )
+                                    }
                                 }
                             }
                             if (expanded) {
-                                if (broadcast.content.isNotBlank()) {
-                                    MarkdownContent(broadcast.content, SuyuanColors.text, state, viewModel)
-                                }
-                                broadcast.attachments.forEach { attachment ->
-                                    AttachmentView(attachment, state, viewModel, LocalContext.current)
+                                Column(Modifier.padding(end = 8.dp)) {
+                                    if (broadcast.content.isNotBlank()) {
+                                        MarkdownContent(broadcast.content, SuyuanColors.text, state, viewModel)
+                                    }
+                                    broadcast.attachments.forEach { attachment ->
+                                        AttachmentView(attachment, state, viewModel, LocalContext.current)
+                                    }
                                 }
                             } else {
                                 Text(
                                     broadcast.content.replace(Regex("\\s+"), " ").trim(),
-                                    color = SuyuanColors.text,
+                                    color = if (broadcast.read) Color(0xFF3A3F47) else SuyuanColors.text,
+                                    fontWeight = if (broadcast.read) FontWeight.Normal else FontWeight.Medium,
                                     fontSize = 14.sp,
-                                    lineHeight = 20.sp,
+                                    lineHeight = 21.sp,
                                     maxLines = 2,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 8.dp),
+                                    modifier = Modifier.padding(top = 6.dp, end = 8.dp),
                                 )
                                 if (broadcast.attachments.isNotEmpty()) {
                                     Text(
@@ -1348,23 +1391,47 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel) {
 private fun EmptyChatState(loading: Boolean = false, mode: String = "query", onModeSelected: (String) -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(top = 110.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
         Text(if (loading) "正在恢复会话" else modeTitle(mode), color = SuyuanColors.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 22.dp, start = 12.dp, end = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("assistant" to "助手模式", "query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式")
-                .filter { (key, _) -> key != "assistant" || SHOW_ASSISTANT_MODE_ENTRY }
-                .forEach { (key, label) ->
-                Surface(
-                    color = if (mode == key) SuyuanColors.primary.copy(alpha = .22f) else SuyuanColors.panel,
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.clickable { onModeSelected(key) },
-                ) { Text(label, color = if (mode == key) SuyuanColors.primary else SuyuanColors.text, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) }
-            }
-        }
+        ModeSwitchRow(mode, onModeSelected)
         Text(
             if (loading) "正在加载最近的会话内容…" else modeSubtitle(mode),
             color = SuyuanColors.secondaryText,
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 8.dp),
         )
+    }
+}
+
+/**
+ * 空态的模式切换钮。整体放得下时居中；放不下（窄屏 / 大字号 / 四个入口）时从左侧起横向滚动。
+ * 不能在可滚动 Row 上直接用居中排列：滚动容器给内容的是无界宽度，居中不生效，或溢出时向两侧分散、最左侧一项滚不到。
+ */
+@Composable
+private fun ModeSwitchRow(selected: String, onSelected: (String) -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 22.dp)) {
+        val viewport = constraints.maxWidth
+        Layout(
+            content = {
+                listOf("assistant" to "助手模式", "query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式")
+                    .filter { (key, _) -> key != "assistant" || SHOW_ASSISTANT_MODE_ENTRY }
+                    .forEach { (key, label) ->
+                        Surface(
+                            color = if (selected == key) SuyuanColors.primary.copy(alpha = .22f) else SuyuanColors.panel,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.clickable { onSelected(key) },
+                        ) { Text(label, color = if (selected == key) SuyuanColors.primary else SuyuanColors.text, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) }
+                    }
+            },
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) { measurables, incoming ->
+            val side = 12.dp.roundToPx()
+            val gap = 8.dp.roundToPx()
+            val placeables = measurables.map { it.measure(incoming.copy(minWidth = 0, maxWidth = Constraints.Infinity)) }
+            val contentWidth = side * 2 + placeables.sumOf { it.width } + gap * (placeables.size - 1).coerceAtLeast(0)
+            layout(maxOf(viewport, contentWidth), placeables.maxOfOrNull { it.height } ?: 0) {
+                var x = if (contentWidth <= viewport) (viewport - contentWidth) / 2 else side
+                placeables.forEach { it.placeRelative(x, 0); x += it.width + gap }
+            }
+        }
     }
 }
 
