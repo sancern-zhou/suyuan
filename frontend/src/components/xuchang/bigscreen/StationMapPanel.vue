@@ -9,7 +9,7 @@
         <button type="button" :class="{ on: townshipGranularity === '5min' }" @click="setTownshipGranularity('5min')">5分钟</button>
         <button type="button" :class="{ on: townshipGranularity === 'hour' }" @click="setTownshipGranularity('hour')">小时</button>
       </div>
-      <div class="layer-toggle">
+      <div class="layer-toggle station-type-toggle">
         <button
           v-for="layer in layerOptions"
           :key="layer.key"
@@ -578,8 +578,16 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
   transform: translateX(-50%);
   z-index: 200;
   display: flex;
+  // 各组放不下时整组折到下一行：不在行内挤压（按钮文字会折行），也不会被视口边缘裁掉
+  flex-wrap: wrap;
+  justify-content: center;
+  // left:50% 配自适应宽度时，shrink-to-fit 的可用宽度只有半个视口，内容一多就被挤压；
+  // 改为按内容宽度布局，并以视口宽减去左右留白为上限兜底
+  width: max-content;
+  max-width: calc(100% - 20px);
   align-items: center;
   gap: 12px;
+  row-gap: 8px;
 }
 
 .layer-toggle {
@@ -954,12 +962,9 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
     }
   }
 
-  .map-controls {
-    bottom: 16px;
-    width: calc(100% - 20px);
-  }
-
-  .map-controls > .layer-toggle {
+  // 站点类型组独占一行、四列铺满。粒度切换同为 .layer-toggle，不能命中这条规则：
+  // 否则它也按 100% 宽布局，会把站点类型组整组挤出屏幕
+  .map-controls > .station-type-toggle {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     width: 100%;
@@ -970,6 +975,12 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
       padding: 6px 3px;
       font-size: 11px;
     }
+  }
+
+  // 粒度切换保持内容宽度，字号与上下内边距对齐站点类型按钮
+  .map-controls > .township-granularity-toggle button {
+    padding: 6px 10px;
+    font-size: 11px;
   }
 
   .view-toggle {
