@@ -8,6 +8,9 @@ param(
     [Parameter(Mandatory = $true)][string]$VersionName,
     [string]$ApiBaseUrl = "http://117.159.53.11:60787/suyuan",
     [string]$GetuiAppId,
+    # 大屏/巡查/实时地图 WebView 入口：两者齐全才在 App 内显示入口（缺省隐藏）。
+    [string]$WebFrontendUrl,
+    [string]$DashboardAccessToken,
     [string]$ExpectedCertSha256,
     [string]$ReleaseNotes = "",
     [int]$MinVersionCode = 0,
@@ -56,6 +59,11 @@ if (-not $GetuiAppId) { Write-Warning "未提供 getuiAppId（参数或 backend/
 # 5. 构建 release APK。
 $gradleArgs = @("assembleRelease", "-PversionCode=$VersionCode", "-PversionName=$VersionName", "-PapiBaseUrl=$ApiBaseUrl")
 if ($GetuiAppId) { $gradleArgs += "-PgetuiAppId=$GetuiAppId" }
+if ($WebFrontendUrl) { $gradleArgs += "-PwebFrontendUrl=$WebFrontendUrl" }
+if ($DashboardAccessToken) { $gradleArgs += "-PdashboardAccessToken=$DashboardAccessToken" }
+if (($WebFrontendUrl -and -not $DashboardAccessToken) -or ($DashboardAccessToken -and -not $WebFrontendUrl)) {
+    Write-Warning "webFrontendUrl 与 dashboardAccessToken 只传了一个：App 内大屏/巡查/地图入口仍会整体隐藏（两者须成对提供）。"
+}
 Push-Location $ProjectDir
 try {
     & .\gradlew.bat @gradleArgs
@@ -134,6 +142,11 @@ Write-Host "产物副本   : $(Join-Path $distDir $apkName)"
 Write-Host "版本元数据 : $versionJsonPath"
 Write-Host "versionCode: $VersionCode  versionName: $VersionName"
 Write-Host "ApiBaseUrl : $ApiBaseUrl"
+if ($WebFrontendUrl -and $DashboardAccessToken) {
+    Write-Host "Web前端入口: $WebFrontendUrl（token 已编入，App 内大屏/巡查/地图入口可见）"
+} else {
+    Write-Host "Web前端入口: 未配置（App 内大屏/巡查/地图入口隐藏）" -ForegroundColor Yellow
+}
 if ($certSha256) { Write-Host "证书SHA-256: $certSha256" }
 if (-not $ExpectedCertSha256) {
     Write-Host "提醒：请将上面指纹与 RELEASE_SIGNING.md 登记值比对后再分发。" -ForegroundColor Yellow
