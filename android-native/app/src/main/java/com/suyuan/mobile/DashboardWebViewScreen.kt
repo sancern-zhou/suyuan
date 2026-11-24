@@ -2,7 +2,10 @@ package com.suyuan.mobile
 
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -56,6 +59,25 @@ private fun buildDashboardWebViewClient(allowedBaseUrl: String): WebViewClient {
     }
 }
 
+private object DashboardWebChromeClient : WebChromeClient() {
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+        // 前端异常原来只在 WebView 内部静默发生，App 侧无法定位；输出到
+        // logcat 的 SuyuanDashboard 标签，不记录 URL（首屏 URL 含访问令牌）。
+        val message = consoleMessage.message()
+        val source = consoleMessage.sourceId()?.substringAfterLast('/') ?: "unknown"
+        val line = consoleMessage.lineNumber()
+        val text = "[$source:$line] $message"
+        when (consoleMessage.messageLevel()) {
+            ConsoleMessage.MessageLevel.ERROR -> Log.e(TAG, text)
+            ConsoleMessage.MessageLevel.WARNING -> Log.w(TAG, text)
+            else -> Log.i(TAG, text)
+        }
+        return true
+    }
+
+    private const val TAG = "SuyuanDashboard"
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 internal fun DashboardWebViewScreen(entryUrl: String?, allowedBaseUrl: String) {
@@ -95,6 +117,7 @@ internal fun DashboardWebViewScreen(entryUrl: String?, allowedBaseUrl: String) {
                     settings.javaScriptCanOpenWindowsAutomatically = false
                     setBackgroundColor(Color.WHITE)
                     webViewClient = client
+                    webChromeClient = DashboardWebChromeClient
                     loadUrl(entryUrl)
                 }
             },

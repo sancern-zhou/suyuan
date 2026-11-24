@@ -99,6 +99,7 @@ const displayMetric = ref('pm25')
 const SECONDARY_LIMITS = { aqi: 100, pm25: 60, pm10: 120, o3: 200, so2: 500, no2: 200, co: 10 }
 const metricColor = (metric, value) => metric === 'aqi' ? aqiColor(value) : iaqiColor(metric, value)
 let activeInfo = null
+let activeStationLayer = null
 let stationChart = null
 let seriesRequestId = 0
 
@@ -108,11 +109,22 @@ const closeStationSeries = () => {
   stationChart = null
   activeInfo?.close()
   activeInfo = null
+  activeStationLayer = null
 }
 
-const renderStationSeries = (payload, station, metric) => {
-  const element = document.getElementById('station-series-chart')
-  if (!element) return
+const waitForStationSeriesElement = async (requestId, info) => {
+  // 高德 InfoWindow 的内容在部分 Android WebView 中异步插入 DOM。
+  // 快速接口可能先于节点挂载返回，此时不能静默 return，否则永久显示加载中。
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    if (requestId !== seriesRequestId || activeInfo !== info) return null
+    const element = document.getElementById('station-series-chart')
+    if (element) return element
+    await new Promise(resolve => setTimeout(resolve, 16))
+  }
+  throw new Error('时序图表容器挂载超时，请关闭弹窗后重试')
+}
+
+const renderStationSeries = (payload, station, metric, element) => {
   stationChart?.dispose()
   stationChart = echarts.init(element)
   const points = payload.points || []
@@ -185,10 +197,11 @@ const renderStationSeries = (payload, station, metric) => {
   })
 }
 
-const openStationSeries = async (station, marker) => {
+const openStationSeries = async (station, marker, layerKey) => {
   closeStationSeries()
   const metric = displayMetric.value
   const requestId = ++seriesRequestId
+  activeStationLayer = layerKey
   const option = metricOptions.find(item => item.key === metric)
   const granularity = station.type === 'shengkong' ? '小时' : '5分钟'
   const info = new AMap.InfoWindow({
@@ -212,22 +225,28 @@ const openStationSeries = async (station, marker) => {
     stationChart?.dispose()
     stationChart = null
     activeInfo = null
+    activeStationLayer = null
   })
   info.open(map, marker.getPosition())
   await nextTick()
   try {
     const payload = await fetchStationSeries(station, metric)
     if (requestId !== seriesRequestId || activeInfo !== info) return
+    const element = await waitForStationSeriesElement(requestId, info)
+    if (!element) return
     if (!payload.points?.length) {
-      const element = document.getElementById('station-series-chart')
-      if (element) element.innerHTML = '<span>该站点当前指标暂无时序数据</span>'
+      element.innerHTML = '<span>该站点当前指标暂无时序数据</span>'
       return
     }
-    renderStationSeries(payload, station, metric)
+    renderStationSeries(payload, station, metric, element)
   } catch (exc) {
-    if (requestId !== seriesRequestId) return
-    const element = document.getElementById('station-series-chart')
-    if (element) element.innerHTML = `<span>${esc(exc.message || '时序数据加载失败')}</span>`
+    if (requestId !== seriesRequestId || activeInfo !== info) return
+    try {
+      const element = await waitForStationSeriesElement(requestId, info)
+      if (element) element.innerHTML = `<span>${esc(exc.message || '时序数据加载失败')}</span>`
+    } catch {
+      // 弹窗已关闭时无需再更新错误信息；请求编号防止旧请求污染新弹窗。
+    }
   }
 }
 
@@ -293,7 +312,7 @@ const esc = value =>
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
   ))
 
-const buildMarker = (station, isAlerting) => {
+const buildMarker = (station, isAlerting, layerKey) => {
   const metric = displayMetric.value
   const text = formatMetric(station, metric)
   // AQI 直接按等级上色；污染物按 HJ633 IAQI 折点换算后上色
@@ -313,7 +332,7 @@ const buildMarker = (station, isAlerting) => {
     title: label,
     zIndex: isAlerting ? 130 : 110
   })
-  marker.on('click', () => openStationSeries(station, marker))
+  marker.on('click', () => openStationSeries(station, marker, layerKey))
   return marker
 }
 
@@ -325,32 +344,45 @@ const clearMarkers = () => {
   markerGroups.office = []
 }
 
+const markerSignature = (station, alerting) => JSON.stringify([
+  station.station_name, station.type, station.lon, station.lat,
+  displayMetric.value, metricValue(station, displayMetric.value), alerting
+])
+
+const updateMarkerGroup = (key, stations) => {
+  const alerting = alertKeys()
+  const signatures = stations.map(station => markerSignature(
+    station, key === 'national' && alerting.has(String(station.station_name || '').trim())
+  ))
+  const previous = markerGroups[key]
+  const unchanged = previous.length === stations.length && previous.every((entry, index) => (
+    entry.signature === signatures[index]
+  ))
+  if (unchanged) return
+  // 不重建仍有点击弹窗的图层：移动 WebView 中关闭/重建标记会让高德
+  // 保留弹窗外壳却移除内容节点，造成永久加载。其他图层刷新不影响它。
+  if (activeInfo && activeStationLayer === key) return
+  previous.forEach(entry => entry.marker.setMap(null))
+  markerGroups[key] = stations.map(station => {
+    const isAlerting = key === 'national' && alerting.has(String(station.station_name || '').trim())
+    return { marker: buildMarker(station, isAlerting, key), signature: markerSignature(station, isAlerting) }
+  })
+}
+
 const applyLayerVisibility = () => {
   const show = key => visibleLayers.value.includes(key)
-  markerGroups.national.forEach(marker => marker.setMap(show('national') ? map : null))
-  markerGroups.townships.forEach(marker => marker.setMap(show('townships') ? map : null))
-  markerGroups.shengkong.forEach(marker => marker.setMap(show('shengkong') ? map : null))
-  markerGroups.office.forEach(marker => marker.setMap(show('office') ? map : null))
+  markerGroups.national.forEach(({ marker }) => marker.setMap(show('national') ? map : null))
+  markerGroups.townships.forEach(({ marker }) => marker.setMap(show('townships') ? map : null))
+  markerGroups.shengkong.forEach(({ marker }) => marker.setMap(show('shengkong') ? map : null))
+  markerGroups.office.forEach(({ marker }) => marker.setMap(show('office') ? map : null))
 }
 
 const renderMarkers = () => {
   if (!map || !AMap) return
-  closeStationSeries()
-  clearMarkers()
-  const alerting = alertKeys()
-  ;(props.stations?.national || []).forEach(station => {
-    const marker = buildMarker(station, alerting.has(String(station.station_name || '').trim()))
-    markerGroups.national.push(marker)
-  })
-  ;(props.stations?.townships || []).forEach(station => {
-    markerGroups.townships.push(buildMarker(station, false))
-  })
-  ;(props.stations?.shengkong || []).forEach(station => {
-    markerGroups.shengkong.push(buildMarker(station, false))
-  })
-  ;(props.stations?.office || []).forEach(station => {
-    markerGroups.office.push(buildMarker(station, false))
-  })
+  updateMarkerGroup('national', props.stations?.national || [])
+  updateMarkerGroup('townships', props.stations?.townships || [])
+  updateMarkerGroup('shengkong', props.stations?.shengkong || [])
+  updateMarkerGroup('office', props.stations?.office || [])
   applyLayerVisibility()
 }
 
