@@ -127,6 +127,7 @@ def detect_high_value_groups(
             "hour": latest,
             "alerts": alerts,
             "stations": deliverable,
-            "delivery_mode": "aggregate" if len(deliverable) > 2 else "individual",
+            "delivery_mode": "aggregate",
+            "out_of_scope": len(deliverable) > config.max_alert_stations,
         })
     return latest, groups

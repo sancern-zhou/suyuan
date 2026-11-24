@@ -195,8 +195,7 @@ def test_recovery_counter_resets_on_rebound(tmp_path):
 
 
 def test_priority_falls_through_when_higher_rule_gated(tmp_path):
-    # #24 新语义：组内逐条过闸门。DS 被防抖拦下时，同窗口的 OL（未受闸门
-    # 约束）应顶上推送，不再连坐静默。
+    # 单站规则共享冷却：DS 被防抖拦下时，OL 仍须受同站同因子冷却约束。
     store = AlertStateStore(tmp_path)
     _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
     ds_again = _alert(occurred_at="2026-11-02T09:15:00+08:00")
@@ -206,12 +205,40 @@ def test_priority_falls_through_when_higher_rule_gated(tmp_path):
     pushed, suppressed, _summary = _chain(
         [ds_again, ol], store, tmp_path, datetime(2026, 11, 2, 9, 15, tzinfo=TZ)
     )
-    assert [a["rule_type"] for a in pushed] == ["spatial_outlier"]
+    assert pushed == []
     assert [(item["alert"]["rule_type"], item["reason"]) for item in suppressed] == [
-        ("sudden_rise", "hysteresis")
+        ("sudden_rise", "hysteresis"), ("spatial_outlier", "shared_cooldown")
     ]
     state = store.instance("5min", "a", "PM10", "spatial_outlier")
-    assert state["armed"] is False and state["last_air_level"] == "良"
+    assert state["armed"] is True and state["last_push_ts"] is None
+
+
+def test_single_station_rules_share_last_pushed_rule_cooldown(tmp_path):
+    # CL-PM10 最后推送，冷却 60 分钟；同站同因子 OL 到 59 分钟仍拦截。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert(rule_type="continuous_rise")], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    ol = _alert(rule_type="spatial_outlier", occurred_at="2026-11-02T09:59:00+08:00")
+    pushed, suppressed, _ = _chain([ol], store, tmp_path, datetime(2026, 11, 2, 9, 59, tzinfo=TZ))
+    assert pushed == [] and suppressed[0]["reason"] == "shared_cooldown"
+
+    ol = _alert(rule_type="spatial_outlier", occurred_at="2026-11-02T10:00:00+08:00")
+    pushed, suppressed, _ = _chain([ol], store, tmp_path, datetime(2026, 11, 2, 10, 0, tzinfo=TZ))
+    assert len(pushed) == 1 and suppressed == []
+
+
+def test_single_station_cooldown_isolated_by_pollutant_and_multi_station_rule(tmp_path):
+    store = AlertStateStore(tmp_path)
+    _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    other_pollutant = _alert(pollutant="NO2")
+    regional = _alert(rule_type="multi_station_rise", air_quality_level="轻度污染")
+    pushed, suppressed, _ = _chain(
+        [other_pollutant, regional], store, tmp_path, datetime(2026, 11, 2, 9, 5, tzinfo=TZ)
+    )
+    assert len(pushed) == 2 and suppressed == []
+    assert store.notification_group("5min", "a", "PM10")["last_rule_type"] == "sudden_rise"
+    assert "5min::a::NO2" in store._load()["notification_groups"]
+    assert not any(item.get("last_rule_type") == "multi_station_rise"
+                   for item in store._load()["notification_groups"].values())
 
 
 def test_upgrade_penetrates_quiet_hours(tmp_path):

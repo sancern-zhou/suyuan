@@ -3,7 +3,8 @@
 规则总表只定义了三类规则、阈值和冷却期；本模块保留既有运营层：
 恢复防抖、免打扰、日限额、同站合并，并按新口径改造：
 
-- 冷却期按规则类型 + 因子：DS 60/30、CL 120/60、OL 60/30 分钟；
+- 单站 DS/CL/OL 按站点 + 因子共享通知冷却；窗口取最后一次实际
+  推送规则的冷却期。多站 MR 独立，不读写单站共享冷却状态；
 - 升级例外（#23）：污染等级升高立即再报，穿透防抖/冷却/免打扰（夜间
   升级也必须叫人），挂到首条事件上；
 - 优先级排序（#24）：DS > CL > OL，同一站同一因子同一窗口按优先级逐条
@@ -32,8 +33,9 @@ from app.scenarios.xuchang_station_deviation.rule_engine import new_rule_state
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
-STATE_SCHEMA_VERSION = "xuchang_air_alert_state/v2"
+STATE_SCHEMA_VERSION = "xuchang_air_alert_state/v3"
 PUSHLOG_SCHEMA_VERSION = "xuchang_air_alert_pushlog/v2"
+SINGLE_STATION_RULES = frozenset({"sudden_rise", "continuous_rise", "spatial_outlier"})
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -50,6 +52,10 @@ def _parse_ts(value: Any) -> datetime | None:
 
 def instance_key(grain: str, station_id: str, pollutant: str, rule_type: str) -> str:
     return f"{grain}::{station_id}::{pollutant}::{rule_type}"
+
+
+def notification_group_key(grain: str, station_id: str, pollutant: str) -> str:
+    return f"{grain}::{station_id}::{pollutant}"
 
 
 class AlertStateStore:
@@ -79,6 +85,7 @@ class AlertStateStore:
             counters.setdefault("date", None)
             counters.setdefault("sites", {})
             counters.setdefault("global", 0)
+            state.setdefault("notification_groups", {})
             state.setdefault("updated_at", None)
             self._state = state
             return state
@@ -119,6 +126,11 @@ class AlertStateStore:
 
     def all_instances(self) -> dict[str, dict[str, Any]]:
         return dict(self._load()["instances"])
+
+    def notification_group(self, grain: str, station_id: str, pollutant: str) -> dict[str, Any]:
+        with self._lock:
+            groups = self._load()["notification_groups"]
+            return groups.setdefault(notification_group_key(grain, station_id, pollutant), {})
 
     # ---- 日计数器（按站点，不再按告警级别）----
 
@@ -197,6 +209,19 @@ def renotify_due(
         return False
     last_ts = _parse_ts(state.get("last_push_ts"))
     return last_ts is not None and now - last_ts >= timedelta(minutes=cooldown)
+
+
+def shared_cooldown_reason(
+    group_state: dict[str, Any], *, now: datetime, config: AirAlertRuleConfig
+) -> str | None:
+    last_ts = _parse_ts(group_state.get("last_push_ts"))
+    cooldown = config.cooldown_for(
+        str(group_state.get("last_rule_type") or ""),
+        str(group_state.get("pollutant") or ""),
+    )
+    if last_ts is not None and cooldown and now - last_ts < timedelta(minutes=cooldown):
+        return "shared_cooldown"
+    return None
 
 
 def quota_reason(
@@ -468,8 +493,11 @@ def apply_push_chain(
             rule_type = str(alert.get("rule_type") or "")
             pollutant = str(alert.get("target_pollutant") or "")
             station_id = str(alert.get("station_id") or "")
-            state = store.instance(
-                str(alert.get("measurement_granularity")), station_id, pollutant, rule_type
+            grain = str(alert.get("measurement_granularity"))
+            state = store.instance(grain, station_id, pollutant, rule_type)
+            notification_group = (
+                store.notification_group(grain, station_id, pollutant)
+                if rule_type in SINGLE_STATION_RULES else None
             )
             _evaluate_chronic_outlier_state(state, config, now)
             chronic_reason = _chronic_outlier_reason(alert, state, config)
@@ -524,6 +552,13 @@ def apply_push_chain(
                 suppressed.append({"alert": alert, "reason": reason})
                 _log(alert, "suppress", reason)
                 continue
+            if not upgrade and notification_group is not None:
+                shared_reason = shared_cooldown_reason(notification_group, now=now, config=config)
+                if shared_reason:
+                    alert["suppress_reason"] = shared_reason
+                    suppressed.append({"alert": alert, "reason": shared_reason})
+                    _log(alert, "suppress", shared_reason)
+                    continue
             reason = quota_reason(store, station_id, day, config)
             if reason:
                 alert["suppress_reason"] = reason
@@ -559,6 +594,20 @@ def apply_push_chain(
             recovery_threshold=alert.get("recovery_threshold"),
             station_id=str(alert.get("station_id")),
         )
+        rule_type = str(alert.get("rule_type") or "")
+        if rule_type in SINGLE_STATION_RULES:
+            group_state = store.notification_group(
+                str(alert.get("measurement_granularity")),
+                str(alert.get("station_id")),
+                str(alert.get("target_pollutant")),
+            )
+            group_state.update({
+                "last_push_ts": now.isoformat(),
+                "last_rule_type": rule_type,
+                "last_event_id": alert.get("event_id"),
+                "last_air_level": alert.get("air_quality_level"),
+                "pollutant": alert.get("target_pollutant"),
+            })
         alert["push_decision"] = {"action": "push", "decided_at": now.isoformat()}
         _log(
             alert,

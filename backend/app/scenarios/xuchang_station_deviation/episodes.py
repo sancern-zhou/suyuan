@@ -10,6 +10,10 @@ from threading import RLock
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.scenarios.xuchang_station_deviation.rule_config import (
+    AirAlertRuleConfig,
+    load_air_alert_config,
+)
 from app.utils.path_config import get_data_registry
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -34,12 +38,12 @@ class XuchangStationDeviationEpisodeService:
         self,
         *,
         output_root: Path | None = None,
-        close_after_hours: float = 0.5,
         material_ratio_increase: float = 0.25,
+        config: AirAlertRuleConfig | None = None,
     ) -> None:
         self.output_root = output_root or get_data_registry() / "xuchang_station_deviation_alerts"
-        self.close_after_hours = close_after_hours
         self.material_ratio_increase = material_ratio_increase
+        self.config = config or load_air_alert_config(self.output_root)
         self._lock = RLock()
 
     @property
@@ -61,19 +65,33 @@ class XuchangStationDeviationEpisodeService:
             return "hourly_deviation"
         return "station_deviation"
 
-    def _close_after(self, granularity: str) -> timedelta:
-        # Minute alerts need the existing short inactivity boundary; hourly
-        # alerts arriving once per hour must remain in the same episode.
-        if granularity in {"minute", "5min"}:
-            return timedelta(hours=self.close_after_hours)
-        return timedelta(hours=max(self.close_after_hours, 1.5))
+    @staticmethod
+    def _rule_type(alert: dict[str, Any]) -> str:
+        explicit = alert.get("rule_type")
+        if explicit:
+            return str(explicit)
+        rule = str(alert.get("rule") or "")
+        if rule.startswith("six_consecutive"):
+            return "continuous_rise"
+        if "multi_station" in rule or "synchronous" in rule:
+            return "multi_station_rise"
+        if rule.startswith("relative_deviation") or rule.startswith("spatial_outlier"):
+            return "spatial_outlier"
+        if alert.get("measurement_granularity") == "hour":
+            return "hourly_deviation"
+        return "station_deviation"
+
+    def _close_after(self, episode: dict[str, Any]) -> timedelta:
+        cooldown = self.config.cooldown_for(
+            self._rule_type(episode), str(episode.get("target_pollutant") or "").upper()
+        )
+        if cooldown <= 0:
+            granularity = episode.get("measurement_granularity")
+            return timedelta(hours=0.5 if granularity in {"minute", "5min"} else 1.5)
+        return timedelta(minutes=cooldown)
 
     def _can_close(self, episode: dict[str, Any], now: datetime) -> bool:
-        granularity = str(episode.get("measurement_granularity") or "unknown")
-        return (
-            now - _hour(episode["last_seen_at"]) >= self._close_after(granularity)
-            and now - _hour(episode["last_notified_at"]) >= timedelta(minutes=60)
-        )
+        return now - _hour(episode["last_seen_at"]) >= self._close_after(episode)
 
     def record(self, alert: dict[str, Any]) -> dict[str, Any]:
         occurred_at = _hour(alert["occurred_at"])
@@ -106,6 +124,8 @@ class XuchangStationDeviationEpisodeService:
                     "target_pollutant": pollutant,
                     "measurement_granularity": granularity,
                     "alert_type": alert_type,
+                    "rule_type": self._rule_type(alert),
+                    "cooldown_minutes": self.config.cooldown_for(self._rule_type(alert), pollutant),
                     "air_quality_level": alert.get("air_quality_level"),
                     "started_at": occurred_at.isoformat(),
                     "last_seen_at": occurred_at.isoformat(),

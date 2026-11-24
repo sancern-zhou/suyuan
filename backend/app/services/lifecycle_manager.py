@@ -66,6 +66,7 @@ try:
     from app.fetchers.xuchang_town_hour_day import XuchangTownAirDataFetcher
     from app.fetchers.xuchang_oldcloud_extra_stations import (
         XuchangOfficeFiveMinuteFetcher,
+        XuchangOfficeHourFetcher,
         XuchangShengkongStationFetcher,
     )
     from app.fetchers.xuchang_town_high_value_alert import XuchangTownHighValueAlertFetcher
@@ -76,6 +77,7 @@ except ImportError:  # xuchang 分支专属模块，main 工作树上不存在�
     XuchangTownFiveMinuteFetcher = None
     XuchangTownAirDataFetcher = None
     XuchangOfficeFiveMinuteFetcher = None
+    XuchangOfficeHourFetcher = None
     XuchangShengkongStationFetcher = None
     XuchangTownHighValueAlertFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
@@ -192,6 +194,8 @@ def _configured_fetchers(project_context):
         factories["xuchang_town_day_fetcher"] = lambda: XuchangTownAirDataFetcher(data_kind="day")
     if XuchangOfficeFiveMinuteFetcher is not None:
         factories["xuchang_office_five_minute_fetcher"] = XuchangOfficeFiveMinuteFetcher
+    if XuchangOfficeHourFetcher is not None:
+        factories["xuchang_office_hour_fetcher"] = XuchangOfficeHourFetcher
     if XuchangShengkongStationFetcher is not None:
         factories["xuchang_shengkong_station_fetcher"] = XuchangShengkongStationFetcher
     if XuchangPollutionCauseTriggerFetcher is not None:

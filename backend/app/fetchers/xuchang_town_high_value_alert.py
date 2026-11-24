@@ -31,6 +31,7 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
         weather_repository: Any | None = None,
         state: AlertStateStore | None = None,
         capture: Callable[..., str] | None = None,
+        message_renderer: Callable[..., Any] = render_message,
         enqueue: Callable[..., Any] = enqueue_wechat_message,
         config: HighValueConfig | None = None,
         now_factory: Callable[[], datetime] = datetime.now,
@@ -46,6 +47,7 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
         self.weather_repository = weather_repository or WeatherRepository()
         self.state = state or AlertStateStore()
         self.capture = capture or screenshot.capture_township_hour_map
+        self.message_renderer = message_renderer
         self.enqueue = enqueue
         self.config = config or HighValueConfig.from_env()
         self.now_factory = now_factory
@@ -84,6 +86,12 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
             stations = group["stations"]
             if not stations:
                 continue
+            if group["out_of_scope"]:
+                self.state.record(group["group_id"], "regional_pollution_skipped", {
+                    "station_count": len(stations),
+                    "station_ids": [item["station_id"] for item in stations],
+                })
+                continue
             try:
                 # PM2.5/PM10 分别截图，避免给 PM10 提醒附 PM2.5 地图。
                 media = await asyncio.to_thread(self.capture, hour, [group], rows)
@@ -94,9 +102,9 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
                 self.state.record(group["group_id"], "screenshot_failed", {"error": str(exc)})
                 logger.warning("town_high_value_screenshot_failed", pollutant=group["pollutant"], error=str(exc))
                 continue
-            deliveries = [[item] for item in stations] if len(stations) <= 2 else [stations]
+            deliveries = [stations]
             for selected in deliveries:
-                message = render_message({**group, "stations": selected}, weather)
+                message = await self.message_renderer({**group, "stations": selected}, weather)
                 record = self.enqueue(
                     "town_high_value",
                     message,

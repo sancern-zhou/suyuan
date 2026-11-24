@@ -822,6 +822,11 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         except Exception as exc:
             logger.warning("xuchang_screen_township_hour_failed", error=str(exc))
             townships_hour = []
+        office_hour = []
+        try:
+            office_hour = await self._office_hour_stations()
+        except Exception as exc:
+            logger.warning("xuchang_screen_office_hour_failed", error=str(exc))
         shengkong = await self._shengkong_stations()
         office = await self._office_stations()
         # counties（区县代表点）已从地图下线（2026-11-23 改为真实省控/办事处站），
@@ -831,6 +836,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "national": national,
             "townships": townships,
             "townships_hour": townships_hour,
+            "office_hour": office_hour,
             "shengkong": shengkong,
             "office": office,
             "counties": counties,
@@ -1137,6 +1143,38 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                     "pm25": "avgPm25", "pm10": "avgPm10", "o3": "avgO3",
                     "so2": "avgSo2", "no2": "avgNo2", "co": "avgCo",
                 }.items()},
+            })
+        return stations
+
+    async def _office_hour_stations(self) -> List[dict[str, Any]]:
+        """办事处官方小时双因子，与乡镇小时数据共同构成告警地图。"""
+        from app.scenarios.xuchang_town_high_value.repository import TownHourRepository
+        from app.tools.xuchang.station_catalog.catalog import load_office_coordinates
+        from app.tools.xuchang.station_catalog.coordinates import normalize_station_name
+
+        repository = TownHourRepository()
+        now = self.now_factory()
+        rows = await repository._office_hour_rows_for_map(now)
+        coordinates = load_office_coordinates()
+        stations = []
+        for row in rows:
+            name = _text(row.get("StationName"))
+            coord = coordinates.get(normalize_station_name(name)) if name else None
+            if not coord:
+                continue
+            conc = {
+                "pm25": _clean_conc(row.get("PM25")),
+                "pm10": _clean_conc(row.get("PM10")),
+            }
+            est_aqi, est_primary = hourly_aqi_and_primary(conc)
+            stations.append({
+                "station_name": name, "type": "office", "granularity": "hour",
+                "caliber": "src", "lon": coord["longitude"], "lat": coord["latitude"],
+                "data_time": row["CollectionTime"].isoformat(),
+                "aqi": int(round(est_aqi)) if est_aqi is not None else None,
+                "quality": None, "primary": est_primary,
+                "aqi_estimated": est_aqi is not None,
+                **conc,
             })
         return stations
 

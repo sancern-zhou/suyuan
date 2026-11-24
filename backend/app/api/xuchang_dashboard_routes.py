@@ -270,9 +270,15 @@ async def get_station_series(
     if station_type == "national":
         points = await asyncio.to_thread(_national_station_series, station_name, metric)
         return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": points}
-    if granularity == "hour" and station_type != "township":
+    if granularity == "hour" and station_type not in {"township", "office"}:
         raise HTTPException(status_code=400, detail="该站点类型不支持小时粒度切换")
     cube = "TownHour" if station_type == "township" and granularity == "hour" else _STATION_SERIES_CUBES.get(station_type)
+    if station_type == "office" and granularity == "hour":
+        from app.scenarios.xuchang_town_high_value.repository import TownHourRepository
+        points = await TownHourRepository().station_series(
+            station_name=station_name, metric=metric, now=now, office=True, hour=True,
+        )
+        return {"station_name": station_name, "metric": metric, "granularity": "hour", "points": points}
     if not cube:
         raise HTTPException(status_code=400, detail="不支持的站点类型")
     measures = [f"{cube}.{member}" for member in (

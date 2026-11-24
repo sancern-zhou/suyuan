@@ -54,11 +54,14 @@ async def test_five_minute_catalog_fills_missing_station_names(monkeypatch):
             return None
 
         async def execute(self, query, *_args):
-            self.station_query = "TownStationFiveMinute" in query
+            self.station_query = "SELECT Tsno, StationName FROM TownStationFiveMinute" in query
+            self.office_query = "FROM OfficeStationFiveMinute" in query
 
         async def fetchall(self):
             if self.station_query:
                 return [("411025103", "襄城县山头店镇")]
+            if self.office_query:
+                return [{"Tsno": "411002001", "StationName": "魏都区丁庄街道办事处"}]
             return [{"Tsno": "411025103", "StationName": None}]
 
     class Connection:
@@ -107,19 +110,44 @@ def build(monkeypatch, tmp_path, rows, weather=None, capture=None):
         enqueue=lambda *args, **kwargs: sent.append((args, kwargs)) or {"id": str(len(sent))},
         now_factory=lambda: NOW,
     )
+    async def fake_renderer(group, weather):
+        stations = group["stations"]
+        names = "、".join(item["station_name"] for item in stations)
+        message = (
+            f"【乡镇高值提醒】14时00分乡镇及办事处站数据显示{names}"
+            f"{group['pollutant']}浓度实时小时数据为{stations[0]['value']:.1f}微克/立方米，"
+            f"共{len(stations)}个乡镇及办事处站。"
+            "请属地加强上风向及站点周边污染源排查，当前气象情况："
+        )
+        message += "暂无可用气象观测。" if not weather["observed_meteorology"]["station_hour_records"] else "温度8.2℃，相对湿度61%，西北风，风速2.3米/秒。"
+        return message
+
+    fetcher.message_renderer = fake_renderer
     return fetcher, sent
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("count", [1, 2, 3])
-async def test_one_two_three_station_delivery(monkeypatch, tmp_path, count):
-    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[90] * count))
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+async def test_one_to_four_stations_share_one_message(monkeypatch, tmp_path, count):
+    rows = rows_for(high_pm25=[90] * count)
+    for row in rows:
+        row["PM10"] = 40
+    fetcher, sent = build(monkeypatch, tmp_path, rows)
     result = await fetcher.fetch_and_store()
-    assert result["sent"] == (count if count <= 2 else 1)
-    assert len(sent) == (count if count <= 2 else 1)
-    if count == 3:
-        assert "3个乡镇站" in sent[0][0][1]
-        assert all(name in sent[0][0][1] for name in ["高值镇0", "高值镇1", "高值镇2"])
+    assert result["sent"] == 1
+    assert len(sent) == 1
+    assert f"共{count}个乡镇及办事处站" in sent[0][0][1]
+    assert all(f"高值镇{index}" in sent[0][0][1] for index in range(count))
+
+
+@pytest.mark.asyncio
+async def test_five_stations_are_regional_pollution_and_not_sent(monkeypatch, tmp_path):
+    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[90] * 5, high_pm10=[170]))
+    result = await fetcher.fetch_and_store()
+    assert result["sent"] == 1 and len(sent) == 1
+    assert "PM10" in sent[0][0][1] and "PM2.5" not in sent[0][0][1]
+    history = fetcher.state._load()["history"]
+    assert any(entry["status"] == "regional_pollution_skipped" and entry["station_count"] == 5 for entry in history)
 
 
 @pytest.mark.asyncio
@@ -130,7 +158,7 @@ async def test_pollutants_are_counted_and_grouped_independently(monkeypatch, tmp
     messages = [call[0][1] for call in sent]
     assert sum("PM2.5" in message for message in messages) == 1
     pm10 = [message for message in messages if "PM10" in message]
-    assert len(pm10) == 1 and "3个乡镇站" in pm10[0]
+    assert len(pm10) == 1 and "3个乡镇及办事处站" in pm10[0]
 
 
 @pytest.mark.asyncio
@@ -156,6 +184,28 @@ def test_modified_z_extreme_is_equipment_anomaly():
 
 
 @pytest.mark.asyncio
+async def test_llm_receives_structured_evidence_and_organizes_text():
+    class LLM:
+        def __init__(self):
+            self.request = None
+
+        async def chat_anthropic(self, messages, **_kwargs):
+            self.request = messages[0]["content"]
+            return {"content": [{"type": "text", "text": "【乡镇高值提醒】丁庄站PM10小时浓度偏高，请加强排查。"}]}
+
+        def clean_thinking_tags(self, text):
+            return text
+
+    rows = rows_for(high_pm25=[90])
+    _, groups = detect_high_value_groups(rows)
+    llm = LLM()
+    message = await render_message(groups[0], {}, llm=llm)
+    assert message.startswith("【乡镇高值提醒】")
+    assert '"stations"' in llm.request and '"weather"' in llm.request
+    assert '"value": 90.0' in llm.request and '"baseline"' in llm.request
+
+
+@pytest.mark.asyncio
 async def test_message_format_and_weather(monkeypatch, tmp_path):
     rows = rows_for(high_pm25=[90])
     rows[-1]["StationName"] = "魏都区颍昌街道办事处"
@@ -163,8 +213,8 @@ async def test_message_format_and_weather(monkeypatch, tmp_path):
     fetcher, sent = build(monkeypatch, tmp_path, rows)
     await fetcher.fetch_and_store()
     message = sent[0][0][1]
-    assert message.startswith("【乡镇高值提醒】14时00分乡镇站数据显示魏都区颍昌街道办事处PM2.5浓度实时小时数据为75.5微克/立方米")
-    assert "请属地加强上风向及乡镇站点周边污染源排查，当前气象情况：" in message
+    assert message.startswith("【乡镇高值提醒】14时00分乡镇及办事处站数据显示魏都区颍昌街道办事处PM2.5浓度实时小时数据为75.5微克/立方米")
+    assert "请属地加强上风向及站点周边污染源排查，当前气象情况：" in message
     assert "温度8.2℃" in message and "西北风" in message and "风速2.3米/秒" in message
     assert sent[0][1]["media"] == ["registry/map.png"]
 

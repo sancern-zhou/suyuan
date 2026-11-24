@@ -17,7 +17,7 @@
 
     <div v-show="rows.length" ref="chartEl" class="nmc-chart"></div>
     <div v-if="!rows.length" class="empty-hint">暂无 NMC 气象预报数据</div>
-    <div class="caliber-note">逐3小时 · 7天 · 发布 {{ publishLabel }}<br>中央气象台（NMC）许昌站官方预报 · 与气象会商同源</div>
+    <div class="caliber-note">逐3小时 · 7天 · 发布 {{ publishLabel }}</div>
   </section>
 </template>
 

@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.fetchers.xuchang_oldcloud_extra_stations import (
     XuchangOfficeFiveMinuteFetcher,
+    XuchangOfficeHourFetcher,
     XuchangShengkongStationFetcher,
     office_record_from_row,
     shengkong_record_from_row,
@@ -31,7 +32,7 @@ def test_office_record_from_row_maps_two_factors_only():
     assert record["is_audit"] == 0
     assert set(record) == {
         "tsno", "station_name", "county_name", "collection_time",
-        "is_audit", "pm25", "pm10",
+        "is_audit", "is_hour", "pm25", "pm10",
     }
 
 
@@ -72,7 +73,11 @@ def test_shengkong_record_from_row_drops_invalid_rows():
 
 def test_fetcher_protocol_and_windows():
     office = XuchangOfficeFiveMinuteFetcher()
+    office_hour = XuchangOfficeHourFetcher()
     shengkong = XuchangShengkongStationFetcher()
+    assert (office_hour.platform_tstype, office_hour.factor_type, office_hour.time_step) == ("9", "5", 2)
+    assert office_hour.schedule == "8 * * * *"
+    assert office_hour.is_hour is True and office.is_hour is False
     # 平台协议：办事处 tstype=9&type=5&timeStep=1；省控 tstype=3&type=4&timeStep=2
     assert (office.platform_tstype, office.factor_type, office.time_step) == ("9", "5", 1)
     assert (shengkong.platform_tstype, shengkong.factor_type, shengkong.time_step) == ("3", "4", 2)
@@ -91,6 +96,7 @@ def test_fetchers_are_registered_in_scheduler_factory():
     for name, schedule in (
         ("xuchang_office_five_minute_fetcher", "4,9,15,25,35,45 * * * *"),
         ("xuchang_shengkong_station_fetcher", "13 * * * *"),
+        ("xuchang_office_hour_fetcher", "8 * * * *"),
     ):
         fetcher = scheduler.get_fetcher(name)
         assert fetcher is not None, name

@@ -450,6 +450,8 @@ backend:
     - xuchang_town_day_fetcher
     # 旧云平台：办事处站(tstype=9)5分钟 PM2.5/PM10（必须带 tsno 逐站查询，仅保留30天）
     - xuchang_office_five_minute_fetcher
+    # 旧云平台：办事处站小时 PM2.5/PM10（供小时地图与空间高值提醒）
+    - xuchang_office_hour_fetcher
     # 旧云平台：省控站(tstype=3)小时六参数（平台省控仅小时粒度，仅保留30天）
     - xuchang_shengkong_station_fetcher
     # ④污染原因分析：许昌PM2.5日均高于相邻五市均值30%（轻度污染及以上为20%）触发通报（微信群+APP）

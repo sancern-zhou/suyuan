@@ -80,6 +80,9 @@ class _StationMySqlStorage:
             "autocommit": False,
         }
 
+    async def _prepare_schema(self, cursor: Any) -> None:
+        await cursor.execute(self.ddl)
+
     async def save(self, records: list[dict[str, Any]]) -> int:
         if not records:
             return 0
@@ -106,7 +109,7 @@ class _StationMySqlStorage:
         connection = await aiomysql.connect(**self._connection_kwargs())
         try:
             async with connection.cursor() as cursor:
-                await cursor.execute(self.ddl)
+                await self._prepare_schema(cursor)
                 affected = await cursor.execute(
                     f"DELETE FROM {self.table} WHERE CollectionTime < %s", (cutoff,)
                 )
@@ -128,16 +131,17 @@ CREATE TABLE IF NOT EXISTS {_OFFICE_TABLE} (
     CountyName VARCHAR(64) NULL,
     CollectionTime DATETIME NOT NULL,
     IsAudit TINYINT NOT NULL DEFAULT 0,
+    IsHour TINYINT NOT NULL DEFAULT 0,
     PM25 DOUBLE NULL,
     PM10 DOUBLE NULL,
     FetchTime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY UK_OfficeStationFiveMinute (Tsno, CollectionTime, IsAudit)
+    UNIQUE KEY UK_OfficeStationFiveMinute (Tsno, CollectionTime, IsHour, IsAudit)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 _OFFICE_UPSERT = f"""
 INSERT INTO {_OFFICE_TABLE} (
-    Tsno, StationName, CountyName, CollectionTime, IsAudit, PM25, PM10
-) VALUES (%s, %s, %s, %s, %s, %s, %s)
+    Tsno, StationName, CountyName, CollectionTime, IsAudit, IsHour, PM25, PM10
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 ON DUPLICATE KEY UPDATE
     StationName=VALUES(StationName),
     CountyName=VALUES(CountyName),
@@ -145,7 +149,7 @@ ON DUPLICATE KEY UPDATE
     FetchTime=CURRENT_TIMESTAMP
 """
 _OFFICE_FIELDS = (
-    "tsno", "station_name", "county_name", "collection_time", "is_audit",
+    "tsno", "station_name", "county_name", "collection_time", "is_audit", "is_hour",
     "pm25", "pm10",
 )
 
@@ -188,7 +192,9 @@ _SHENGKONG_FIELDS = (
 )
 
 
-def office_record_from_row(row: dict[str, Any], tsno: str, county: str | None) -> dict[str, Any] | None:
+def office_record_from_row(
+    row: dict[str, Any], tsno: str, county: str | None, is_hour: bool = False
+) -> dict[str, Any] | None:
     """平台 airData 行（type=5 办事处因子集）→ 落库记录；缺时间戳丢弃。
 
     办事处因子集仅 PM2.5/PM10 有值，其余因子平台恒返回 null，不落库。
@@ -202,6 +208,7 @@ def office_record_from_row(row: dict[str, Any], tsno: str, county: str | None) -
         "county_name": county,
         "collection_time": collection_time,
         "is_audit": 0,
+        "is_hour": int(is_hour),
         "pm25": _number(row.get("pm25")),
         "pm10": _number(row.get("pm10")),
     }
@@ -240,6 +247,8 @@ class _PerStationOldCloudFetcher(DataFetcher):
     time_step: int = 1
     #: 行 → 落库记录的转换函数（子类提供 tsno/county 绑定）
     record_builder: Any = None
+    #: 办事处 5 分钟与小时共用一张表，以 IsHour 区分粒度。
+    is_hour = False
 
     def __init__(
         self,
@@ -292,7 +301,7 @@ class _PerStationOldCloudFetcher(DataFetcher):
                 continue
             built = 0
             for row in rows:
-                record = self.record_builder(row, tsno, county)
+                record = self.record_builder(row, tsno, county, is_hour=self.is_hour)
                 if record is not None:
                     records.append(record)
                     built += 1
@@ -348,6 +357,49 @@ class OfficeStationMySqlStorage(_StationMySqlStorage):
     ddl = _OFFICE_DDL
     upsert_sql = _OFFICE_UPSERT
     record_fields = _OFFICE_FIELDS
+
+    async def _prepare_schema(self, cursor: Any) -> None:
+        # 既有 5 分钟表原位升级；唯一键含粒度，整点 5 分钟与官方小时可共存。
+        await super()._prepare_schema(cursor)
+        await cursor.execute(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME='IsHour'",
+            (self.table,),
+        )
+        if (await cursor.fetchone())[0]:
+            return
+        await cursor.execute(f"ALTER TABLE {self.table} ADD COLUMN IsHour TINYINT NOT NULL DEFAULT 0 AFTER IsAudit")
+        await cursor.execute(f"ALTER TABLE {self.table} DROP INDEX UK_OfficeStationFiveMinute")
+        await cursor.execute(
+            f"ALTER TABLE {self.table} ADD UNIQUE KEY UK_OfficeStationFiveMinute "
+            "(Tsno, CollectionTime, IsHour, IsAudit)"
+        )
+
+
+class XuchangOfficeHourFetcher(XuchangOfficeFiveMinuteFetcher):
+    """办事处站官方小时 PM2.5/PM10，与乡镇小时高值检测共用数据窗口。"""
+
+    time_step = 2
+    is_hour = True
+
+    def __init__(
+        self,
+        client: TownCloudClient | None = None,
+        storage: OfficeStationMySqlStorage | None = None,
+        now_factory=lambda: datetime.now(),
+    ) -> None:
+        super().__init__(client=client, storage=storage, now_factory=now_factory)
+        self.name = "xuchang_office_hour_fetcher"
+        self.description = (
+            "抓取空气质量信息联网系统(旧云平台)办事处站小时PM2.5/PM10"
+            "入OfficeStationFiveMinute(IsHour=1，仅保留30天)"
+        )
+        # 乡镇小时 :11、省控 :13、大屏 :16、高值提醒 :21，均错峰。
+        self.schedule = "8 * * * *"
+
+    def _window(self, now: datetime) -> tuple[datetime, datetime]:
+        lookback = min(settings.town_hour_lookback_hours, 720)
+        return now - timedelta(hours=lookback), now
 
 
 class ShengkongStationMySqlStorage(_StationMySqlStorage):

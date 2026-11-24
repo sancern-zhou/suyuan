@@ -16,6 +16,7 @@ def _alert(hour: int, value: float, ratio: float) -> dict:
         "station_id": "XC001",
         "station_name": "测试站",
         "target_pollutant": "PM2.5",
+        "rule_type": "spatial_outlier",
         "station_value": value,
         "deviation_ratio": ratio,
     }
@@ -68,25 +69,43 @@ def test_episode_notifies_at_60_minutes_and_restarts_cooldown(tmp_path):
     assert worsening["episode"]["notification_count"] == 3
 
 
-def test_episode_does_not_close_during_notification_window(tmp_path):
+def test_episode_closes_after_alert_rule_cooldown_without_retrigger(tmp_path):
     service = XuchangStationDeviationEpisodeService(output_root=tmp_path)
-    started = service.record(_minute_alert(0, 100, 0.8))
+    alert = _minute_alert(0, 100, 0.8)
+    alert["target_pollutant"] = "PM10"
+    started = service.record(alert)
 
-    assert service.close_stale(datetime(2026, 8, 5, 10, 30, tzinfo=TZ_SHANGHAI)) == []
-    repeated = service.record(_minute_alert(35, 105, 0.8))
-    assert repeated["should_analyze"] is False
-    assert repeated["episode"]["episode_id"] == started["episode"]["episode_id"]
-    closed = service.close_stale(datetime(2026, 8, 5, 11, 5, tzinfo=TZ_SHANGHAI))
+    assert started["episode"]["cooldown_minutes"] == 30
+    assert service.close_stale(datetime(2026, 8, 5, 10, 29, tzinfo=TZ_SHANGHAI)) == []
+    closed = service.close_stale(datetime(2026, 8, 5, 10, 30, tzinfo=TZ_SHANGHAI))
     assert len(closed) == 1
-    assert closed[0]["notification_count"] == 1
+    assert closed[0]["status"] == "closed"
+    assert service.close_stale(datetime(2026, 8, 5, 11, 5, tzinfo=TZ_SHANGHAI)) == []
 
 
-def test_episode_closes_after_three_hours_without_deviation(tmp_path):
+def test_episode_closes_after_pm25_rule_cooldown_without_retrigger(tmp_path):
     service = XuchangStationDeviationEpisodeService(output_root=tmp_path)
-    service.record(_alert(10, 100, 0.8))
+    started = service.record(_alert(10, 100, 0.8))
 
-    closed = service.close_stale(datetime(2026, 8, 5, 13, tzinfo=TZ_SHANGHAI))
+    assert started["episode"]["cooldown_minutes"] == 60
+    assert service.close_stale(datetime(2026, 8, 5, 10, 59, tzinfo=TZ_SHANGHAI)) == []
+    closed = service.close_stale(datetime(2026, 8, 5, 11, 0, tzinfo=TZ_SHANGHAI))
 
     assert len(closed) == 1
     assert closed[0]["status"] == "closed"
     assert service.close_stale(datetime(2026, 8, 5, 14, tzinfo=TZ_SHANGHAI)) == []
+
+
+def test_episode_uses_configured_rule_and_pollutant_cooldown(tmp_path):
+    from app.scenarios.xuchang_station_deviation.rule_config import AirAlertRuleConfig
+
+    config = AirAlertRuleConfig(
+        cooldown_minutes={"continuous_rise": {"PM2.5": 75, "default": 45}}
+    )
+    service = XuchangStationDeviationEpisodeService(output_root=tmp_path, config=config)
+    alert = _alert(10, 100, 0.8)
+    alert["rule_type"] = "continuous_rise"
+    service.record(alert)
+
+    assert service.close_stale(datetime(2026, 8, 5, 11, 14, tzinfo=TZ_SHANGHAI)) == []
+    assert len(service.close_stale(datetime(2026, 8, 5, 11, 15, tzinfo=TZ_SHANGHAI))) == 1
