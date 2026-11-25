@@ -1,4 +1,4 @@
-"""每小时 21 分检测乡镇审核小时值，生成截图后直接写微信群推送队列。"""
+"""每小时 19 分（44 分幂等补判）检测乡镇/办事处/省控小时值，截图后直接写微信群推送队列。"""
 
 from __future__ import annotations
 
@@ -38,9 +38,11 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
     ) -> None:
         super().__init__(
             name="xuchang_town_high_value_alert_fetcher",
-            description="乡镇站PM2.5/PM10小时空间高值提醒，极端离群按设备异常过滤",
-            # 乡镇小时数据 :11 入库、大屏 :16 物化小时地图，告警 :21 截图。
-            schedule="21 * * * *",
+            description="乡镇站PM2.5/PM10相对所在区县中位数的小时空间高值提醒，极端离群按设备异常过滤",
+            # 小时数据入库：办事处 :3、乡镇 :5、省控 :17（平台发布 ~:1/~:2/~:15，
+            # 2026-11-25 实测）；大屏 :16 物化小时地图；告警 :19 判定、:44 补判
+            # （同小时 group_id 幂等，补判只覆盖 :19 漏判/数据迟到的情形）。
+            schedule="19,44 * * * *",
             version="1.0.0",
         )
         self.repository = repository or TownHourRepository()

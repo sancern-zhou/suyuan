@@ -13,6 +13,7 @@ from app.fetchers.xuchang_oldcloud_extra_stations import (
     office_record_from_row,
     shengkong_record_from_row,
 )
+from app.fetchers.xuchang_town_high_value_alert import XuchangTownHighValueAlertFetcher
 
 
 def test_office_record_from_row_maps_two_factors_only():
@@ -76,13 +77,13 @@ def test_fetcher_protocol_and_windows():
     office_hour = XuchangOfficeHourFetcher()
     shengkong = XuchangShengkongStationFetcher()
     assert (office_hour.platform_tstype, office_hour.factor_type, office_hour.time_step) == ("9", "5", 2)
-    assert office_hour.schedule == "8 * * * *"
+    assert office_hour.schedule == "3 * * * *"
     assert office_hour.is_hour is True and office.is_hour is False
     # 平台协议：办事处 tstype=9&type=5&timeStep=1；省控 tstype=3&type=4&timeStep=2
     assert (office.platform_tstype, office.factor_type, office.time_step) == ("9", "5", 1)
     assert (shengkong.platform_tstype, shengkong.factor_type, shengkong.time_step) == ("3", "4", 2)
     assert office.schedule == "4,9,15,25,35,45 * * * *"
-    assert shengkong.schedule == "13 * * * *"
+    assert shengkong.schedule == "17 * * * *"
     start, end = office._window(datetime(2026, 11, 23, 15, 0))
     assert (end - start).total_seconds() == 180 * 60
     start, end = shengkong._window(datetime(2026, 11, 23, 15, 0))
@@ -95,8 +96,8 @@ def test_fetchers_are_registered_in_scheduler_factory():
     scheduler = create_scheduler()
     for name, schedule in (
         ("xuchang_office_five_minute_fetcher", "4,9,15,25,35,45 * * * *"),
-        ("xuchang_shengkong_station_fetcher", "13 * * * *"),
-        ("xuchang_office_hour_fetcher", "8 * * * *"),
+        ("xuchang_shengkong_station_fetcher", "17 * * * *"),
+        ("xuchang_office_hour_fetcher", "3 * * * *"),
     ):
         fetcher = scheduler.get_fetcher(name)
         assert fetcher is not None, name
@@ -104,7 +105,7 @@ def test_fetchers_are_registered_in_scheduler_factory():
 
 
 def test_new_fetcher_schedule_does_not_collide_with_crawler_mysql_writers():
-    """与 ssfb 五波 / 乡镇 5 分钟 / 乡镇小时 / transport 全部错开（并发保护）。
+    """与 ssfb 三波 / 乡镇 5 分钟 / 乡镇小时 / transport / 大屏快照错开（并发保护）。
 
     transport 单轮 3~4 分钟需带拖尾；其余抓取器秒级完成，按同分钟判。
     """
@@ -120,12 +121,17 @@ def test_new_fetcher_schedule_does_not_collide_with_crawler_mysql_writers():
         "14,20,55", "16,22,57", "18,24,59",  # ssfb 城市/站点/区县
     ):
         occupied.update(int(part) for part in spec.split(","))
-    occupied.update(cron_minutes("2-57/5"))  # 乡镇 5 分钟
+    occupied.update({7, 37})                 # 乡镇 5 分钟
     for minute in [int(part) for part in "26,31,40,50".split(",")]:
         occupied.update(range(minute, minute + 4))  # transport 单轮拖尾
-    occupied.update({11})                    # 乡镇小时
+    occupied.update({5})                     # 乡镇小时
     occupied.update(cron_minutes("6-56/5"))  # 大屏快照
-    for fetcher in (XuchangOfficeFiveMinuteFetcher(), XuchangShengkongStationFetcher()):
+    for fetcher in (
+        XuchangOfficeFiveMinuteFetcher(),
+        XuchangOfficeHourFetcher(),
+        XuchangShengkongStationFetcher(),
+        XuchangTownHighValueAlertFetcher(),
+    ):
         minutes = cron_minutes(fetcher.schedule.split(" ")[0])
         for minute in minutes:
             assert minute not in occupied, (fetcher.name, minute)

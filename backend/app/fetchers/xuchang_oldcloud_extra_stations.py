@@ -396,8 +396,10 @@ class XuchangOfficeHourFetcher(XuchangOfficeFiveMinuteFetcher):
             "抓取空气质量信息联网系统(许昌市空气质量管控平台)办事处站小时PM2.5/PM10"
             "入OfficeStationFiveMinute(IsHour=1，仅保留30天)"
         )
-        # 乡镇小时 :11、省控 :13、大屏 :16、高值提醒 :21，均错峰。
-        self.schedule = "8 * * * *"
+        # 平台小时值整点后约 30 秒~1 分钟发布（2026-11-25 逐分钟实测）；
+        # 办事处小时 :3、乡镇小时 :5、省控 :17（省控 ~:15 发布）、大屏 :16、
+        # 高值提醒 :19/:44，均错峰。
+        self.schedule = "3 * * * *"
 
     def _window(self, now: datetime) -> tuple[datetime, datetime]:
         lookback = min(settings.town_hour_lookback_hours, 720)
@@ -435,7 +437,10 @@ class XuchangShengkongStationFetcher(_PerStationOldCloudFetcher):
             "抓取空气质量信息联网系统(许昌市空气质量管控平台)省控站小时六参数入库DataCrawler"
             "(tstype=3&type=4逐站查询,仅保留30天)"
         )
-        self.schedule = "13 * * * *"
+        # 省控小时值整点后约 15 分钟发布（2026-11-25 实测 20/21 两边界一致），
+        # :13 会在最新小时发布前跑、永远慢一拍，改 :17 后高值告警 :19 判定
+        # 才能含省控站。
+        self.schedule = "17 * * * *"
 
     def _window(self, now: datetime) -> tuple[datetime, datetime]:
         lookback = min(settings.shengkong_hour_lookback_hours, 720)

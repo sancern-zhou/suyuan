@@ -15,7 +15,8 @@ view_dat_town_hour/day_app|src 四个视图与 TownHour/TownDay cube。
   24h/8h 表，均经 2026-10-15~17 历史行逐因子核验），四舍五入取整；
 - airData 行不带 tsno，每轮先拉 airNetwork 站点目录，按站名关联站码
   （站名均带区县前缀且唯一，关联逻辑与 5 分钟抓取器一致）；
-- 调度错峰：小时 11 * * * *（平台小时值整点后 8~13 分钟发布）、日 5 8 * * *，
+- 调度错峰：小时 5 * * * *（平台小时值整点后约 2 分钟发布，2026-11-25 逐分钟
+  实测两边界一致）、日 5 8 * * *，
   与 ssfb 三波（14/20/55、16/22/57、18/24/59，窗口 :13:30-:25:30 与 :54:30
   后）、乡镇 5 分钟（7,37）、transport_analysis（26,31,40,50，单轮 3~4 分钟）
   全部错开，避免并发连接 Crawler MySQL 触发 Packet sequence number wrong；
@@ -227,7 +228,7 @@ class TownStationDataMySqlStorage:
 class XuchangTownAirDataFetcher(DataFetcher):
     """乡镇站小时/日数据抓取（许昌市空气质量管控平台替代源，回写 TownStationData 原表）。
 
-    data_kind="hour"：airData timeStep=2，调度 11 * * * *；
+    data_kind="hour"：airData timeStep=2，调度 5 * * * *；
     data_kind="day"：airData timeStep=3，调度 5 8 * * *。
     """
 
@@ -249,7 +250,7 @@ class XuchangTownAirDataFetcher(DataFetcher):
                 if is_hour else
                 "抓取空气质量信息联网系统(许昌市空气质量管控平台)许昌乡镇站日数据回写TownStationData原表(原始+审核同值双写)"
             ),
-            schedule="11 * * * *" if is_hour else "5 8 * * *",
+            schedule="5 * * * *" if is_hour else "5 8 * * *",
             version="1.0.0",
         )
         self.client = client or TownCloudClient()

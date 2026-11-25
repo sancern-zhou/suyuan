@@ -119,7 +119,7 @@ def test_records_from_rows_counts_unmatched():
 def test_fetcher_schedule_and_window():
     hour_fetcher = XuchangTownAirDataFetcher(data_kind="hour")
     assert hour_fetcher.name == "xuchang_town_hour_fetcher"
-    assert hour_fetcher.schedule == "11 * * * *"
+    assert hour_fetcher.schedule == "5 * * * *"
     start, end = hour_fetcher._window(datetime(2026, 10, 29, 15, 0))
     assert (end - start).total_seconds() == 30 * 3600
 
@@ -142,7 +142,7 @@ def test_fetchers_are_registered_in_scheduler_factory():
 
     scheduler = create_scheduler()
     for name, schedule in (
-        ("xuchang_town_hour_fetcher", "11 * * * *"),
+        ("xuchang_town_hour_fetcher", "5 * * * *"),
         ("xuchang_town_day_fetcher", "5 8 * * *"),
     ):
         fetcher = scheduler.get_fetcher(name)
@@ -151,19 +151,39 @@ def test_fetchers_are_registered_in_scheduler_factory():
 
 
 def test_new_fetcher_schedule_does_not_collide_with_crawler_mysql_writers():
-    """与 ssfb 五波 / 乡镇5分钟 / transport 全部错开（Crawler MySQL 并发保护）。"""
-    occupied = set()
-    hour_fetcher = XuchangTownAirDataFetcher(data_kind="hour")
-    day_fetcher = XuchangTownAirDataFetcher(data_kind="day")
+    """与 ssfb 三波 / 乡镇5分钟 / transport 错开（Crawler MySQL 并发保护）。
+
+    ssfb 各波与乡镇 5 分钟单轮数十秒内完成，按同分钟互斥建模；只有
+    transport_analysis 单轮 3~4 分钟，按分钟+3 拖尾建模（历史上其 :15 轮
+    拖到 :18:26 与区县波并发触发过 Packet sequence number wrong）。
+    """
+    exact_minutes = set()
     for spec in (
         "14,20,55", "16,22,57", "18,24,59",  # ssfb 城市/站点/区县
         "7,37",                              # 乡镇 5 分钟
-        "26,31,40,50",                       # transport_analysis（单轮 3~4 分钟）
+        "4,9,15,25,35,45",                   # 办事处 5 分钟
     ):
-        minutes = [int(part) for part in spec.split(",")]
-        for minute in minutes:
-            for offset in range(4):  # transport 单轮拖尾 3~4 分钟
-                occupied.add(minute + offset)
-    for fetcher in (hour_fetcher, day_fetcher):
+        exact_minutes.update(int(part) for part in spec.split(","))
+    occupied = set(exact_minutes)
+    for minute in (26, 31, 40, 50):  # transport_analysis（单轮拖尾 3~4 分钟）
+        occupied.update(minute + offset for offset in range(4))
+    from app.fetchers.xuchang_oldcloud_extra_stations import (
+        XuchangOfficeHourFetcher,
+        XuchangShengkongStationFetcher,
+    )
+    from app.fetchers.xuchang_town_high_value_alert import (
+        XuchangTownHighValueAlertFetcher,
+    )
+
+    hour_fetcher = XuchangTownAirDataFetcher(data_kind="hour")
+    day_fetcher = XuchangTownAirDataFetcher(data_kind="day")
+    fetchers = (
+        hour_fetcher,
+        day_fetcher,
+        XuchangOfficeHourFetcher(),
+        XuchangShengkongStationFetcher(),
+        XuchangTownHighValueAlertFetcher(),
+    )
+    for fetcher in fetchers:
         for spec in fetcher.schedule.split(" ")[0].split(","):
-            assert int(spec) not in occupied, fetcher.schedule
+            assert int(spec) not in occupied, (fetcher.name, fetcher.schedule)
