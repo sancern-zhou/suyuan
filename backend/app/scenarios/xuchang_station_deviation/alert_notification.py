@@ -243,10 +243,30 @@ def _pollutant_mark_field(pollutant: str) -> str:
     return _POLLUTANT_MARK_FIELDS.get(pollutant) or f"{pollutant.lower()}_mark"
 
 
+def _qc_record_in_alert_window(record: dict[str, Any], occurred_at: Any) -> bool:
+    """分钟标记限告警时刻前 1 小时，小时标记限告警小时及前一小时。"""
+    occurred = _parse_moment(occurred_at)
+    moment = _parse_moment(record.get("time"))
+    if occurred is None or moment is None:
+        return False
+    if occurred.tzinfo is None:
+        occurred = occurred.replace(tzinfo=TZ_SHANGHAI)
+    else:
+        occurred = occurred.astimezone(TZ_SHANGHAI)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=TZ_SHANGHAI)
+    else:
+        moment = moment.astimezone(TZ_SHANGHAI)
+    if record.get("source") == "hour":
+        event_hour = occurred.replace(minute=0, second=0, microsecond=0)
+        moment = moment.replace(minute=0, second=0, microsecond=0)
+        elapsed = (event_hour - moment).total_seconds()
+        return 0 <= elapsed <= 3600
+    return 0 <= (occurred - moment).total_seconds() <= 3600
+
+
 def _scoped_qc_records(alert: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, Any]]:
-    """质控关联按告警站点+告警因子隔离。渲染期防御过滤：旧证据包的
-    maintenance_qc_review 是“全市任一站任一因子”口径，也在此收敛为告警口径，
-    他站/他因子的质控标记不得触发“数据受质控影响”表述。"""
+    """质控关联按告警站点、因子和时段隔离；旧证据包也在渲染期收敛。"""
     station_id = str(alert.get("station_id") or "")
     mark_field = _pollutant_mark_field(str(alert.get("target_pollutant") or ""))
     context = evidence.get("air_quality_context") or {}
@@ -257,6 +277,8 @@ def _scoped_qc_records(alert: dict[str, Any], evidence: dict[str, Any]) -> list[
     matched: list[dict[str, Any]] = []
     for record in records:
         if station_id and str(record.get("station_id") or "") != station_id:
+            continue
+        if not _qc_record_in_alert_window(record, alert.get("occurred_at")):
             continue
         marks = record.get("marks")
         if isinstance(marks, dict):

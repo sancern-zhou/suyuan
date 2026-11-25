@@ -6,7 +6,8 @@
   前提是邻站未同向，且当前浓度高于同组其余站点剔除极值后的均值
   （需求方补充，2026-11-13；对照站不足 3 个时该条件不启用）；
 - 连续抬升 CL：3 段单调不减，每段增量 >= 总增量 15%，累计抬升达到阈值；
-  基线取抬升起点前 15 分钟均值（PM2.5 取起点前一小时）；
+  基线取抬升起点前 15 分钟均值（PM2.5 取起点前一小时）；当前浓度同样
+  需高于同组其余站点剔除极值后的均值（2026-11-25 扩展）；
 - 站点离群 OL：本站与同区域其余有效站同刻平均值比较，达到比例 + 绝对
   增量阈值；许昌全市 6 个国控站，有效站最少 4 个。
 
@@ -389,11 +390,13 @@ def rule_cl(
     pollutant: str,
     level_name: str | None,
     config: AirAlertRuleConfig,
+    peer_trimmed_mean: float | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """连续抬升：3 个窗口值逐段不降，每段增量 >= 总增量 15%，累计达到阈值。
 
     段增量 = [起点−基线, v2−起点, 末值−v2]；起点固定为 3 段中的第一段，
-    基线为抬升起点前 15 分钟（PM2.5 前 1 小时）均值。
+    基线为抬升起点前 15 分钟（PM2.5 前 1 小时）均值。末值必须严格高于同组
+    其余站点剔除极值后的均值；对照站不足时该附加条件不启用。
     """
     if level_name is None or len(window_values) != 3:
         return 0, {}
@@ -416,6 +419,7 @@ def rule_cl(
         "threshold": round(threshold, 3),
         "rise_window_values": list(window_values),
         "rise_count": 3,
+        "peer_trimmed_mean": round(peer_trimmed_mean, 3) if peer_trimmed_mean is not None else None,
         "recovery_threshold": round(threshold, 3),
     }
     if total <= 0:
@@ -423,6 +427,9 @@ def rule_cl(
     if any(segment < 0 for segment in segments):
         return 0, detail
     if not all(ge1(segment, total * config.cl_segment_min_share) for segment in segments):
+        return 0, detail
+    if peer_trimmed_mean is not None and not gt1(window_values[-1], peer_trimmed_mean):
+        detail["suppressed_reason"] = "peer_trimmed_mean_not_exceeded"
         return 0, detail
     if ge1(total, threshold):
         return 1, detail
@@ -999,7 +1006,12 @@ def evaluate_five_minute_cycle(
             if tail is not None and level is not None:
                 baseline = mean(tail[:3])
                 cl_context[station_id] = {"baseline": baseline, "rise": value - baseline}
-                hit, detail = rule_cl(tail[3:], baseline, pollutant, level, config)
+                hit, detail = rule_cl(
+                    tail[3:], baseline, pollutant, level, config,
+                    peer_trimmed_mean=trimmed_peer_mean(
+                        all_values, station_id, config.ds_peer_trim_min_peers
+                    ),
+                )
                 if hit:
                     outcome.candidates.append(_candidate(
                         rule_type="continuous_rise", slot=target_slot, grain=grain,
@@ -1148,7 +1160,12 @@ def evaluate_pm25_hourly_cycle(
         if tail is not None and level is not None:
             baseline = mean(tail[:baseline_hours])
             cl_context[station_id] = {"baseline": baseline, "rise": value - baseline}
-            hit, detail = rule_cl(tail[baseline_hours:], baseline, pollutant, level, config)
+            hit, detail = rule_cl(
+                tail[baseline_hours:], baseline, pollutant, level, config,
+                peer_trimmed_mean=trimmed_peer_mean(
+                    all_values, station_id, config.ds_peer_trim_min_peers
+                ),
+            )
             if hit:
                 outcome.candidates.append(_candidate(
                     rule_type="continuous_rise", slot=target_hour, grain=grain,

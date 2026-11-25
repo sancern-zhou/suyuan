@@ -88,7 +88,7 @@ const legendLevels = LEVEL_NAMES.map((label, index) => ({
 
 let AMap = null
 let map = null
-let boundaryPolygon = null
+let boundaryPolygons = []
 let boundaryBounds = null
 const INIT_CENTER = [113.852, 34.028]
 const INIT_ZOOM = 10.5
@@ -468,42 +468,56 @@ const notifyReady = () => {
   }
 }
 
-// 许昌市界高亮：边界 GeoJSON 本地打包（public/geo/xuchang_bound.json），
-// 不依赖高德 district 在线接口（部分网络环境不可达）；失败静默降级。
+// 许昌市及六个标准行政区边界本地打包，截图不依赖在线行政区查询。
+const geometryRings = geometry => {
+  if (geometry?.type === 'Polygon') return [geometry.coordinates[0]]
+  if (geometry?.type === 'MultiPolygon') return geometry.coordinates.map(polygon => polygon[0])
+  return []
+}
+
+const addBoundaryRings = (rings, style) => rings.forEach(ring => {
+  const polygon = new AMap.Polygon({
+    path: ring.map(([lng, lat]) => new AMap.LngLat(lng, lat)),
+    ...style
+  })
+  map.add(polygon)
+  boundaryPolygons.push(polygon)
+})
+
 const renderCityBoundary = async () => {
   try {
-    const url = `${import.meta.env.BASE_URL}geo/xuchang_bound.json`
-    const response = await fetch(url)
-    if (!response.ok) return
-    const geo = await response.json()
+    const baseUrl = import.meta.env.BASE_URL
+    const [cityResponse, districtsResponse] = await Promise.all([
+      fetch(`${baseUrl}geo/xuchang_bound.json`),
+      fetch(`${baseUrl}geo/xuchang_districts.json`)
+    ])
+    if (!cityResponse.ok) return
+    const [cityGeo, districtsGeo] = await Promise.all([
+      cityResponse.json(),
+      districtsResponse.ok ? districtsResponse.json() : { features: [] }
+    ])
     if (!map) return
-    const rings = []
-    for (const feature of geo?.features || []) {
-      const geometry = feature?.geometry
-      if (geometry?.type === 'Polygon') rings.push(geometry.coordinates[0])
-      else if (geometry?.type === 'MultiPolygon') {
-        geometry.coordinates.forEach(polygon => rings.push(polygon[0]))
-      }
+    // 淡蓝色填充保留底图辨识度；区县边界细于市界，避免喧宾夺主。
+    for (const feature of districtsGeo?.features || []) {
+      addBoundaryRings(geometryRings(feature.geometry), {
+        strokeColor: '#a5dce4', strokeWeight: 1.4, strokeOpacity: 0.8,
+        fillColor: '#75c9f2', fillOpacity: 0.22, zIndex: 51
+      })
     }
-    if (!rings.length) return
-    boundaryPolygon = new AMap.Polygon({
-      path: rings.map(ring => ring.map(([lng, lat]) => [lng, lat])),
-      strokeColor: '#3fc8d4',
-      strokeWeight: 2.5,
-      strokeOpacity: 0.95,
-      fillColor: '#0b3a52',
-      fillOpacity: 0.15,
-      zIndex: 50
+    const cityRings = (cityGeo?.features || []).flatMap(feature => geometryRings(feature.geometry))
+    addBoundaryRings(cityRings, {
+      strokeColor: '#3fc8d4', strokeWeight: 2.5, strokeOpacity: 0.95,
+      fillColor: '#75c9f2', fillOpacity: 0.22, zIndex: 52
     })
-    map.add(boundaryPolygon)
     // 记录市界范围，供 2.5D 视角切换时自适应视野
-    const all = rings.flat()
+    const all = cityRings.flat()
+    if (!all.length) return
     boundaryBounds = new AMap.Bounds(
       [Math.min(...all.map(p => p[0])), Math.min(...all.map(p => p[1]))],
       [Math.max(...all.map(p => p[0])), Math.max(...all.map(p => p[1]))]
     )
   } catch (exc) {
-    console.warn('市界边界加载失败', exc)
+    console.warn('市界及区县边界加载失败', exc)
   }
 }
 
@@ -538,6 +552,11 @@ onMounted(async () => {
     renderCityBoundary()
     mapReady = true
     renderMarkers()
+    if (props.capture) {
+      // 等边界、站点和底图完成首帧后再倾斜，确保截图取到完整市界的 2.5D 构图。
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      toggleViewMode()
+    }
     await nextTick()
     notifyReady()
   } catch (exc) {
@@ -548,7 +567,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   closeStationSeries()
   clearMarkers()
-  boundaryPolygon = null
+  boundaryPolygons = []
   boundaryBounds = null
   map?.destroy()
   map = null

@@ -1,7 +1,8 @@
 """推送管控（M 链）测试（判据修订版）。
 
 覆盖：按规则/因子冷却、#23 升级例外（污染等级升高穿透冷却）、
-#24 优先级（DS > CL > OL）、恢复防抖、限额、免打扰、同站合并、流水。
+#24 优先级（DS > CL > OL）、恢复防抖、限额、免打扰、同站合并、流水、
+MR 单向覆盖单站共享冷却（2026-11-25 定版）。
 """
 
 from __future__ import annotations
@@ -226,19 +227,86 @@ def test_single_station_rules_share_last_pushed_rule_cooldown(tmp_path):
     assert len(pushed) == 1 and suppressed == []
 
 
-def test_single_station_cooldown_isolated_by_pollutant_and_multi_station_rule(tmp_path):
+def test_single_station_push_does_not_block_multi_station_rise(tmp_path):
+    # 单向覆盖（2026-11-25 定版）第一半：单站 DS 推送不读写 MR 规则实例、
+    # 不把 MR 纳入单站共享冷却 → 5 分钟后 MR 可立即独立推送（区域事件
+    # 不被局部告警压制）。
     store = AlertStateStore(tmp_path)
     _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
-    other_pollutant = _alert(pollutant="NO2")
     regional = _alert(rule_type="multi_station_rise", air_quality_level="轻度污染")
-    pushed, suppressed, _ = _chain(
-        [other_pollutant, regional], store, tmp_path, datetime(2026, 11, 2, 9, 5, tzinfo=TZ)
+    regional["detail"]["involved_stations"] = [{"station_id": "a"}, {"station_id": "b"}]
+    pushed, suppressed, _ = _chain([regional], store, tmp_path, datetime(2026, 11, 2, 9, 5, tzinfo=TZ))
+    assert len(pushed) == 1 and suppressed == []
+    mr_state = store.instance("5min", "a", "PM10", "multi_station_rise")
+    assert mr_state["last_push_ts"].startswith("2026-11-02T09:05")
+    # 单向覆盖第二半：MR 实际推送后把涉事站（主站+伴随站）同因子的
+    # 单站共享冷却组一并置位。
+    assert store.notification_group("5min", "a", "PM10")["last_rule_type"] == "multi_station_rise"
+    assert store.notification_group("5min", "b", "PM10")["last_event_id"] == "e-a-multi_station_rise-PM10"
+    # 未涉事因子组不受影响。
+    assert "5min::a::NO2" not in store._load()["notification_groups"]
+
+
+def test_mr_push_overlays_involved_stations_single_station_cooldown(tmp_path):
+    # 单向覆盖第二半：MR 推送后，涉事站同因子的单站告警在 MR 冷却窗口内
+    # 不再重复外发同一过程；未涉事站不受影响；窗口过期后恢复正常推送，
+    # 组水位翻回实际推送的单站规则。
+    store = AlertStateStore(tmp_path)
+    mr = _alert(rule_type="multi_station_rise", air_quality_level="轻度污染")
+    mr["detail"]["involved_stations"] = [{"station_id": "a"}, {"station_id": "b"}]
+    _chain([mr], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+
+    ds_b = _alert(station_id="b", occurred_at="2026-11-02T09:30:00+08:00")
+    ds_b["event_id"] = "e-b-ds-0930"
+    pushed, suppressed, _ = _chain([ds_b], store, tmp_path, datetime(2026, 11, 2, 9, 30, tzinfo=TZ))
+    assert pushed == [] and suppressed[0]["reason"] == "shared_cooldown"
+
+    # 未涉事站点 c 同刻的 DS 不受 MR 水位影响。
+    ds_c = _alert(station_id="c", occurred_at="2026-11-02T09:30:00+08:00")
+    ds_c["event_id"] = "e-c-ds-0930"
+    pushed_c, suppressed_c, _ = _chain([ds_c], store, tmp_path, datetime(2026, 11, 2, 9, 30, tzinfo=TZ))
+    assert len(pushed_c) == 1 and suppressed_c == []
+
+    # MR-PM10 冷却 60 分钟：10:01 过期后 DS-b 正常推送，组水位翻回 sudden_rise。
+    ds_b2 = _alert(station_id="b", occurred_at="2026-11-02T10:01:00+08:00")
+    ds_b2["event_id"] = "e-b-ds-1001"
+    pushed2, suppressed2, _ = _chain([ds_b2], store, tmp_path, datetime(2026, 11, 2, 10, 1, tzinfo=TZ))
+    assert len(pushed2) == 1 and suppressed2 == []
+    assert store.notification_group("5min", "b", "PM10")["last_rule_type"] == "sudden_rise"
+
+
+def test_mr_watermark_applies_mr_cooldown_window_for_pm25(tmp_path):
+    # 生效窗口是 MR 冷却期而非单站规则冷却期：MR-PM2.5 冷却 120 分钟，
+    # 90 分钟后（已超出 DS-PM2.5 自身 60 分钟窗口）单站 DS 仍被拦截。
+    store = AlertStateStore(tmp_path)
+    mr = _alert(rule_type="multi_station_rise", pollutant="PM2.5", grain="1h", air_quality_level="轻度污染")
+    mr["event_id"] = "e-mr-pm25"
+    mr["detail"]["involved_stations"] = [{"station_id": "a"}]
+    _chain([mr], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    ds = _alert(pollutant="PM2.5", grain="1h", occurred_at="2026-11-02T10:30:00+08:00")
+    ds["event_id"] = "e-ds-pm25-1030"
+    pushed, suppressed, _ = _chain([ds], store, tmp_path, datetime(2026, 11, 2, 10, 30, tzinfo=TZ))
+    assert pushed == [] and suppressed[0]["reason"] == "shared_cooldown"
+
+    ds2 = _alert(pollutant="PM2.5", grain="1h", occurred_at="2026-11-02T12:01:00+08:00")
+    ds2["event_id"] = "e-ds-pm25-1201"
+    pushed2, _suppressed2, _w2 = _chain([ds2], store, tmp_path, datetime(2026, 11, 2, 12, 1, tzinfo=TZ))
+    assert len(pushed2) == 1
+
+
+def test_mr_watermark_lets_level_upgrade_through(tmp_path):
+    # 涉事站在 MR 水位冷却内真实恶化（良→轻度污染）：#23 升级例外对共享
+    # 冷却同样生效，立即再报，不被区域通报水位静默掉恶化过程。
+    store = AlertStateStore(tmp_path)
+    mr = _alert(rule_type="multi_station_rise", air_quality_level="良")
+    mr["detail"]["involved_stations"] = [{"station_id": "b"}]
+    _chain([mr], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    escalated = _alert(
+        station_id="b", air_quality_level="轻度污染", occurred_at="2026-11-02T09:30:00+08:00",
     )
-    assert len(pushed) == 2 and suppressed == []
-    assert store.notification_group("5min", "a", "PM10")["last_rule_type"] == "sudden_rise"
-    assert "5min::a::NO2" in store._load()["notification_groups"]
-    assert not any(item.get("last_rule_type") == "multi_station_rise"
-                   for item in store._load()["notification_groups"].values())
+    escalated["event_id"] = "e-b-ds-escalated"
+    pushed, suppressed, _ = _chain([escalated], store, tmp_path, datetime(2026, 11, 2, 9, 30, tzinfo=TZ))
+    assert len(pushed) == 1 and suppressed == []
 
 
 def test_upgrade_penetrates_quiet_hours(tmp_path):

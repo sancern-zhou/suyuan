@@ -4,7 +4,10 @@
 恢复防抖、免打扰、日限额、同站合并，并按新口径改造：
 
 - 单站 DS/CL/OL 按站点 + 因子共享通知冷却；窗口取最后一次实际
-  推送规则的冷却期。多站 MR 独立，不读写单站共享冷却状态；
+  推送规则的冷却期。多站 MR 不读单站共享冷却（单站告警不压制
+  区域事件）；但 MR 实际推送后反向把涉事站点（主站+伴随站）同
+  因子的单站共享冷却一并置位（单向覆盖，窗口沿用 MR 冷却期），
+  避免区域通报后各站单站告警在冷却期内重复外发同一过程；
 - 升级例外（#23）：污染等级升高立即再报，穿透防抖/冷却/免打扰（夜间
   升级也必须叫人），挂到首条事件上；
 - 优先级排序（#24）：DS > CL > OL，同一站同一因子同一窗口按优先级逐条
@@ -212,8 +215,25 @@ def renotify_due(
 
 
 def shared_cooldown_reason(
-    group_state: dict[str, Any], *, now: datetime, config: AirAlertRuleConfig
+    group_state: dict[str, Any],
+    *,
+    now: datetime,
+    config: AirAlertRuleConfig,
+    air_quality_level: str | None = None,
 ) -> str | None:
+    """共享冷却拦截；污染等级高于水位（#23）时放行。
+
+    ``air_quality_level`` 与组水位 ``last_air_level`` 比较升级：MR 覆盖
+    单站冷却后，涉事站真实恶化（如良→轻度）仍须立即再报，不能被区域
+    通报的水位静默掉。
+    """
+    current = LEVEL_CODES.get(str(air_quality_level)) if air_quality_level else None
+    previous = (
+        LEVEL_CODES.get(str(group_state.get("last_air_level")))
+        if group_state.get("last_air_level") else None
+    )
+    if current is not None and previous is not None and current > previous:
+        return None  # #23 升级例外对共享冷却同样生效
     last_ts = _parse_ts(group_state.get("last_push_ts"))
     cooldown = config.cooldown_for(
         str(group_state.get("last_rule_type") or ""),
@@ -233,6 +253,26 @@ def quota_reason(
     if store.global_push_count(day) >= config.global_daily_cap:
         return "global_cap"
     return None
+
+
+def _write_group_watermark(
+    store: AlertStateStore,
+    grain: str,
+    station_id: str,
+    pollutant: str,
+    *,
+    rule_type: str,
+    alert: dict[str, Any],
+    now: datetime,
+) -> None:
+    group_state = store.notification_group(grain, station_id, pollutant)
+    group_state.update({
+        "last_push_ts": now.isoformat(),
+        "last_rule_type": rule_type,
+        "last_event_id": alert.get("event_id"),
+        "last_air_level": alert.get("air_quality_level"),
+        "pollutant": pollutant,
+    })
 
 
 def commit_push(
@@ -553,7 +593,12 @@ def apply_push_chain(
                 _log(alert, "suppress", reason)
                 continue
             if not upgrade and notification_group is not None:
-                shared_reason = shared_cooldown_reason(notification_group, now=now, config=config)
+                shared_reason = shared_cooldown_reason(
+                    notification_group,
+                    now=now,
+                    config=config,
+                    air_quality_level=alert.get("air_quality_level"),
+                )
                 if shared_reason:
                     alert["suppress_reason"] = shared_reason
                     suppressed.append({"alert": alert, "reason": shared_reason})
@@ -595,19 +640,29 @@ def apply_push_chain(
             station_id=str(alert.get("station_id")),
         )
         rule_type = str(alert.get("rule_type") or "")
+        grain = str(alert.get("measurement_granularity"))
+        pollutant = str(alert.get("target_pollutant") or "")
         if rule_type in SINGLE_STATION_RULES:
-            group_state = store.notification_group(
-                str(alert.get("measurement_granularity")),
-                str(alert.get("station_id")),
-                str(alert.get("target_pollutant")),
+            _write_group_watermark(
+                store, grain, str(alert.get("station_id")), pollutant,
+                rule_type=rule_type, alert=alert, now=now,
             )
-            group_state.update({
-                "last_push_ts": now.isoformat(),
-                "last_rule_type": rule_type,
-                "last_event_id": alert.get("event_id"),
-                "last_air_level": alert.get("air_quality_level"),
-                "pollutant": alert.get("target_pollutant"),
-            })
+        elif rule_type == "multi_station_rise":
+            # MR 单向覆盖（2026-11-25 定版）：实际推送的 MR 把涉事站点
+            # （主站+伴随站）同因子的单站共享冷却一并置位，窗口沿用 MR
+            # 冷却期（PM2.5 120 分钟、其余 60 分钟），避免区域通报后各站
+            # 单站告警在冷却期内重复外发同一过程；等级升级仍可穿透。
+            involved_ids = [
+                str(entry.get("station_id") or "")
+                for entry in (alert.get("detail") or {}).get("involved_stations") or []
+            ]
+            if not involved_ids and alert.get("station_id"):
+                involved_ids = [str(alert.get("station_id"))]
+            for station_id in dict.fromkeys(sid for sid in involved_ids if sid):
+                _write_group_watermark(
+                    store, grain, station_id, pollutant,
+                    rule_type=rule_type, alert=alert, now=now,
+                )
         alert["push_decision"] = {"action": "push", "decided_at": now.isoformat()}
         _log(
             alert,

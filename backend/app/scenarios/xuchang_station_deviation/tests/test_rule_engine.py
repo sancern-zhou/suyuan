@@ -304,6 +304,51 @@ def test_cl_three_monotonic_segments_with_even_share():
     assert alert["air_quality_level"] == "良"
     assert alert["detail"]["total_rise_abs"] == 30.0
     assert alert["detail"]["segment_gains"] == [10.0, 10.0, 10.0]
+    assert alert["detail"]["peer_trimmed_mean"] == 40.0
+
+
+def test_cl_suppressed_below_peer_trimmed_mean():
+    # 2026-11-25 08:10 市一中实例：基线 27.333，38→43→48，累计 20.667
+    # 达到优档阈值 18，但其余五站去极值均值 65，低于均值不得触发 CL。
+    slot = datetime(2026, 11, 25, 8, 10, tzinfo=TZ)
+    peers = {"b": 56.0, "c": 72.0, "d": 67.0, "e": 57.0, "f": 73.0}
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 60.0}, source="hour"))
+        history = [23.0, 27.0, 32.0, 38.0, 43.0] if sid == "a" else [peers[sid]] * 5
+        rows.extend(_history_rows(sid, history, slot))
+        rows.append(_row(sid, slot, {"pm10": 48.0 if sid == "a" else peers[sid]}))
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "continuous_rise") == []
+
+
+def test_cl_suppressed_when_equal_to_peer_trimmed_mean():
+    # 与 DS 相同，必须严格高于：其他站 [40,55,70,40,70] 去极值均值为 55。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    peers = {"b": 40.0, "c": 55.0, "d": 70.0, "e": 40.0, "f": 70.0}
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 30.0}, source="hour"))
+        history = [20.0, 20.0, 20.0, 30.0, 40.0] if sid == "a" else [peers[sid]] * 5
+        rows.extend(_history_rows(sid, history, slot))
+        rows.append(_row(sid, slot, {"pm10": 55.0 if sid == "a" else peers[sid]}))
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "continuous_rise") == []
+
+
+def test_cl_skips_trimmed_mean_condition_with_few_peers():
+    # 只有 2 个有效对照站时无法去最高/最低，沿用 DS 口径不启用附加条件。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS[:3]:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 30.0}, source="hour"))
+        history = [20.0, 20.0, 20.0, 30.0, 40.0] if sid == "a" else [70.0] * 5
+        rows.extend(_history_rows(sid, history, slot))
+        rows.append(_row(sid, slot, {"pm10": 55.0 if sid == "a" else 70.0}))
+    outcome = _cycle(rows, slot)
+    rises = _slot_values(outcome, "continuous_rise")
+    assert len(rises) == 1 and rises[0]["station_id"] == "a"
+    assert rises[0]["detail"]["peer_trimmed_mean"] is None
 
 
 def test_cl_rejects_uneven_segments():
@@ -551,6 +596,28 @@ def test_pm25_hourly_cl_three_hours():
     assert len(rises) == 1
     assert rises[0]["detail"]["total_rise_abs"] == 35.0
     assert rises[0]["detail"]["segment_gains"] == [15.0, 10.0, 10.0]
+    assert rises[0]["detail"]["peer_trimmed_mean"] == 40.0
+
+
+def test_pm25_hourly_cl_suppressed_below_peer_trimmed_mean():
+    # 小时版采用同一附加条件：本站累计抬升达标但仍低于其他站去极值均值。
+    hour0 = datetime(2026, 9, 12, 6, 0, tzinfo=TZ)
+    series = [40.0, 55.0, 65.0, 75.0]
+    peers = {"b": 90.0, "c": 90.0, "d": 90.0, "e": 80.0, "f": 80.0}
+    rows = []
+    for sid in STATIONS:
+        rows.extend(_hour_rows(
+            [(hour0 + timedelta(hours=i), series[i] if sid == "a" else peers[sid]) for i in range(4)],
+            sid,
+        ))
+    rises = []
+    for index in range(len(series)):
+        outcome = evaluate_pm25_hourly_cycle(
+            rows, target_hour=hour0 + timedelta(hours=index),
+            config=AirAlertRuleConfig(), states=MemStates(),
+        )
+        rises.extend(c for c in outcome.candidates if c["rule_type"] == "continuous_rise")
+    assert rises == []
 
 
 def test_pm25_hourly_ol_single_window():
@@ -638,12 +705,13 @@ def test_regional_rise_not_triggered_below_threshold_sites():
 
 
 def test_regional_rise_merge_can_be_disabled():
-    # cl_region_merge_sites=0：不合并，6 站全部各自保留。
+    # cl_region_merge_sites=0：不合并。6 站完全同值时去极值均值等于末值，
+    # 新的附加条件会全部拦截；构造 4 站高于对照均值、2 个低值站被拦截。
     outcome = _regional_cl_run(
-        {"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 70.0, "f": 70.0},
+        {"a": 100.0, "b": 100.0, "c": 100.0, "d": 100.0, "e": 40.0, "f": 50.0},
         config=AirAlertRuleConfig(cl_region_merge_sites=0, mr_enabled=False),
     )
-    assert len([c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]) == 6
+    assert len([c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]) == 4
 
 
 # ---- DS 区域合并（2026-11-18 缝隙修复）----

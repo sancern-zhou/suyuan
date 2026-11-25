@@ -21,8 +21,10 @@ class HighValueConfig:
     minimum_peer_stations: int = 5
     # 单因子有效高值达到 5 站通常视为大范围污染；若仅一站轻度及以上则优先孤立提醒。
     max_alert_stations: int = 4
-    equipment_level_difference: int = 4
+    equipment_level_difference: int = 2
     equipment_modified_z: float = 8.0
+    equipment_cooldown_hours: int = 24
+    high_value_cooldown_hours: int = 6
     weather_lookback_hours: int = 3
     latest_hour_max_age_hours: int = 2
 
@@ -34,8 +36,10 @@ class HighValueConfig:
             min_relative_difference=_number("TOWN_HIGH_VALUE_MIN_REL_DIFF", 0.5),
             minimum_peer_stations=int(_number("TOWN_HIGH_VALUE_MIN_PEERS", 5)),
             max_alert_stations=int(_number("TOWN_HIGH_VALUE_MAX_STATIONS", 4)),
-            equipment_level_difference=int(_number("TOWN_HIGH_VALUE_EQUIPMENT_LEVEL_DIFF", 4)),
+            equipment_level_difference=int(_number("TOWN_HIGH_VALUE_EQUIPMENT_LEVEL_DIFF", 2)),
             equipment_modified_z=_number("TOWN_HIGH_VALUE_EQUIPMENT_Z", 8),
+            equipment_cooldown_hours=int(_number("TOWN_HIGH_VALUE_EQUIPMENT_COOLDOWN_HOURS", 24)),
+            high_value_cooldown_hours=int(_number("TOWN_HIGH_VALUE_COOLDOWN_HOURS", 6)),
             weather_lookback_hours=int(_number("TOWN_HIGH_VALUE_WEATHER_HOURS", 3)),
             latest_hour_max_age_hours=int(_number("TOWN_HIGH_VALUE_MAX_AGE_HOURS", 2)),
         )

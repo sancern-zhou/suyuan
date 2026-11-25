@@ -434,6 +434,40 @@ def test_qc_citywide_legacy_records_are_filtered_to_alert_scope():
     )
 
 
+def test_qc_old_record_from_previous_day_does_not_claim_impact():
+    evidence = _deviation_evidence(
+        air_quality_context={
+            "maintenance_qc_review": {
+                "required": True,
+                "records": [{
+                    "time": "2026-09-12T21:00:00+08:00",
+                    "station_id": "1003A",
+                    "source": "hour",
+                    "marks": {"no2_mark": "质控"},
+                }],
+            }
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+    assert "存在1条质控标记记录" not in message
+
+
+def test_qc_minute_record_older_than_one_hour_does_not_claim_impact():
+    evidence = _deviation_evidence()
+    evidence["computed_indicators"]["station_5min_process"]["marked_quality_records"] = [
+        {"time": "2026-09-13T10:59:59+08:00", "station_id": "1003A", "mark": "质控"},
+    ]
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+
+
 def _traffic_evidence(slot_at="2026-09-13T11:54:00+08:00"):
     return _deviation_evidence(traffic_context={
         "status": "success",

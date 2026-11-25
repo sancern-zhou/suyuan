@@ -47,6 +47,10 @@ def _alert():
     }
 
 
+def _alert_time() -> datetime:
+    return datetime.fromisoformat("2026-08-05T13:00:00+08:00")
+
+
 @pytest.mark.asyncio
 async def test_collect_records_partial_evidence_without_losing_source_screening(monkeypatch):
     collector = XuchangStationDeviationEvidenceCollector(
@@ -120,6 +124,7 @@ def test_qc_review_matches_alert_station_and_pollutant():
         [_hour_row("A", pm25_mark="零校准")],
         station_id="A",
         field="pm25",
+        event_time=_alert_time(),
     )
 
     assert review is not None
@@ -137,6 +142,7 @@ def test_qc_review_empty_when_only_other_station_or_other_pollutant_marked():
         [],
         station_id="A",
         field="pm25",
+        event_time=_alert_time(),
     ) is None
 
 
@@ -146,6 +152,7 @@ def test_qc_review_ignores_blank_marks_and_hour_only_hits():
         [],
         station_id="A",
         field="pm25",
+        event_time=_alert_time(),
     ) is None
 
     hour_only = _maintenance_qc_review(
@@ -153,6 +160,46 @@ def test_qc_review_ignores_blank_marks_and_hour_only_hits():
         [_hour_row("A", no2_mark="质控")],
         station_id="A",
         field="no2",
+        event_time=_alert_time(),
     )
     assert hour_only is not None
     assert hour_only["records"][0]["source"] == "hour"
+
+
+def test_qc_review_only_includes_current_and_previous_alert_hours():
+    event_time = datetime.fromisoformat("2026-08-05T13:25:00+08:00")
+    review = _maintenance_qc_review(
+        [],
+        [
+            {"time": "2026-08-05T10:00:00", "station_id": "A", "pm25_mark": "过旧"},
+            {"time": "2026-08-05T11:00:00", "station_id": "A", "pm25_mark": "更早"},
+            {"time": "2026-08-05T12:00:00", "station_id": "A", "pm25_mark": "上一小时"},
+            {"time": "2026-08-05T13:00:00", "station_id": "A", "pm25_mark": "当前小时"},
+            {"time": "2026-08-05T14:00:00", "station_id": "A", "pm25_mark": "未来"},
+        ],
+        station_id="A",
+        field="pm25",
+        event_time=event_time,
+    )
+
+    assert review is not None
+    assert [record["marks"]["pm25_mark"] for record in review["records"]] == ["上一小时", "当前小时"]
+
+
+def test_qc_review_only_includes_minutes_within_one_hour_before_alert():
+    event_time = datetime.fromisoformat("2026-08-05T13:25:00+08:00")
+    review = _maintenance_qc_review(
+        [
+            {"time": "2026-08-05T12:24:59", "station_id": "A", "pm25_mark": "过旧"},
+            {"time": "2026-08-05T12:25:00", "station_id": "A", "pm25_mark": "窗口起点"},
+            {"time": "2026-08-05T13:25:00", "station_id": "A", "pm25_mark": "告警时刻"},
+            {"time": "2026-08-05T13:25:01", "station_id": "A", "pm25_mark": "未来"},
+        ],
+        [],
+        station_id="A",
+        field="pm25",
+        event_time=event_time,
+    )
+
+    assert review is not None
+    assert [record["marks"]["pm25_mark"] for record in review["records"]] == ["窗口起点", "告警时刻"]

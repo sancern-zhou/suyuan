@@ -49,7 +49,7 @@ def _event_time(value: str) -> datetime:
     return parsed.astimezone(TZ_SHANGHAI)
 
 
-def _record_hour(value: Any) -> datetime | None:
+def _record_time(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
     elif value:
@@ -61,7 +61,12 @@ def _record_hour(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=TZ_SHANGHAI)
-    return parsed.astimezone(TZ_SHANGHAI).replace(minute=0, second=0, microsecond=0)
+    return parsed.astimezone(TZ_SHANGHAI)
+
+
+def _record_hour(value: Any) -> datetime | None:
+    parsed = _record_time(value)
+    return parsed.replace(minute=0, second=0, microsecond=0) if parsed else None
 
 
 def _number(value: Any) -> float | None:
@@ -332,10 +337,12 @@ def _maintenance_qc_review(
     *,
     station_id: str,
     field: str,
+    event_time: datetime,
 ) -> dict[str, Any] | None:
-    """质控关联按告警站点+告警因子隔离（2026-11-24）：只有告警站点的目标
-    因子带标记才产出质控证据，他站/他因子标记不得触发“数据受质控影响”表述。
-    分钟标记覆盖近 1 小时运维操作；小时行标记是告警小时值被标无效的直接依据。"""
+    """质控关联按告警站点、告警因子和告警时段隔离。
+
+    分钟标记仅覆盖告警时刻及此前 1 小时；小时标记仅覆盖告警小时及前一小时。
+    更早的运维记录与本次告警无关，不得触发“相关时段数据受质控影响”表述。"""
     mark_field = f"{field}_mark"
 
     def _marked(row: dict[str, Any], source: str) -> dict[str, Any] | None:
@@ -343,6 +350,18 @@ def _maintenance_qc_review(
             return None
         mark = row.get(mark_field)
         if mark in (None, ""):
+            return None
+        record_time = _record_time(row.get("time"))
+        if record_time is None:
+            return None
+        if source == "hour":
+            record_time = record_time.replace(minute=0, second=0, microsecond=0)
+            window_start = event_time.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+            window_end = event_time.replace(minute=0, second=0, microsecond=0)
+        else:
+            window_start = event_time - timedelta(hours=1)
+            window_end = event_time
+        if not window_start <= record_time <= window_end:
             return None
         return {
             "time": row.get("time"),
@@ -570,6 +589,7 @@ class XuchangStationDeviationEvidenceCollector:
                 hour_mark_rows,
                 station_id=alert_station_id,
                 field=alert_field,
+                event_time=_event_time(alert["occurred_at"]),
             ),
         }
 

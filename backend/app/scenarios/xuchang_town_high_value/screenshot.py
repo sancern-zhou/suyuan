@@ -1,4 +1,4 @@
-"""用独立浏览器截取大屏乡镇小时地图，禁止复用 Agent 活动标签页。"""
+"""用独立浏览器截取大屏全部站点小时地图，禁止复用 Agent 活动标签页。"""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from app.utils.path_config import format_agent_path, get_data_registry
 
 def _hour_key(value: Any) -> str:
     return str(value or "").replace("T", " ")[:16]
+
+
+CAPTURE_LAYERS = ["national", "townships", "shengkong", "office"]
 
 
 def capture_township_hour_map(
@@ -35,7 +38,7 @@ def capture_township_hour_map(
     )
     query = {
         "capture": "1", "township_granularity": "hour",
-        "layers": "townships", "metric": metric,
+        "layers": ",".join(CAPTURE_LAYERS), "metric": metric,
     }
     token = getattr(settings, "dashboard_access_token", "")
     if token:
@@ -62,7 +65,7 @@ def capture_township_hour_map(
             state = page.evaluate("() => window.__XUCHANG_BIGSCREEN_CAPTURE__")
             if state.get("page") != "bigscreen" or state.get("townshipGranularity") != "hour":
                 raise RuntimeError("dashboard capture state mismatch")
-            if state.get("metric") != metric or state.get("layers") != ["townships"]:
+            if state.get("metric") != metric or state.get("layers") != CAPTURE_LAYERS:
                 raise RuntimeError("dashboard capture layer mismatch")
             if not state.get("townshipCount"):
                 raise RuntimeError("township hour map is empty")

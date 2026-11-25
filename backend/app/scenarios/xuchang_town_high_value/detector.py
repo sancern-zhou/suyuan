@@ -59,7 +59,7 @@ def detect_high_value_groups(
 
     浓度差与相对差须同时达到阈值，避免低浓度小绝对差、高浓度小比例差误报。
     modified z 对良/轻度污染仅作空间孤立证据，避免误删真实单站污染；
-    设备异常仅保留中度及以上且跨 4 级或 modified z 极高的极端离群。
+    设备异常仅保留中度及以上、与周边至少相差 2 个污染等级且 modified z 极高的极端离群。
     大范围候选中若只有一站达到轻度及以上，该站优先单独提醒，普通良站作区域背景。
     """
     config = config or HighValueConfig()
@@ -92,18 +92,14 @@ def detect_high_value_groups(
             modified_z = 0.6745 * (value - baseline) / mad if mad > 0 else None
             equipment_reason = None
             # 轻度污染仍可能是用户关注的孤立高值，不因相对等级差或 z 值误删。
-            # 仅中度及以上、且空间离群达到极端程度时才转设备异常核实。
+            # 中度及以上且与周边至少相差 2 级，同时仍须是极端空间离群。
             if (
                 level >= 3
-                and (
-                    level_difference >= config.equipment_level_difference
-                    or (
-                        modified_z is not None
-                        and modified_z >= config.equipment_modified_z
-                    )
-                )
+                and level_difference >= config.equipment_level_difference
+                and modified_z is not None
+                and modified_z >= config.equipment_modified_z
             ):
-                equipment_reason = "moderate_or_worse_modified_z"
+                equipment_reason = "moderate_or_worse_extreme_outlier"
             if (
                 level_difference < config.min_level_difference
                 or absolute < config.min_absolute_difference

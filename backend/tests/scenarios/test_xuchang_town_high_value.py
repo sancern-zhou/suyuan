@@ -207,7 +207,7 @@ async def test_pollutants_are_counted_and_grouped_independently(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_equipment_extremes_send_fixed_message_without_map(monkeypatch, tmp_path):
+async def test_equipment_extremes_send_fixed_message_with_map(monkeypatch, tmp_path):
     # 使用真实站名验证属地提取；异常与污染提醒分别幂等。
     rows = rows_for(high_pm10=[965.84])
     rows[-1]["StationName"] = "鄢陵县彭店镇"
@@ -217,11 +217,84 @@ async def test_equipment_extremes_send_fixed_message_without_map(monkeypatch, tm
     result = await fetcher.fetch_and_store()
     assert result["sent"] == 0 and result["equipment_sent"] == 1
     assert sent[0][0][1] == "【乡镇高值提醒】鄢陵县彭店镇站点PM10浓度显示异常，请鄢陵县核实数据异常原因，并及时反馈。"
-    assert sent[0][1]["media"] == []
+    assert sent[0][1]["media"] == ["registry/map.png"]
     assert sent[0][1]["metadata"]["alert_kind"] == "equipment_anomaly"
     second = await fetcher.fetch_and_store()
     assert second["status"] == "completed" and second["equipment_sent"] == 0
     assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_equipment_screenshot_failure_sends_neither_equipment_nor_high_value(
+    monkeypatch, tmp_path,
+):
+    def fail(*_args):
+        raise RuntimeError("browser unavailable")
+
+    rows = rows_for(high_pm10=[965.84])
+    rows[-1]["CountyName"] = "鄢陵县"
+    fetcher, sent = build(monkeypatch, tmp_path, rows, capture=fail)
+    result = await fetcher.fetch_and_store()
+    assert result["failed_groups"] == 1 and not sent
+    assert fetcher.state._load()["history"][0]["status"] == "screenshot_failed"
+
+
+def hourly_rows(high_pm25=(), high_pm10=(), *, hour=HOUR):
+    return [{**row, "CollectionTime": hour} for row in rows_for(high_pm25, high_pm10)]
+
+
+@pytest.mark.asyncio
+async def test_high_value_same_station_and_pollutant_cools_down_for_six_hours(monkeypatch, tmp_path):
+    rows = hourly_rows([90]) + hourly_rows([105], hour=HOUR + timedelta(hours=1))
+    fetcher, sent = build(monkeypatch, tmp_path, rows)
+    first = await fetcher.fetch_and_store()
+    fetcher.now_factory = lambda: NOW + timedelta(hours=1)
+    second = await fetcher.fetch_and_store()
+    fetcher.now_factory = lambda: NOW + timedelta(hours=6)
+    rows.extend(hourly_rows([100], hour=HOUR + timedelta(hours=6)))
+    third = await fetcher.fetch_and_store()
+    assert first["sent"] == 1
+    assert second["sent"] == 0 and second["cooled_down"] == 1
+    assert third["sent"] == 1 and len(sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_high_value_cooldown_is_independent_for_other_station_and_pollutant(monkeypatch, tmp_path):
+    rows = hourly_rows([90], [170]) + hourly_rows([105], [180], hour=HOUR + timedelta(hours=1))
+    fetcher, sent = build(monkeypatch, tmp_path, rows)
+    await fetcher.fetch_and_store()
+    assert len(sent) == 2
+    fetcher.now_factory = lambda: NOW + timedelta(hours=1)
+    result = await fetcher.fetch_and_store()
+    assert result["sent"] == 0 and result["cooled_down"] == 2
+    assert len(sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_equipment_same_station_and_pollutant_cools_down_for_twenty_four_hours(monkeypatch, tmp_path):
+    rows = hourly_rows([137]) + hourly_rows([145], hour=HOUR + timedelta(hours=1))
+    for row in rows:
+        if row["Tsno"].startswith("normal-"):
+            index = int(row["Tsno"].split("-")[-1])
+            row["PM25"] = 38 + index % 2
+        if row["Tsno"].startswith("pm25-"):
+            row["CountyName"] = "魏都区"
+    fetcher, sent = build(monkeypatch, tmp_path, rows)
+    first = await fetcher.fetch_and_store()
+    fetcher.now_factory = lambda: NOW + timedelta(hours=1)
+    second = await fetcher.fetch_and_store()
+    fetcher.now_factory = lambda: NOW + timedelta(hours=24)
+    later = hourly_rows([200], hour=HOUR + timedelta(hours=24))
+    for row in later:
+        if row["Tsno"].startswith("normal-"):
+            row["PM25"] = 38 + int(row["Tsno"].split("-")[-1]) % 2
+        if row["Tsno"].startswith("pm25-"):
+            row["CountyName"] = "魏都区"
+    rows.extend(later)
+    third = await fetcher.fetch_and_store()
+    assert first["equipment_sent"] == 1
+    assert second["equipment_sent"] == 0 and second["cooled_down"] == 1
+    assert third["equipment_sent"] == 1 and len(sent) == 2
 
 
 def regional_rows(extra=()):
@@ -269,8 +342,33 @@ def test_moderate_extreme_is_filtered_but_does_not_hide_other_isolated_station()
     rows = regional_rows([125.3, 90.7, 59.7, 49.05, 48.96, 48.2, 44.8, 42.8])
     _, groups = detect_high_value_groups(rows)
     group = groups[0]
-    assert any(item["equipment_reason"] == "moderate_or_worse_modified_z" for item in group["alerts"])
+    assert any(item["equipment_reason"] == "moderate_or_worse_extreme_outlier" for item in group["alerts"])
     assert [item["value"] for item in group["stations"]] == [90.7]
+
+
+def test_equipment_anomaly_requires_two_level_gap_even_at_extreme_z():
+    rows = rows_for(high_pm25=[130])
+    for index, row in enumerate(rows[:10]):
+        row["PM25"] = 80 + (index % 3) * 2
+    _, groups = detect_high_value_groups(rows)
+    item = groups[0]["alerts"][0]
+    assert item["level_name"] == "中度污染"
+    assert item["level_difference"] == 1
+    assert item["modified_z"] >= 8
+    assert not item["equipment_suspected"]
+
+
+def test_equipment_anomaly_allows_two_level_gap_at_moderate_pollution():
+    rows = rows_for(high_pm25=[137])
+    for index, row in enumerate(rows[:10]):
+        row["PM25"] = 38 + index % 2
+    _, groups = detect_high_value_groups(rows)
+    item = groups[0]["alerts"][0]
+    assert item["peer_level_name"] == "良"
+    assert item["level_name"] == "中度污染"
+    assert item["level_difference"] == 2
+    assert item["modified_z"] >= 8
+    assert item["equipment_suspected"]
 
 
 def test_modified_z_is_evidence_not_equipment_anomaly():
@@ -332,7 +430,7 @@ async def test_same_hour_group_is_idempotent(monkeypatch, tmp_path):
     first = await fetcher.fetch_and_store()
     second = await fetcher.fetch_and_store()
     assert first["sent"] == 2 and second["sent"] == 0
-    assert second["status"] == "no_alert_or_duplicate" and len(sent) == 2
+    assert second["cooled_down"] == 2 and len(sent) == 2
 
 
 @pytest.mark.asyncio

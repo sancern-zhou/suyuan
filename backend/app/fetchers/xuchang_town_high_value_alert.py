@@ -65,21 +65,67 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
         # 只处理刚入库的完整小时；补跑旧数据/迟到任务不重复翻旧账。
         if now - timedelta(hours=self.config.latest_hour_max_age_hours) > hour:
             return {"status": "stale", "hour": hour.isoformat(), "sent": 0}
-        groups = [group for group in groups if not self.state.already_sent(group["group_id"])]
-        if not groups:
-            return {"status": "no_alert_or_duplicate", "hour": hour.isoformat(), "sent": 0}
-        weather = await load_weather_evidence(
-            self.weather_repository,
-            hour,
-            lookback_hours=self.config.weather_lookback_hours,
-        )
+        # 同小时重跑保持原幂等语义；跨小时同站同因子走 24/6 小时冷却。
+        groups = [
+            group for group in groups
+            if not self.state.already_sent(group["group_id"])
+            or any(item["equipment_suspected"] for item in group["alerts"])
+            or bool(group["stations"]) and self.state.in_cooldown(
+                "high_value::" + ",".join(sorted(item["station_id"] for item in group["stations"]))
+                + f"::{group['pollutant']}", now, hours=self.config.high_value_cooldown_hours,
+            )
+        ]
+        weather_loaded = False
+        weather: dict[str, Any] = {}
         sent = 0
         equipment_sent = 0
         failed_groups = 0
+        cooled_down = 0
+        processed = False
         for group in groups:
+            processed = True
+            equipment_items = []
+            equipment_cooled = False
             for item in group["alerts"]:
                 if not item["equipment_suspected"]:
                     continue
+                cooldown_key = f"equipment::{item['station_id']}::{group['pollutant']}"
+                if self.state.in_cooldown(
+                    cooldown_key, now, hours=self.config.equipment_cooldown_hours
+                ):
+                    equipment_cooled = True
+                    continue
+                equipment_items.append((item, cooldown_key))
+            stations = group["stations"]
+            high_value_key = "high_value::" + ",".join(sorted(
+                item["station_id"] for item in stations
+            )) + f"::{group['pollutant']}"
+            high_value_cooled = bool(stations) and self.state.in_cooldown(
+                high_value_key, now, hours=self.config.high_value_cooldown_hours
+            )
+            cooled_down += int(equipment_cooled) + int(high_value_cooled)
+            if not equipment_items and (not stations or group["out_of_scope"] or high_value_cooled):
+                if equipment_cooled or high_value_cooled:
+                    self.state.record(group["group_id"], "cooldown_skipped", {
+                        "equipment": equipment_cooled, "high_value": high_value_cooled,
+                    })
+                elif group["out_of_scope"] and stations:
+                    self.state.record(group["group_id"], "regional_pollution_skipped", {
+                        "station_count": len(stations),
+                        "station_ids": [item["station_id"] for item in stations],
+                    })
+                continue
+            try:
+                # 同因子设备异常与普通高值共用对应小时地图；截图失败不推送。
+                media = await asyncio.to_thread(self.capture, hour, [group], rows)
+                if not media:
+                    raise RuntimeError("empty screenshot path")
+            except Exception as exc:
+                failed_groups += 1
+                self.state.record(group["group_id"], "screenshot_failed", {"error": str(exc)})
+                logger.warning("town_high_value_screenshot_failed", pollutant=group["pollutant"], error=str(exc))
+                continue
+            for item, cooldown_key in equipment_items:
                 equipment_id = f"{group['group_id']}-equipment-{item['station_id']}"
                 if self.state.already_sent(equipment_id):
                     continue
@@ -95,7 +141,7 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
                     f"请{county}核实数据异常原因，并及时反馈。"
                 )
                 record = self.enqueue(
-                    "town_high_value", message, media=[],
+                    "town_high_value", message, media=[media],
                     metadata={"group_id": equipment_id, "hour": hour.isoformat(),
                               "pollutant": group["pollutant"], "station_ids": item["station_id"],
                               "alert_kind": "equipment_anomaly"},
@@ -104,26 +150,28 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
                     "station_ids": [item["station_id"]], "reason": item["equipment_reason"],
                     "message_id": (record or {}).get("id"),
                 })
+                self.state.mark_cooldown(cooldown_key, now, {
+                    "station_id": item["station_id"], "pollutant": group["pollutant"],
+                })
                 equipment_sent += 1
             stations = group["stations"]
             if not stations:
                 continue
-            if group["out_of_scope"]:
-                self.state.record(group["group_id"], "regional_pollution_skipped", {
-                    "station_count": len(stations),
-                    "station_ids": [item["station_id"] for item in stations],
-                })
+            if self.state.already_sent(group["group_id"]):
                 continue
-            try:
-                # PM2.5/PM10 分别截图，避免给 PM10 提醒附 PM2.5 地图。
-                media = await asyncio.to_thread(self.capture, hour, [group], rows)
-                if not media:
-                    raise RuntimeError("empty screenshot path")
-            except Exception as exc:
-                failed_groups += 1
-                self.state.record(group["group_id"], "screenshot_failed", {"error": str(exc)})
-                logger.warning("town_high_value_screenshot_failed", pollutant=group["pollutant"], error=str(exc))
+            if group["out_of_scope"] or high_value_cooled:
+                if not high_value_cooled:
+                    self.state.record(group["group_id"], "regional_pollution_skipped", {
+                        "station_count": len(stations),
+                        "station_ids": [item["station_id"] for item in stations],
+                    })
                 continue
+            if not weather_loaded:
+                weather = await load_weather_evidence(
+                    self.weather_repository, hour,
+                    lookback_hours=self.config.weather_lookback_hours,
+                )
+                weather_loaded = True
             deliveries = [stations]
             for selected in deliveries:
                 message = await self.message_renderer({**group, "stations": selected}, weather)
@@ -142,8 +190,15 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
                     "station_ids": [item["station_id"] for item in selected],
                     "message_id": (record or {}).get("id"),
                 })
+                self.state.mark_cooldown(high_value_key, now, {
+                    "station_ids": [item["station_id"] for item in selected],
+                    "pollutant": group["pollutant"],
+                })
                 sent += 1
+        if not processed:
+            return {"status": "no_alert_or_duplicate", "hour": hour.isoformat(), "sent": 0, "equipment_sent": 0, "cooled_down": 0}
         return {
             "status": "completed", "hour": hour.isoformat(), "sent": sent,
             "equipment_sent": equipment_sent, "failed_groups": failed_groups,
+            "cooled_down": cooled_down,
         }
