@@ -172,6 +172,11 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                         "target_pollutant": primary["target_pollutant"],
                         "station_id": station_id,
                         "station_name": primary.get("station_name") or station_id,
+                        # 本批通报覆盖的全部 episode（同站多因子共用一条通报）。
+                        # 事件属性随任务结果 extra 原样落库，快照按它把通报正文回挂到告警行。
+                        "episode_ids": [
+                            item["scenario_1_episode"]["episode_id"] for item in alerts
+                        ],
                     },
                     payload=payload,
                 ))

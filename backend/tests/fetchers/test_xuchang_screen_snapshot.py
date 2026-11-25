@@ -232,6 +232,13 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
                        "station_name": "许昌学院", "text": "结论摘要"}],
     )
     monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_alert_dispatch",
+        lambda self, alerts: {"ep-1": {
+            "time": "2026-10-24T10:05:00",
+            "text": "【浓度告警】1.告警站点：许昌学院\n2.污染指标：PM2.5",
+        }},
+    )
+    monkeypatch.setattr(
         XuchangScreenSnapshotFetcher, "_assets",
         lambda self: [{
             "kind": "transport", "title": "区域后向轨迹走廊图",
@@ -321,6 +328,9 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert snapshot["alerts"][0]["station_name"] == "许昌学院"
     assert snapshot["alerts"][0]["status"] == "active"
     assert snapshot["alerts"][0]["lon"] == 113.8611
+    # 告警行回挂通报正文（_alert_dispatch 查库，此处为桩）
+    assert snapshot["alerts"][0]["dispatch"]["text"].startswith("【浓度告警】")
+    assert result["alerts_with_dispatch"] == 1
     # 站点：国控（monkeypatch 桩）+ 乡镇 5 分钟（AQI 按 HJ633 推算）
     assert snapshot["stations"]["national"][0]["station_id"] == "1008A"
     assert snapshot["stations"]["national"][0]["granularity"] == "5min"
@@ -454,6 +464,137 @@ def test_broadcast_runs_on_db_bridge_pool(monkeypatch):
 
     assert XuchangScreenSnapshotFetcher()._broadcast() == []
     assert called["query"] == {"page": 1, "page_size": 10}
+
+
+def _dispatch_record(completed_at, episode_ids, text="通报正文", **fields):
+    """任务结果行的最小替身：通报正文、完成时间与事件属性（extra）。"""
+    from types import SimpleNamespace
+
+    values = {
+        "broadcast_message": text,
+        "conclusion": None,
+        "started_at": None,
+        "completed_at": datetime.fromisoformat(completed_at),
+        "extra": {"event_attributes": {"episode_ids": episode_ids}},
+    }
+    values.update(fields)
+    return SimpleNamespace(**values)
+
+
+def _patch_dispatch_pages(monkeypatch, pages):
+    import app.db.sync_bridge as sync_bridge
+    from app.scheduled_tasks.storage.task_result_storage_db import (
+        DatabaseTaskResultStorage,
+    )
+
+    calls = []
+
+    def fake_query_page(self, **kwargs):
+        assert self._runner is sync_bridge.run_db
+        calls.append(kwargs)
+        records = pages[kwargs["page"]]
+        return records, len(records)
+
+    monkeypatch.setattr(DatabaseTaskResultStorage, "query_page", fake_query_page)
+    return calls
+
+
+def test_alert_dispatch_links_notice_by_episode_ids(monkeypatch):
+    """通报按结果行 extra.event_attributes.episode_ids 回挂 episode，自新到旧取最新。"""
+    from app.fetchers.xuchang_screen_snapshot import (
+        DISPATCH_LOOKBACK,
+        DISPATCH_PAGE_SIZE,
+    )
+
+    unrelated = [
+        _dispatch_record("2026-10-24T09:00:00", ["other"])
+        for _ in range(DISPATCH_PAGE_SIZE - 4)
+    ]
+    pages = {
+        # 首页满页但只命中前三条告警，须继续翻页
+        1: [
+            _dispatch_record("2026-10-24T13:05:00", ["ep-1", "ep-2"]),
+            _dispatch_record("2026-10-24T13:02:00", ["ep-1"]),
+            _dispatch_record("2026-10-24T12:40:00", [], text="其它任务结论"),
+            _dispatch_record(
+                "2026-10-24T12:30:00", ["ep-3"],
+                broadcast_message=None, conclusion="结论摘要",
+            ),
+            *unrelated,
+        ],
+        2: [_dispatch_record("2026-10-24T08:40:00", ["ep-4"], text="次页通报")],
+    }
+    calls = _patch_dispatch_pages(monkeypatch, pages)
+    alerts = [
+        {"episode_id": "ep-1", "started_at": "2026-10-24T10:00:00+08:00"},
+        {"episode_id": "ep-2", "started_at": "2026-10-24T10:00:00+08:00"},
+        {"episode_id": "ep-3", "started_at": "2026-10-24T09:00:00"},
+        {"episode_id": "ep-4", "started_at": "2026-10-24T08:30:00+08:00"},
+        {"episode_id": None, "started_at": None},
+    ]
+
+    dispatch = XuchangScreenSnapshotFetcher()._alert_dispatch(alerts)
+
+    assert set(dispatch) == {"ep-1", "ep-2", "ep-3", "ep-4"}
+    # 同站多因子合批的一条通报回挂到各自 episode；同一 episode 多条取最新
+    assert dispatch["ep-1"] == {"time": "2026-10-24T13:05:00", "text": "通报正文"}
+    assert dispatch["ep-2"] == dispatch["ep-1"]
+    # 无通报正文时与播报段同口径，退回结论
+    assert dispatch["ep-3"] == {"time": "2026-10-24T12:30:00", "text": "结论摘要"}
+    assert dispatch["ep-4"] == {"time": "2026-10-24T08:40:00", "text": "次页通报"}
+    # 查询下界取最早告警的起始时间（带时区的按本地时间归一）
+    earliest = (
+        datetime.fromisoformat("2026-10-24T08:30:00+08:00").astimezone().replace(tzinfo=None)
+    )
+    assert [call["page"] for call in calls] == [1, 2]
+    assert all(call["page_size"] == DISPATCH_PAGE_SIZE for call in calls)
+    assert all(call["started_after"] == earliest - DISPATCH_LOOKBACK for call in calls)
+
+
+def test_alert_dispatch_scan_is_capped(monkeypatch):
+    """一直未命中时最多翻 DISPATCH_MAX_PAGES 页；没有 episode_id 就不查库。"""
+    from app.fetchers.xuchang_screen_snapshot import (
+        DISPATCH_MAX_PAGES,
+        DISPATCH_PAGE_SIZE,
+    )
+
+    full_page = [_dispatch_record("2026-10-24T09:00:00", ["other"]) for _ in range(DISPATCH_PAGE_SIZE)]
+    calls = _patch_dispatch_pages(monkeypatch, {page: list(full_page) for page in range(1, DISPATCH_MAX_PAGES + 2)})
+
+    assert XuchangScreenSnapshotFetcher()._alert_dispatch([{"episode_id": None}]) == {}
+    assert calls == []
+
+    assert XuchangScreenSnapshotFetcher()._alert_dispatch([
+        {"episode_id": "ep-1", "started_at": "not-a-time"},
+    ]) == {}
+    assert [call["page"] for call in calls] == list(range(1, DISPATCH_MAX_PAGES + 1))
+    # 起始时间解析不出时不设下界，只按最新优先扫描
+    assert calls[0]["started_after"] is None
+
+
+async def test_dispatch_lookup_failure_keeps_alert_list(monkeypatch, registry):
+    """通报查库失败只让告警不可展开，不能连带丢掉告警列表。"""
+    _write_episode_state(registry, {"active": [{
+        "episode_id": "ep-1", "station_id": "1008A", "station_name": "许昌学院",
+        "status": "active", "started_at": "2026-10-24T10:00:00",
+        "last_seen_at": "2026-10-24T14:00:00",
+    }], "history": []})
+    fetcher = _make_fetcher(monkeypatch, _default_handlers())
+
+    def boom(self, alerts):
+        raise RuntimeError("数据库连接超时")
+
+    monkeypatch.setattr(XuchangScreenSnapshotFetcher, "_alert_dispatch", boom)
+    result = await fetcher.fetch_and_store()
+
+    snapshot = json.loads(
+        (registry / SNAPSHOT_DIR / SNAPSHOT_FILE).read_text(encoding="utf-8")
+    )
+    assert [item["episode_id"] for item in snapshot["alerts"]] == ["ep-1"]
+    assert snapshot["alerts"][0]["dispatch"] is None
+    assert "数据库连接超时" in snapshot["errors"]["alert_dispatch"]
+    assert result["segments_failed"] == ["alert_dispatch"]
+    assert result["alerts_with_dispatch"] == 0
 
 
 @pytest.mark.parametrize("kind", ["township", "office"])

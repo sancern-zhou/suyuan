@@ -157,21 +157,27 @@ def _safe_dt(value: Any):
 def _merge_hot_alerts(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """以 episode_state 为准刷新 alerts 段。
 
-    快照行的坐标在热合并时按 episode_id 保留（episode_state 无坐标）；
-    状态机权威在 episode_state，快照里的旧状态一律以热读为准。
+    快照行的坐标与通报正文在热合并时按 episode_id 保留（episode_state 没有
+    坐标，通报正文要查库）；状态机权威在 episode_state，快照里的旧状态一律
+    以热读为准。
     """
     hot = _read_alert_episodes()
     if not hot:
         return snapshot
-    coords_by_id = {
-        str(item.get("episode_id")): (item.get("lon"), item.get("lat"))
+    carried_by_id = {
+        str(item.get("episode_id")): (
+            item.get("lon"), item.get("lat"), item.get("dispatch"),
+        )
         for item in snapshot.get("alerts") or []
         if item.get("episode_id")
     }
     for row in hot:
-        lon, lat = coords_by_id.get(str(row.get("episode_id")), (None, None))
+        lon, lat, dispatch = carried_by_id.get(
+            str(row.get("episode_id")), (None, None, None)
+        )
         row["lon"] = lon
         row["lat"] = lat
+        row["dispatch"] = dispatch
     snapshot["alerts"] = hot
     return snapshot
 

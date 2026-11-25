@@ -167,6 +167,13 @@ export function buildForecastRows(daily, today = new Date()) {
   })
 }
 
+/** 告警行附带的派发通报（快照按 episode_id 回挂）；正文为空视为无通报 */
+function buildNotice(dispatch) {
+  const text = String(dispatch?.text ?? '').trim()
+  if (!text) return null
+  return { time: shortDateTime(dispatch?.time), text }
+}
+
 /** 告警卡片文案：峰值/偏离/持续时长与起止时间，缺字段的片段直接省略 */
 export function buildAlertView(alert) {
   const active = alert?.status === 'active'
@@ -188,6 +195,7 @@ export function buildAlertView(alert) {
     statusText: active ? '进行中' : '已结束',
     pollutant: pollutantLabel(alert?.target_pollutant),
     metrics,
-    timeText: [started, lastSeen].filter(Boolean).join(' · ')
+    timeText: [started, lastSeen].filter(Boolean).join(' · '),
+    notice: buildNotice(alert?.dispatch)
   }
 }

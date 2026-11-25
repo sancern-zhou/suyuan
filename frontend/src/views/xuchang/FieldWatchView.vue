@@ -129,19 +129,45 @@
             v-for="alert in alerts"
             :key="alert.key"
             class="fw-alert"
-            :class="{ active: alert.active }"
+            :class="{ active: alert.active, open: expandedAlert === alert.key }"
           >
-            <div class="fw-alert-head">
-              <strong>{{ alert.name }}</strong>
-              <span v-if="alert.pollutant" class="fw-pollutant-tag">{{ alert.pollutant }}</span>
-              <span class="fw-alert-status">{{ alert.statusText }}</span>
+            <!-- 有派发通报的记录整行可点、展开通报正文；无通报保持纯展示 -->
+            <component
+              :is="alert.notice ? 'button' : 'div'"
+              :type="alert.notice ? 'button' : undefined"
+              class="fw-alert-body"
+              :aria-expanded="alert.notice ? expandedAlert === alert.key : undefined"
+              @click="alert.notice && toggleAlert(alert.key)"
+            >
+              <div class="fw-alert-head">
+                <strong>{{ alert.name }}</strong>
+                <span v-if="alert.pollutant" class="fw-pollutant-tag">{{ alert.pollutant }}</span>
+                <span class="fw-alert-status">{{ alert.statusText }}</span>
+                <svg
+                  v-if="alert.notice"
+                  class="fw-alert-chevron"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </div>
+              <div v-if="alert.metrics.length" class="fw-alert-metrics">
+                <span v-for="metric in alert.metrics" :key="metric.label">
+                  {{ metric.label }} <b>{{ metric.value }}</b><small> {{ metric.unit }}</small>
+                </span>
+              </div>
+              <p v-if="alert.timeText" class="fw-alert-time">{{ alert.timeText }}</p>
+            </component>
+            <div v-if="alert.notice && expandedAlert === alert.key" class="fw-alert-notice">
+              <p class="fw-alert-notice-meta">派发通报 · {{ alert.notice.time }}</p>
+              <p class="fw-alert-notice-text">{{ alert.notice.text }}</p>
             </div>
-            <div v-if="alert.metrics.length" class="fw-alert-metrics">
-              <span v-for="metric in alert.metrics" :key="metric.label">
-                {{ metric.label }} <b>{{ metric.value }}</b><small> {{ metric.unit }}</small>
-              </span>
-            </div>
-            <p v-if="alert.timeText" class="fw-alert-time">{{ alert.timeText }}</p>
           </li>
         </ul>
         <p v-else class="fw-clear">
@@ -196,23 +222,6 @@
           </li>
         </ul>
       </section>
-
-      <section class="fw-card" aria-label="任务播报">
-        <header class="fw-card-head">
-          <h2>任务播报</h2>
-          <span v-if="store.broadcast.length">{{ store.broadcast.length }} 条</span>
-        </header>
-        <ol v-if="store.broadcast.length" class="fw-feed">
-          <li v-for="(item, index) in store.broadcast" :key="`${item.time}-${item.task_name}`" :class="{ latest: index === 0 }">
-            <div class="fw-feed-head">
-              <strong>{{ item.task_name }}</strong>
-              <time>{{ shortDateTime(item.time) }}</time>
-            </div>
-            <p>{{ item.text }}</p>
-          </li>
-        </ol>
-        <p v-else class="fw-empty">暂无播报</p>
-      </section>
     </template>
 
     <footer class="fw-footer">
@@ -222,7 +231,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useBigScreenStore } from '@/stores/xuchang/bigScreen.js'
 import { initDashboardAccessToken } from '@/api/xuchang/bigScreen.js'
 import { aqiColor, aqiLevelName, formatDateTime, formatHour, windDirectionLabel } from '@/components/xuchang/bigscreen/aqiLevels.js'
@@ -234,7 +243,6 @@ import {
   levelDisplayColor,
   levelTextColor,
   pollutantLabel,
-  shortDateTime,
   tintColor
 } from './fieldWatchModel.js'
 
@@ -280,6 +288,12 @@ const alertSummary = computed(() => {
   if (activeAlertCount.value > 0) return `${activeAlertCount.value} 项进行中`
   return alerts.value.length ? `${alerts.value.length} 条记录` : ''
 })
+// 告警记录点击展开派发通报：同时只展开一条，再点同一条收起；
+// 状态只在本页存活，快照轮询刷新不收起已展开的行
+const expandedAlert = ref(null)
+const toggleAlert = key => {
+  expandedAlert.value = expandedAlert.value === key ? null : key
+}
 const counties = computed(() => buildCountyRows(store.stations.counties))
 const forecast = computed(() => buildForecastRows(store.forecast?.daily))
 
@@ -551,6 +565,59 @@ onBeforeUnmount(() => store.stopPolling())
   color: #8a8f99;
 }
 
+/* 整行点击区（有通报时渲染为 button）：占满 li、还原排版由外层控制 */
+.fw-alert-body {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid #007aff;
+    outline-offset: 2px;
+  }
+}
+
+.fw-alert-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: #a6abb4;
+  transition: transform 0.18s ease;
+}
+
+.fw-alert.open .fw-alert-chevron {
+  transform: rotate(180deg);
+}
+
+/* 展开的通报正文：确定性渲染的纯文本，保留换行 */
+.fw-alert-notice {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e5ea;
+}
+
+.fw-alert-notice-meta {
+  margin: 0 0 4px;
+  font-size: 10px;
+  color: #a6abb4;
+}
+
+.fw-alert-notice-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #4a5058;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
 .fw-clear {
   display: flex;
   align-items: center;
@@ -659,64 +726,6 @@ onBeforeUnmount(() => store.stopPolling())
 
   strong { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
   span { font-size: 10px; }
-}
-
-/* ---- 任务播报：时间线 ---- */
-.fw-feed {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-
-  li {
-    position: relative;
-    padding: 0 0 16px 16px;
-
-    &::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 5px;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #c9cdd4;
-    }
-    &::after {
-      content: '';
-      position: absolute;
-      left: 3px;
-      top: 16px;
-      bottom: 0;
-      width: 1px;
-      background: #eceef1;
-    }
-    &:last-child { padding-bottom: 2px; }
-    &:last-child::after { display: none; }
-    &.latest::before { background: #007aff; }
-  }
-}
-
-.fw-feed-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-
-  strong { font-size: 13px; font-weight: 600; }
-  time { font-size: 11px; color: #8a8f99; white-space: nowrap; }
-}
-
-.fw-feed p {
-  margin: 5px 0 0;
-  font-size: 13px;
-  line-height: 1.65;
-  color: #4a5058;
-}
-
-.fw-empty {
-  margin: 0;
-  font-size: 12px;
-  color: #8a8f99;
 }
 
 /* ---- 首屏状态与页脚 ---- */

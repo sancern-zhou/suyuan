@@ -129,6 +129,8 @@ test('告警：指标片段、起止时间与状态', () => {
   assert.equal(view.pollutant, 'PM2.5')
   assert.deepEqual(view.metrics.map(metric => metric.label), ['峰值', '偏离周边', '已持续'])
   assert.equal(view.timeText, '11-25 11:00 起 · 最近 14:00')
+  // 快照未回挂派发通报（无 dispatch 字段）时行不可展开
+  assert.equal(view.notice, null)
 
   const closed = buildAlertView({ station_id: 'xc_021', status: 'closed' })
   assert.equal(closed.active, false)
@@ -136,4 +138,25 @@ test('告警：指标片段、起止时间与状态', () => {
   assert.equal(closed.name, 'xc_021')
   assert.deepEqual(closed.metrics, [])
   assert.equal(closed.timeText, '')
+  assert.equal(closed.notice, null)
+})
+
+test('告警：派发通报随 dispatch 回挂，正文保留换行、空正文视为无通报', () => {
+  const view = buildAlertView({
+    episode_id: 'ep-1',
+    station_name: '市监测站',
+    status: 'active',
+    dispatch: {
+      time: '2026-11-25T13:05:00',
+      text: '【浓度告警】1.告警站点：市监测站\n2.污染指标：PM2.5\n3.告警情况：峰值118μg/m³'
+    }
+  })
+  assert.equal(view.notice.time, '11-25 13:05')
+  assert.ok(view.notice.text.includes('\n'))
+  assert.ok(view.notice.text.startsWith('【浓度告警】'))
+
+  // 通报正文为空（任务尚未完成或查库降级）不产出 notice，行不可点
+  assert.equal(buildAlertView({ status: 'active', dispatch: { time: '2026-11-25T13:05:00', text: '  ' } }).notice, null)
+  assert.equal(buildAlertView({ status: 'active', dispatch: {} }).notice, null)
+  assert.equal(buildAlertView({ status: 'active', dispatch: null }).notice, null)
 })

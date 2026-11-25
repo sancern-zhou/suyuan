@@ -8,7 +8,8 @@ snapshot.json，web 进程的 ``/api/xuchang-dashboard/screen-snapshot``
 （``app.tools.query.xuchang_cube_metrics.tool.cube_load``），与对话问数
 同源；预报复用 OpenMeteoAirQualityForecast72h / WeatherForecast7Day
 （与 ``app.api.xuchang_air_quality_routes`` 同表同口径）；告警读场景一
-episode_state.json；播报读定时任务结构化结果表。
+episode_state.json，每条告警按 episode_id 回挂对应任务的通报正文；播报读
+定时任务结构化结果表。
 
 地图站点层用 5 分钟数据（2026-10-27 起）：国控站读中大平台站点
 5 分钟表（XcAiDb ``dbo.dat_zhongda_station_minute``），乡镇站读
@@ -65,6 +66,11 @@ GOOD_QUALITIES = {"优", "良"}
 ALERT_WINDOW = timedelta(hours=24)
 MAX_ALERTS = 12
 MAX_TOWNSHIPS = 80
+# 告警行回挂通报正文：告警时间与任务落库时间之间的时钟余量；结果表没有按
+# episode 的查询条件，只能自新到旧扫描，行数封顶防止异常量级拖慢快照。
+DISPATCH_LOOKBACK = timedelta(minutes=5)
+DISPATCH_PAGE_SIZE = 100
+DISPATCH_MAX_PAGES = 5
 
 # ---------------------------------------------------------------- 轮播素材
 # 各类素材最多入快照的张数；扫描结果按文件修改时间倒序取最新。
@@ -143,6 +149,14 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _naive_local(value: Any) -> Optional[datetime]:
+    """带时区的 ISO 时间统一成本地 naive，与库里的 naive 时间列比较。"""
+    parsed = _parse_dt(value)
+    if parsed is not None and parsed.tzinfo is not None:
+        return parsed.astimezone().replace(tzinfo=None)
+    return parsed
 
 
 def _flat(rows: List[Dict[str, Any]], cube: str) -> List[Dict[str, Any]]:
@@ -224,6 +238,15 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         alerts = await self._guarded(
             "alerts", errors, lambda: asyncio.to_thread(self._alerts)
         )
+        dispatch = None
+        if alerts:
+            # 通报正文要查库，与告警列表分开降级：查不到时列表照常，只是不可展开
+            dispatch = await self._guarded(
+                "alert_dispatch", errors,
+                lambda: asyncio.to_thread(self._alert_dispatch, alerts),
+            )
+            for item in alerts:
+                item["dispatch"] = (dispatch or {}).get(item.get("episode_id"))
         broadcast = await self._guarded(
             "broadcast", errors, lambda: asyncio.to_thread(self._broadcast)
         )
@@ -308,6 +331,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "path": str(path),
             "bytes": path.stat().st_size,
             "alerts": len(alerts or []),
+            "alerts_with_dispatch": len(dispatch or {}),
             "stations": len((stations or {}).get("national", []))
             + len((stations or {}).get("townships", [])),
             "assets": len(assets or []),
@@ -745,16 +769,11 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         coordinates = load_station_coordinates()
         window_start = self.now_factory() - ALERT_WINDOW
 
-        def coerce_naive(value: Optional[datetime]) -> Optional[datetime]:
-            if value is not None and value.tzinfo is not None:
-                return value.astimezone().replace(tzinfo=None)
-            return value
-
         alerts: List[dict[str, Any]] = []
         for episode in iter_episodes(state):
             status = _text(episode.get("status")) or "unknown"
-            last_seen = coerce_naive(
-                _parse_dt(episode.get("last_seen_at") or episode.get("started_at"))
+            last_seen = _naive_local(
+                episode.get("last_seen_at") or episode.get("started_at")
             )
             if status != "active" and (last_seen is None or last_seen < window_start):
                 continue
@@ -812,6 +831,50 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "text": text,
             })
         return rows
+
+    def _alert_dispatch(self, alerts: List[dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """按 episode_id 取告警任务的通报正文（不截断），供点击告警展开。"""
+        from app.db.sync_bridge import run_db
+        from app.scheduled_tasks.storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+        )
+
+        pending = {
+            item.get("episode_id") for item in alerts if item.get("episode_id")
+        }
+        if not pending:
+            return {}
+        starts = [
+            moment
+            for item in alerts
+            if (moment := _naive_local(item.get("started_at"))) is not None
+        ]
+        # 与 _broadcast 同理：to_thread 线程内经同步桥专用线程池执行
+        storage = DatabaseTaskResultStorage(runner=run_db)
+        dispatch: Dict[str, Dict[str, Any]] = {}
+        for page in range(1, DISPATCH_MAX_PAGES + 1):
+            records, _total = storage.query_page(
+                started_after=min(starts) - DISPATCH_LOOKBACK if starts else None,
+                page=page,
+                page_size=DISPATCH_PAGE_SIZE,
+            )
+            for record in records:
+                text = _text(record.broadcast_message) or _text(record.conclusion)
+                if not text:
+                    continue
+                # 关联键：告警事件属性 episode_ids（随结果行 extra 原样落库）
+                attributes = (record.extra or {}).get("event_attributes") or {}
+                linked = set(attributes.get("episode_ids") or []) & pending
+                if not linked:
+                    continue
+                moment = record.completed_at or record.started_at
+                for episode_id in linked:
+                    dispatch[episode_id] = {"time": _iso(moment), "text": text}
+                    pending.discard(episode_id)
+            # 自新到旧扫描：全部命中即停，避免翻完整个窗口
+            if not pending or len(records) < DISPATCH_PAGE_SIZE:
+                break
+        return dispatch
 
     # ------------------------------------------------------------ 地图站点段
     async def _stations(self, alert_names: set[str]) -> dict[str, Any]:

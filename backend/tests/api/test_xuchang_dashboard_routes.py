@@ -79,11 +79,17 @@ def test_serves_snapshot_and_304_on_unchanged(client, tmp_path):
 
 
 def test_hot_alerts_merge_overrides_snapshot_alerts(client, tmp_path):
+    # 夹具时间相对当前时刻：closed 告警只保留 24h 窗内的，写死日期过一天就会漏
+    from datetime import datetime, timedelta
+
+    started = datetime.now() - timedelta(hours=10)
+    last_seen = datetime.now() - timedelta(hours=5)
     _write_snapshot(tmp_path, {
         "schema_version": 1,
         "alerts": [{
             "episode_id": "ep-1", "station_name": "许昌学院", "status": "active",
             "lon": 113.8611, "lat": 34.0443,
+            "dispatch": {"time": "2026-10-24T10:05:00", "text": "通报正文"},
         }],
     })
     directory = tmp_path / "xuchang_station_deviation_alerts"
@@ -91,8 +97,8 @@ def test_hot_alerts_merge_overrides_snapshot_alerts(client, tmp_path):
     (directory / "episode_state.json").write_text(json.dumps({
         "active": [{
             "episode_id": "ep-1", "station_id": "1008A", "station_name": "许昌学院",
-            "status": "closed", "started_at": "2026-10-24T10:00:00",
-            "last_seen_at": "2026-10-24T15:30:00",
+            "status": "closed", "started_at": started.isoformat(),
+            "last_seen_at": last_seen.isoformat(),
         }, {
             "episode_id": "ep-new", "station_id": "1005A", "station_name": "市一中",
             "status": "active", "started_at": "2026-10-24T15:40:00",
@@ -111,6 +117,13 @@ def test_hot_alerts_merge_overrides_snapshot_alerts(client, tmp_path):
     coords = {item["episode_id"]: item["lon"] for item in alerts}
     assert coords["ep-1"] == 113.8611
     assert coords["ep-new"] is None
+    # 通报正文由快照段查库产出，热合并不查库，同样按 episode_id 沿用；
+    # 快照里还没有的新告警要等下一次快照才有
+    dispatch = {item["episode_id"]: item.get("dispatch") for item in alerts}
+    assert dispatch == {
+        "ep-1": {"time": "2026-10-24T10:05:00", "text": "通报正文"},
+        "ep-new": None,
+    }
     # 热合并行带 hot 标记
     assert all(item["hot"] for item in alerts)
 
