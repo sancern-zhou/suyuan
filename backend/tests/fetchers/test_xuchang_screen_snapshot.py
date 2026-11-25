@@ -77,10 +77,10 @@ def _default_handlers() -> dict[str, Any]:
         "SsfbCountyHour.count": _cube_rows("SsfbCountyHour", {
             "dataTime": CUTOFF, "count": 1,
         }),
-        "SsfbCountyHour.maxAqi": _cube_rows("SsfbCountyHour", {
-            "county": "建安区", "maxAqi": 79, "avgPm25": 55,
+        # AQI/等级/首要污染物不再取上游列（旧 HJ633 口径），只取六参数浓度
+        "SsfbCountyHour.avgPm25": _cube_rows("SsfbCountyHour", {
+            "county": "建安区", "avgPm25": 55,
             "avgPm10": 96, "avgO3": 102, "avgSo2": 8, "avgNo2": 28, "avgCo": 0.6,
-            "quality": "良", "primaryPollutant": "PM2.5",
         }),
         # 168 城全国排名（累计期次）
         "Rank168CityMonthly.compositeIndexRank": _cube_rows("Rank168CityMonthly", {
@@ -122,7 +122,6 @@ def _default_handlers() -> dict[str, Any]:
         "TownHour.avgPm25": _cube_rows("TownHour", {
             "stationName": "禹州市范坡镇", "avgPm25": 60, "avgPm10": 88,
             "avgSo2": 9, "avgNo2": 29, "avgCo": 0.6, "avgO3": 98,
-            "maxAqi": 86, "quality": "良", "primaryPollutant": "PM2.5",
         }),
         "ShengkongHour.count": [],
         "OfficeFiveMinute.count": [],
@@ -354,14 +353,30 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert townships[0]["no2"] == 30
     assert townships[0]["co"] == 0.7
     hourly = snapshot["stations"]["townships_hour"]
+    # 上游 maxAqi/quality 是旧 HJ633 折点口径，AQI 由六参数按收严表重算：
+    # pm25=60 在收严表恰为 IAQI 100（旧表仅 73），断言值可区分两套折点
+    hour_aqi, hour_primary = hourly_aqi_and_primary({
+        "so2": 9, "no2": 29, "o3": 98, "co": 0.6, "pm10": 88, "pm25": 60,
+    })
     assert hourly and hourly[0]["caliber"] == "app"
     assert hourly[0]["granularity"] == "hour"
-    assert hourly[0]["pm25"] == 60 and hourly[0]["quality"] == "良"
+    assert hourly[0]["aqi"] == int(round(hour_aqi)) == 100
+    assert hourly[0]["aqi_estimated"] is True
+    assert hourly[0]["primary"] == hour_primary == "PM2.5"
+    assert hourly[0]["quality"] is None
+    assert hourly[0]["pm25"] == 60
     # 区县代表点：仅内置坐标表中的区县 + 最新小时值
     counties = snapshot["stations"]["counties"]
     assert counties and counties[0]["station_name"] == "建安区"
     assert counties[0]["type"] == "county"
-    assert counties[0]["aqi"] == 79
+    # 快报页标注数据时段用；区县小时不参与 latest_station_time（仍为乡镇 5 分钟槽位）
+    assert counties[0]["data_time"] == CUTOFF
+    county_aqi, county_primary = hourly_aqi_and_primary({
+        "so2": 8, "no2": 28, "o3": 102, "co": 0.6, "pm10": 96, "pm25": 55,
+    })
+    assert counties[0]["aqi"] == int(round(county_aqi))
+    assert counties[0]["aqi_estimated"] is True
+    assert counties[0]["primary"] == county_primary
     assert counties[0]["pm10"] == 96
     assert counties[0]["o3"] == 102
     assert counties[0]["so2"] == 8

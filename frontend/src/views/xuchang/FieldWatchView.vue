@@ -182,20 +182,38 @@
       <section v-if="counties.length" class="fw-card" aria-label="区县实况">
         <header class="fw-card-head">
           <h2>区县实况</h2>
-          <span>按 AQI 降序</span>
+          <span class="fw-county-hour">{{ countyHour ? `${countyHour} · ` : '' }}小时值</span>
         </header>
-        <ul class="fw-counties">
+
+        <div class="fw-county-metrics" role="group" aria-label="展示指标">
+          <button
+            v-for="option in COUNTY_METRICS"
+            :key="option.key"
+            type="button"
+            :class="{ on: option.key === countyMetric }"
+            :aria-pressed="option.key === countyMetric"
+            @click="countyMetric = option.key"
+          >{{ option.label }}</button>
+        </div>
+
+        <!-- 固定升序；污染物显示单位，AQI 与首要污染物说明排序依据 -->
+        <p class="fw-county-scale">{{ countyOption.unit ? `单位 ${countyOption.unit}` : '按 AQI 升序' }}</p>
+
+        <ul class="fw-counties" :class="{ 'is-text': countyMetric === 'primary' }">
           <li v-for="county in counties" :key="county.name">
             <div class="fw-county-name">
               <strong>{{ county.name }}</strong>
-              <span :style="{ color: county.textColor }">{{ county.level }}</span>
+              <span :style="{ color: county.levelColor }">{{ county.level }}</span>
             </div>
             <div class="fw-county-track">
               <i :style="{ width: `${county.widthPct}%`, background: county.color }"></i>
             </div>
-            <span class="fw-county-aqi" :style="{ color: county.textColor }">{{ county.aqiText }}</span>
+            <span class="fw-county-value" :style="{ color: county.textColor }">{{ county.valueText }}</span>
           </li>
         </ul>
+        <p class="fw-chart-note">
+          河南省空气质量实时发布系统发布的区县小时值 · 颜色分级按 HJ 633-2026<span v-if="countyMetric === 'primary'"> · 首要污染物取平台发布值，优级无</span>
+        </p>
       </section>
 
       <section v-if="forecast.length" class="fw-card" aria-label="空气质量预报">
@@ -234,12 +252,16 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useBigScreenStore } from '@/stores/xuchang/bigScreen.js'
 import { initDashboardAccessToken } from '@/api/xuchang/bigScreen.js'
-import { aqiColor, aqiLevelName, formatDateTime, formatHour, windDirectionLabel } from '@/components/xuchang/bigscreen/aqiLevels.js'
+import { aqiLevelName, formatDateTime, windDirectionLabel } from '@/components/xuchang/bigscreen/aqiLevels.js'
 import {
+  COUNTY_METRICS,
   buildAlertView,
   buildCountyRows,
   buildForecastRows,
   buildTrend,
+  dataClock,
+  dayHourLabel,
+  levelColor,
   levelDisplayColor,
   levelTextColor,
   pollutantLabel,
@@ -255,7 +277,7 @@ const fmt = (value, digits = 0) => {
 
 const statusText = computed(() => {
   if (store.error) return store.snapshot ? '刷新异常，显示上次数据' : '数据加载失败'
-  return `数据截至 ${formatHour(store.snapshot?.latest_station_time || store.snapshot?.data_cutoff_hour)}`
+  return `数据截至 ${dataClock(store.snapshot?.latest_station_time || store.snapshot?.data_cutoff_hour)}`
 })
 
 const todayLine = computed(() => {
@@ -266,7 +288,7 @@ const todayLine = computed(() => {
 
 const levelPillStyle = aqi => ({
   color: levelTextColor(aqi),
-  background: tintColor(aqiColor(aqi))
+  background: tintColor(levelColor(aqi))
 })
 
 const pollutants = computed(() => {
@@ -294,7 +316,12 @@ const expandedAlert = ref(null)
 const toggleAlert = key => {
   expandedAlert.value = expandedAlert.value === key ? null : key
 }
-const counties = computed(() => buildCountyRows(store.stations.counties))
+// 区县实况固定升序；指标只在本页存活，重新进入回到 AQI
+const countyMetric = ref('aqi')
+const countyOption = computed(() => COUNTY_METRICS.find(item => item.key === countyMetric.value) || COUNTY_METRICS[0])
+const counties = computed(() => buildCountyRows(store.stations.counties, { metric: countyOption.value.key }))
+// 快照里各区县同属最新可用小时；旧快照未带时间时不显示
+const countyHour = computed(() => dayHourLabel((store.stations.counties || []).find(item => item?.data_time)?.data_time))
 const forecast = computed(() => buildForecastRows(store.forecast?.daily))
 
 onMounted(() => {
@@ -630,6 +657,54 @@ onBeforeUnmount(() => store.stopPolling())
 }
 
 /* ---- 区县实况 ---- */
+/* 数据时段是这张卡片的关键信息，比卡片头的辅助说明更重 */
+.fw-card-head .fw-county-hour {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5058;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 手机竖屏内容宽约 300px，8 个指标放不下一行：按可用宽度自动折行（360px 宽为 4+4），
+   不用横向滚动容器；最小列宽保证「首要污染物」五个字放得下 */
+.fw-county-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(66px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+
+  button {
+    padding: 7px 0;
+    border: 1px solid #e7eaee;
+    border-radius: 8px;
+    background: #fff;
+    font-family: inherit;
+    font-size: 12px;
+    white-space: nowrap;
+    color: #4a5058;
+    cursor: pointer;
+
+    &.on {
+      border-color: #007aff;
+      background: #007aff;
+      color: #fff;
+      font-weight: 600;
+    }
+  }
+}
+
+/* 宽屏排成一行：7 个短标签均分，末列按「首要污染物」的实际宽度 */
+@media (min-width: 556px) {
+  .fw-county-metrics { grid-template-columns: repeat(7, minmax(0, 1fr)) max-content; }
+}
+
+.fw-county-scale {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: #8a8f99;
+  text-align: right;
+}
+
 .fw-counties {
   margin: 0;
   padding: 0;
@@ -637,12 +712,18 @@ onBeforeUnmount(() => store.stopPolling())
 
   li {
     display: grid;
-    grid-template-columns: 74px 1fr 34px;
+    grid-template-columns: 74px 1fr 40px;
     align-items: center;
-    column-gap: 12px;
+    column-gap: 10px;
     padding: 9px 0;
 
     & + li { border-top: 1px solid #f4f5f7; }
+  }
+
+  /* 首要污染物一列显示的是名称（如 PM2.5）：数值列加宽、字号略小 */
+  &.is-text {
+    li { grid-template-columns: 74px 1fr 52px; }
+    .fw-county-value { font-size: 14px; }
   }
 }
 
@@ -664,7 +745,7 @@ onBeforeUnmount(() => store.stopPolling())
   i { display: block; height: 100%; border-radius: 3px; }
 }
 
-.fw-county-aqi {
+.fw-county-value {
   font-size: 17px;
   font-weight: 650;
   text-align: right;

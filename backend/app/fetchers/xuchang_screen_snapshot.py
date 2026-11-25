@@ -289,9 +289,11 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "nmc_forecast", errors, lambda: asyncio.to_thread(self._nmc_forecast)
         )
 
+        # counties 层只供快报页"区县实况"（小时值）使用，不参与站点最新时间
         station_data_times = [
             _text(item.get("data_time"))
-            for layer in (stations or {}).values()
+            for name, layer in (stations or {}).items()
+            if name != "counties"
             for item in (layer or [])
             if _text(item.get("data_time"))
         ]
@@ -918,8 +920,12 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         """区县代表点：内置驻地坐标 + SsfbCountyHour 最新小时值。
 
         坐标是区县政府驻地代表点而非站点位置；考核排名看排名面板。
+        每行带 data_time（最新可用小时），供快报页"区县实况"标注数据时段——
+        该小时早于页头的站点 5 分钟时间，不标注会被读成同一时刻。
         最新小时先探测：ssfb 入库可能滞后于墙钟整点，直接锁当前小时
         会整层查空。
+        上游 maxAqi/quality/primaryPollutant 按旧 HJ633 折点（150/75）
+        计算，AQI/等级/首要污染物改由六参数按 aqi.py 收严表（120/60）重算。
         """
         now = self.now_factory()
         probe = await cube_load({
@@ -945,15 +951,11 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             return []
         rows = await cube_load({
             "measures": [
-                "SsfbCountyHour.maxAqi", "SsfbCountyHour.avgPm25",
-                "SsfbCountyHour.avgPm10", "SsfbCountyHour.avgO3",
-                "SsfbCountyHour.avgSo2", "SsfbCountyHour.avgNo2",
-                "SsfbCountyHour.avgCo",
+                "SsfbCountyHour.avgPm25", "SsfbCountyHour.avgPm10",
+                "SsfbCountyHour.avgO3", "SsfbCountyHour.avgSo2",
+                "SsfbCountyHour.avgNo2", "SsfbCountyHour.avgCo",
             ],
-            "dimensions": [
-                "SsfbCountyHour.county", "SsfbCountyHour.quality",
-                "SsfbCountyHour.primaryPollutant",
-            ],
+            "dimensions": ["SsfbCountyHour.county"],
             "timeDimensions": [{
                 "dimension": "SsfbCountyHour.dataTime",
                 "dateRange": _hour_range(latest_time),
@@ -974,20 +976,27 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             item = values.get(county)
             if item is None:
                 continue
-            stations.append({
-                "station_name": county,
-                "type": "county",
-                "lon": coord["lon"],
-                "lat": coord["lat"],
-                "aqi": _int_or_none(item.get("maxAqi")),
+            conc = {
                 "pm25": _number(item.get("avgPm25")),
                 "pm10": _number(item.get("avgPm10")),
                 "o3": _number(item.get("avgO3")),
                 "so2": _number(item.get("avgSo2")),
                 "no2": _number(item.get("avgNo2")),
                 "co": _number(item.get("avgCo")),
-                "quality": _text(item.get("quality")),
-                "primary": _text(item.get("primaryPollutant")),
+            }
+            # 上游 maxAqi/quality/primaryPollutant 是旧 HJ633 折点（150/75）口径，
+            # 快报页 AQI/等级/颜色按新标准展示，改由六参数重算（收严表）
+            est_aqi, est_primary = hourly_aqi_and_primary(conc)
+            stations.append({
+                "station_name": county,
+                "type": "county",
+                "lon": coord["lon"],
+                "lat": coord["lat"],
+                "data_time": latest_time,
+                "aqi": int(round(est_aqi)) if est_aqi is not None else None,
+                "quality": None, "primary": est_primary,
+                "aqi_estimated": est_aqi is not None,
+                **conc,
             })
         return stations
 
@@ -1169,7 +1178,12 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         return stations
 
     async def _township_hour_stations(self) -> List[dict[str, Any]]:
-        """乡镇站最新小时地图数据，固定 app 口径，供高值提醒切换和截图。"""
+        """乡镇站最新小时地图数据，固定 app 口径，供高值提醒切换和截图。
+
+        上游 TownStationData 的 maxAqi/quality/primaryPollutant 仍按旧 HJ633
+        折点（150/75）计算，AQI/等级/首要污染物改由六参数按 aqi.py
+        收严表（120/60）重算，与地图 5 分钟乡镇层同口径。
+        """
         from app.tools.xuchang.station_catalog.catalog import load_township_coordinates
         from app.tools.xuchang.station_catalog.coordinates import normalize_station_name
 
@@ -1195,9 +1209,8 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "measures": [
                 "TownHour.avgPm25", "TownHour.avgPm10", "TownHour.avgSo2",
                 "TownHour.avgNo2", "TownHour.avgCo", "TownHour.avgO3",
-                "TownHour.maxAqi",
             ],
-            "dimensions": ["TownHour.stationName", "TownHour.quality", "TownHour.primaryPollutant"],
+            "dimensions": ["TownHour.stationName"],
             "timeDimensions": [{
                 "dimension": "TownHour.dataTime", "dateRange": _hour_range(latest_time),
             }],
@@ -1211,16 +1224,23 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             coord = coordinates.get(normalize_station_name(name)) if name else None
             if not coord:
                 continue
+            conc = {
+                "so2": _clean_conc(item.get("avgSo2")),
+                "no2": _clean_conc(item.get("avgNo2")),
+                "o3": _clean_conc(item.get("avgO3")),
+                "co": _clean_conc(item.get("avgCo")),
+                "pm10": _clean_conc(item.get("avgPm10")),
+                "pm25": _clean_conc(item.get("avgPm25")),
+            }
+            est_aqi, est_primary = hourly_aqi_and_primary(conc)
             stations.append({
                 "station_name": name, "type": "township", "granularity": "hour",
                 "caliber": "app", "lon": coord["longitude"], "lat": coord["latitude"],
-                "data_time": latest_time, "aqi": _clean_aqi(item.get("maxAqi")),
-                "quality": _text(item.get("quality")), "primary": _text(item.get("primaryPollutant")),
-                "aqi_estimated": False,
-                **{key: _clean_conc(item.get(member)) for key, member in {
-                    "pm25": "avgPm25", "pm10": "avgPm10", "o3": "avgO3",
-                    "so2": "avgSo2", "no2": "avgNo2", "co": "avgCo",
-                }.items()},
+                "data_time": latest_time,
+                "aqi": int(round(est_aqi)) if est_aqi is not None else None,
+                "quality": None, "primary": est_primary,
+                "aqi_estimated": est_aqi is not None,
+                **conc,
             })
         return stations
 
