@@ -93,15 +93,14 @@ def run_db(coro: Awaitable[T]) -> T:
     """Run a database coroutine from synchronous scheduled-task code.
 
     ``ScheduledTaskService`` is called from both startup code and async
-    scheduler callbacks.  ``asyncio.run`` is valid only when no loop is
-    running, so callbacks with an active loop are dispatched to the resident
-    pool threads, where engines and connections are cached per thread.
+    scheduler callbacks.  All calls are dispatched to the resident pool
+    threads, where engines and connections are cached per thread.  Never
+    use ``asyncio.run`` here even when no loop is running: ``bridge_session``
+    binds to the thread's cached engine, whose asyncpg connections belong to
+    that thread's resident loop — running them on a fresh ``asyncio.run``
+    loop closes it and poisons every later query on the same pool thread
+    ("Future attached to a different loop").
     """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
     return _pool.submit(_run_on_pool_thread, coro).result()
 
 
