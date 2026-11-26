@@ -110,6 +110,26 @@ def render_specialized_chart(
             },
             "summary": f"报告图表已生成：{title}。",
         }
+    if chart_type == "xuchang_district_map":
+        from app.tools.visualization.create_business_chart.domain.xuchang_district_map import (
+            render_xuchang_district_map,
+        )
+
+        image_base64, metadata, warnings = render_xuchang_district_map(title, data, options, output_context)
+        visual = _cache_base64_image(image_base64, chart_id or "xuchang_district_map", title)
+        return {
+            "chart_id": visual["image_id"],
+            "title": title,
+            "visuals": [visual],
+            "layout_warnings": warnings,
+            "metadata": {
+                "requested_chart_type": "xuchang_district_map",
+                "applied_chart_type": "xuchang_district_map",
+                "output_context": output_context,
+                **metadata,
+            },
+            "summary": f"报告图表已生成：{title}。",
+        }
     raise ChartDataError(f"不支持的专用 chart_type：{chart_type}。")
 
 

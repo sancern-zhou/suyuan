@@ -78,6 +78,8 @@ single-chart specifications selected by the routing table below.
   on a continuous time axis. Do not overlay pollutants or overlap daily curves.
 - Henan province city-level AQI or pollutant map: read `henan-city-map.md` and
   use `chart_type: "henan_city_map"`.
+- Xuchang city district-level AQI or pollutant map (xuchang project only):
+  read `xuchang-district-map.md` and use `chart_type: "xuchang_district_map"`.
 - City-level choropleth for any other Chinese region (cross-province,
   national, or ring/grouped cities): read `city-boundary-map.md` and use
   `chart_type: "city_boundary_map"`.

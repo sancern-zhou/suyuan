@@ -22,6 +22,7 @@ ALL_CHART_TYPES: tuple[str, ...] = (
     "pollutant_wind_rose",
     "city_boundary_map",
     "henan_city_map",
+    "xuchang_district_map",
 )
 
 # 项目专用图型：仅允许列出的 project_id 暴露。
@@ -31,6 +32,8 @@ PROJECT_SCOPED_CHART_TYPES: dict[str, frozenset[str]] = {
     "pollutant_wind_rose": frozenset({"default"}),
     # 广东省专用月级 AQI 日历；其他地区使用通用 pollutant_calendar。
     "aqi_calendar": frozenset({"default"}),
+    # 许昌项目专用 9 区县地图；其他项目无区县边界资产，直接隐藏。
+    "xuchang_district_map": frozenset({"xuchang"}),
 }
 
 # 项目裁剪后用于替代的通用图型（键为被隐藏的 chart_type）。
@@ -80,6 +83,7 @@ def business_chart_reference_paths() -> Dict[str, str]:
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
         "pollutant_wind_rose": str(REFERENCE_DIR / "pollutant-wind-rose.md"),
         "henan_city_map": str(REFERENCE_DIR / "henan-city-map.md"),
+        "xuchang_district_map": str(REFERENCE_DIR / "xuchang-district-map.md"),
         "city_boundary_map": str(REFERENCE_DIR / "city-boundary-map.md"),
         "weather_timeseries": str(REFERENCE_DIR / "weather-timeseries.md"),
     }
@@ -118,6 +122,12 @@ class CreateBusinessChartTool(LLMTool):
         for scoped_type, hint in _SCOPED_CHART_TYPE_HINTS.items():
             if not chart_type_enabled(scoped_type):
                 description += hint
+        if chart_type_enabled("xuchang_district_map"):
+            description += (
+                "xuchang_district_map 绘制许昌市 9 区县 AQI/污染物地图（本项目专用）："
+                "6 个官方区县（魏都区/建安区/鄢陵县/襄城县/禹州市/长葛市）按边界填色，"
+                "东城区/开发区/示范区 3 个功能区无行政边界，按站点目录以站点标示。"
+            )
         function_schema = {
             "name": "create_business_chart",
             "description": description,
@@ -141,6 +151,7 @@ class CreateBusinessChartTool(LLMTool):
                             "按对应业务图型文档提供 records、日期与污染物浓度数组、风向风速与真实浓度数组等。"
                             "输入必须符合选定图型的业务口径；不接收常规图型或 charts 嵌套多图请求。"
                             "henan_city_map 使用 records[{city,value}]（或 cities+values），可选 metric 与 geojson。"
+                            "xuchang_district_map 使用 records[{district,value}]（或 districts+values），可选 metric 与 geojson。"
                             "与 file_path 同时提供时，data 用于渲染，file_path 仅用于来源追踪。"
                         ),
                     },
