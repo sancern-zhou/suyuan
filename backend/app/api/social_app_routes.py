@@ -163,11 +163,18 @@ class AppRefreshRequest(BaseModel):
     refresh_token: str = Field(..., min_length=1, max_length=8192)
 
 
-class CompanyLoginRequest(BaseModel):
-    """公司平台账号密码登录（协议同 web 前端，后端代理国密签名）。"""
+# APP 端 SM2 密文：C1(64B) + C3(32B) + C2(与明文等长)，hex 且字节成对。
+# 明文按 UTF-8 计最多 1024 字节：账号 ≤128 字符、密码 ≤256 字符的任意语言都留有余量。
+_SM2_CIPHERTEXT_HEX_PATTERN = r"^(?:[0-9a-fA-F]{2}){97,1120}$"
 
-    username: str = Field(..., min_length=1, max_length=128)
-    password: str = Field(..., min_length=1, max_length=256)
+
+class CompanyLoginRequest(BaseModel):
+    """公司平台账号密码登录（协议同 web 前端）。账号与密码由 APP 端用平台 SM2 公钥加密后传入，后端只透传密文。"""
+
+    secret_name: str = Field(
+        ..., pattern=_SM2_CIPHERTEXT_HEX_PATTERN, description="账号的 SM2 密文 hex：C1(64B 无 04 前缀) + C3(32B) + C2"
+    )
+    secret_code: str = Field(..., pattern=_SM2_CIPHERTEXT_HEX_PATTERN, description="密码的 SM2 密文 hex，格式同 secret_name")
     verify_code: str = Field(..., min_length=1, max_length=16)
     captcha_key: str = Field(..., min_length=1, max_length=128)
 
@@ -202,8 +209,8 @@ async def company_login(payload: CompanyLoginRequest, request: Request) -> AppLo
         async with httpx.AsyncClient(timeout=settings.company_password_auth_timeout_seconds) as client:
             platform_token = await login_company_user(
                 client,
-                username=payload.username,
-                password=payload.password,
+                secret_name=payload.secret_name,
+                secret_code=payload.secret_code,
                 verify_code=payload.verify_code,
                 captcha_key=payload.captcha_key,
             )

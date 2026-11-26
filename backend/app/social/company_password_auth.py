@@ -1,10 +1,11 @@
-"""公司平台账号密码登录（与 web 前端同协议：图形验证码 + 国密签名）。
+"""公司平台账号密码登录（与 web 前端同协议：图形验证码 + 国密签名头）。
 
-web 前端（frontend/src/auth/）在浏览器里直调平台 /api/auth/token/authentication；
-APP 端不重复实现国密，由后端代理同一协议。加密格式已与前端 JS 实现
-（sm-crypto / gm-crypt）双向交叉验证：
-- SM2 公钥加密：C1C3C2、无 04 前缀 hex（gmssl CryptSM2 mode=1 原生一致）
-- SM4-CBC（PKCS7）base64，key 与 iv 相同
+web 前端（frontend/src/auth/）在浏览器里直调平台 /api/auth/token/authentication：
+账号与密码先做 SM2 公钥加密，请求头带国密签名。APP 端沿用同一协议——SM2 加密在
+APP 本地完成（平台公钥编译在包内，见 android-native CompanyCrypto.kt），后端只生成
+签名头并把密文原样转发，明文公司密码不经过溯源后端。线上格式（APP 密文须逐字节一致）：
+- SM2：C1(64 字节，无 04 前缀) + C3(32 字节) + C2(与明文等长)，hex
+- SM4-CBC（PKCS7）base64，key 与 iv 相同（仅用于 Sign / encryptType 头）
 - Sign 头：sm3("{path},{timestamp_ms},{token}") 后拼
   "{digest},{timestamp},{token},{uuid}" 再整体 SM4 加密
 """
@@ -19,7 +20,6 @@ from typing import Any
 
 import httpx
 from fastapi import HTTPException
-from gmssl import sm2 as gm_sm2
 from gmssl import sm3 as gm_sm3
 from gmssl import sm4 as gm_sm4
 
@@ -38,17 +38,6 @@ def encrypt_sm4_base64(value: str) -> str:
     cipher, key = _sm4_cipher()
     cipher.set_key(key, gm_sm4.SM4_ENCRYPT)
     return base64.b64encode(cipher.crypt_cbc(key, value.encode("utf-8"))).decode("ascii")
-
-
-def encrypt_sm2_hex(value: str) -> str:
-    public_key = settings.company_sm2_public_key.strip()
-    if public_key.startswith("04"):
-        public_key = public_key[2:]
-    if len(public_key) != 128:
-        raise RuntimeError("company_sm2_public_key must be 65-byte uncompressed hex (04…)")
-    crypt = gm_sm2.CryptSM2(public_key=public_key, private_key="", mode=1)
-    encrypted = crypt.encrypt(value.encode("utf-8"))
-    return encrypted.hex()
 
 
 def build_sign(path: str, token: str = "", *, timestamp: str | None = None, nonce: str | None = None) -> str:
@@ -106,18 +95,19 @@ def _parse_access_token(body: dict[str, Any]) -> str:
 async def login_company_user(
     client: httpx.AsyncClient,
     *,
-    username: str,
-    password: str,
+    secret_name: str,
+    secret_code: str,
     verify_code: str,
     captcha_key: str,
 ) -> str:
-    """平台账号密码登录，返回平台 accessToken；拒绝时透出平台 msg。"""
+    """用 APP 端 SM2 密文调平台账号密码登录，返回平台 accessToken；拒绝时透出平台 msg。"""
     if not settings.auth_service_url.strip():
         raise HTTPException(status_code=503, detail="company_auth_not_configured")
     path = "/auth/token/authentication"
     form = {
-        "secretName": encrypt_sm2_hex(username.strip()),
-        "secretCode": encrypt_sm2_hex(password),
+        # 密文由 APP 用平台公钥加密（同 web 前端）；私钥只在平台，后端解不开也不需要，原样转发
+        "secretName": secret_name,
+        "secretCode": secret_code,
         "isEncry": True,
         "verifyCode": verify_code.strip(),
         "captchaKey": captcha_key.strip(),

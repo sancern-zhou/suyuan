@@ -329,11 +329,11 @@ class SocialAppApi(
         }
     }
 
-    /** 公司平台账号密码登录（与 web 同源；后端负责国密签名）。 */
+    /** 公司平台账号密码登录（与 web 同源）。账号密码先在本机做 SM2 公钥加密，明文不出设备；后端只透传密文。 */
     suspend fun companyLogin(username: String, password: String, verifyCode: String, captchaKey: String): LoginResult = withContext(Dispatchers.IO) {
         val body = JSONObject().apply {
-            put("username", username)
-            put("password", password)
+            put("secret_name", CompanyCrypto.encryptSm2Hex(username))
+            put("secret_code", CompanyCrypto.encryptSm2Hex(password))
             put("verify_code", verifyCode)
             put("captcha_key", captchaKey)
         }.toString().toRequestBody("application/json".toMediaType())

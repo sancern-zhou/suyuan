@@ -456,7 +456,7 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
                     }
                     if (bitmap != null) {
                         androidx.compose.foundation.Image(
-                            bitmap = androidx.compose.ui.graphics.asImageBitmap(bitmap),
+                            bitmap = bitmap.asImageBitmap(),
                             contentDescription = "验证码，点击刷新",
                             modifier = Modifier
                                 .padding(start = 12.dp)
