@@ -82,6 +82,9 @@ data class AppUiState(
     val taskTotalPages: Int = 0,
     val taskTotal: Int = 0,
     val taskFacets: org.json.JSONObject = org.json.JSONObject(),
+    // 公司统一登录（OIDC）是否可用：后端 /auth/oidc/config 的 client_id 为空即未启用，
+    // 登录页据此隐藏入口；后端注册 client 后自动出现，无需发版。
+    val companyLoginAvailable: Boolean = true,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -131,6 +134,7 @@ class AppViewModel(
         // would keep the stale value.
         repository.setSessionRefreshListener(::applyExternalRefresh)
         viewModelScope.launch { updater.checkOnLaunch() }
+        viewModelScope.launch { checkCompanyLoginAvailability() }
     }
 
     override fun onCleared() {
@@ -470,6 +474,14 @@ class AppViewModel(
         }
     }
 
+    /** 探测后端 OIDC 是否启用：client_id 为空或配置接口不可用时，登录页隐藏“公司统一登录”。 */
+    fun checkCompanyLoginAvailability() {
+        viewModelScope.launch {
+            val available = runCatching { repository.oidcConfig().clientId.isNotBlank() }.getOrDefault(false)
+            _state.value = _state.value.copy(companyLoginAvailable = available)
+        }
+    }
+
     fun startCompanyLogin(context: Context) {
         if (_state.value.loading) return
         viewModelScope.launch {
@@ -539,7 +551,10 @@ class AppViewModel(
                 .onSuccess { result -> applyLoginResult(result) }
                 .onFailure {
                     store.clear()
-                    _state.value = AppUiState(error = if (showError) "登录已过期，请重新登录" else null)
+                    _state.value = AppUiState(
+                        error = if (showError) "登录已过期，请重新登录" else null,
+                        companyLoginAvailable = _state.value.companyLoginAvailable,
+                    )
                 }
         }
     }
@@ -1110,7 +1125,7 @@ class AppViewModel(
         registeredPushCid = null
         streamJob?.cancel(); streamJob = null
         store.clear()
-        _state.value = AppUiState(error = message)
+        _state.value = AppUiState(error = message, companyLoginAvailable = current.companyLoginAvailable)
     }
 
     fun refreshBroadcasts(reset: Boolean = true) {

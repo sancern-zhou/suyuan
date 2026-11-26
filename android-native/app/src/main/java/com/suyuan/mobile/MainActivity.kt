@@ -405,12 +405,16 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
             if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
             else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
-        TextButton(
-            onClick = { viewModel.startCompanyLogin(context) },
-            enabled = !state.loading,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        ) {
-            Text("公司统一登录", color = SuyuanColors.primary, fontSize = 15.sp)
+        // 登录页每次出现都重探一次公司登录可用性（后端注册 client 后入口自动出现）。
+        LaunchedEffect(Unit) { viewModel.checkCompanyLoginAvailability() }
+        if (state.companyLoginAvailable) {
+            TextButton(
+                onClick = { viewModel.startCompanyLogin(context) },
+                enabled = !state.loading,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                Text("公司统一登录", color = SuyuanColors.primary, fontSize = 15.sp)
+            }
         }
         state.error?.let { Text(it, color = SuyuanColors.error, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp)) }
     }
@@ -595,6 +599,8 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             AppTopBar(
             currentTab = currentTab,
             showHistory = showHistory,
+            accountName = state.displayName.ifBlank { state.accountId },
+            onLogout = { viewModel.logout() },
             onHistory = { showHistory = true },
             onBack = { showHistory = false },
             onNew = { showHistory = false; viewModel.newConversation() },
@@ -903,6 +909,8 @@ private fun VoiceRecordingOverlay(offsetX: Float, offsetY: Float, cancelArmed: B
 private fun AppTopBar(
     currentTab: String,
     showHistory: Boolean,
+    accountName: String,
+    onLogout: () -> Unit,
     onHistory: () -> Unit,
     onBack: () -> Unit,
     onNew: () -> Unit,
@@ -915,6 +923,8 @@ private fun AppTopBar(
         currentTab == "tasks" -> "任务中心"
         else -> null
     }
+    // 任务中心 tab 的右上角提供账号入口（头像图标 → 弹层展示当前账号 + 退出）。
+    var showLogoutConfirm by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().padding(horizontal = 18.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -937,7 +947,32 @@ private fun AppTopBar(
             currentTab == "chat" -> IconButton(onClick = onNew) {
                 Icon(painterResource(R.drawable.ic_new_chat), contentDescription = "新建对话", tint = SuyuanColors.text, modifier = Modifier.size(28.dp))
             }
+            currentTab == "tasks" -> IconButton(onClick = { showLogoutConfirm = true }) {
+                Icon(painterResource(R.drawable.ic_account), contentDescription = "账号与退出", tint = SuyuanColors.text, modifier = Modifier.size(26.dp))
+            }
         }
+    }
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = { Text("退出当前账号", fontWeight = FontWeight.SemiBold) },
+            text = {
+                Column {
+                    Text("当前账号：${accountName.ifBlank { "未知" }}", color = SuyuanColors.text, fontSize = 14.sp)
+                    Text("退出后将清除本机的登录状态，需要重新登录。", color = SuyuanColors.secondaryText, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLogoutConfirm = false; onLogout() }) {
+                    Text("退出当前账号", color = SuyuanColors.error, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("取消", color = SuyuanColors.secondaryText)
+                }
+            },
+        )
     }
 }
 

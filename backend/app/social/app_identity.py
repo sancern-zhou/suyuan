@@ -86,49 +86,45 @@ def _sign(payload: dict[str, Any]) -> str:
     return f"{encoded}.{signature}"
 
 
-def issue_access_token_for_identity(identity: AppIdentity) -> str:
-    expires_at = int(time.time()) + settings.app_access_token_ttl_seconds
-    return _sign({
+def _token_claims(identity: AppIdentity, *, typ: str, exp: int, now: int) -> dict[str, Any]:
+    claims: dict[str, Any] = {
         "sub": identity.account_id,
         "name": identity.display_name,
         "username": identity.username or identity.account_id,
         "social_user_id": identity.social_user_id,
         "sys_code": identity.sys_code,
         "source": identity.auth_source,
-        "exp": expires_at,
-        "iat": int(time.time()),
-        "typ": "access",
-    })
+        "exp": exp,
+        "iat": now,
+        "typ": typ,
+    }
+    if identity.role_codes:
+        claims["roles"] = list(identity.role_codes)
+    if typ == "refresh":
+        claims["jti"] = secrets.token_urlsafe(18)
+    return claims
+
+
+def issue_access_token_for_identity(identity: AppIdentity) -> str:
+    expires_at = int(time.time()) + settings.app_access_token_ttl_seconds
+    return _sign(_token_claims(identity, typ="access", exp=expires_at, now=int(time.time())))
 
 
 def issue_token_pair(identity: AppIdentity) -> tuple[str, str, int, int]:
     now = int(time.time())
     access_expires_at = now + settings.app_access_token_ttl_seconds
     refresh_expires_at = now + settings.app_refresh_token_ttl_seconds
-    access = _sign({
-        "sub": identity.account_id,
-        "name": identity.display_name,
-        "username": identity.username or identity.account_id,
-        "social_user_id": identity.social_user_id,
-        "sys_code": identity.sys_code,
-        "source": identity.auth_source,
-        "exp": access_expires_at,
-        "iat": now,
-        "typ": "access",
-    })
-    refresh = _sign({
-        "sub": identity.account_id,
-        "name": identity.display_name,
-        "username": identity.username or identity.account_id,
-        "social_user_id": identity.social_user_id,
-        "sys_code": identity.sys_code,
-        "source": identity.auth_source,
-        "exp": refresh_expires_at,
-        "iat": now,
-        "jti": secrets.token_urlsafe(18),
-        "typ": "refresh",
-    })
+    access = _sign(_token_claims(identity, typ="access", exp=access_expires_at, now=now))
+    refresh = _sign(_token_claims(identity, typ="refresh", exp=refresh_expires_at, now=now))
     return access, refresh, access_expires_at, refresh_expires_at
+
+
+def _role_codes_from_payload(payload: dict[str, Any]) -> tuple[str, ...]:
+    raw = payload.get("roles")
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    codes = tuple(str(code).strip() for code in raw if str(code or "").strip())
+    return tuple(dict.fromkeys(codes))
 
 
 def resolve_refresh_token(token: str) -> AppIdentity:
@@ -152,6 +148,7 @@ def resolve_refresh_token(token: str) -> AppIdentity:
         auth_source=source,
         username=str(payload.get("username") or account_id),
         sys_code=str(payload.get("sys_code") or ("SUYUAN_APP" if source != "company" else settings.auth_sys_code)),
+        role_codes=_role_codes_from_payload(payload) if source == "company" else (),
     )
 
 
@@ -196,6 +193,7 @@ def resolve_access_token(token: str) -> AppIdentity:
             auth_source="company",
             username=str(payload.get("username") or account_id),
             sys_code=str(payload.get("sys_code") or settings.auth_sys_code),
+            role_codes=_role_codes_from_payload(payload),
         )
     if expires_at <= int(time.time()):
         raise HTTPException(status_code=401, detail="app_token_expired")
