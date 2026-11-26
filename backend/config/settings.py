@@ -388,6 +388,23 @@ class Settings(BaseSettings):
         default="",
         description="Local business endpoint equivalent to api/jwt/oauth/authenticationMore",
     )
+    # 公司平台账号密码登录（APP 端后端代理，协议同 web 前端 frontend/src/auth/）
+    app_company_password_login_enabled: bool = Field(
+        default=True,
+        description="Expose /api/social/app/auth/company/* password login proxy endpoints",
+    )
+    company_password_auth_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+    company_sm2_public_key: str = Field(
+        default=(
+            "046644e1cb17328239b1cd1926758ab2dc69f9fbf896dab65e693a107fb48e9799"
+            "a0814d45f3ce051b5823aa9a4bee8677efab57ff145c9caa9d2160ea31bc0fb8"
+        ),
+        description="Company platform SM2 public key (65-byte uncompressed hex, as embedded in web frontend)",
+    )
+    company_sm4_secret_key: str = Field(
+        default="GJwsXX_BzW=gJWJW",
+        description="Company platform SM4-CBC key/iv (16 bytes, as embedded in web frontend)",
+    )
 
     # Gateway routing and trust boundary
     gateway_api_prefix: str = Field(default="/api/suyuan")

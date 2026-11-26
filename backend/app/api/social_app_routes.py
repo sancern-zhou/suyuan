@@ -163,6 +163,72 @@ class AppRefreshRequest(BaseModel):
     refresh_token: str = Field(..., min_length=1, max_length=8192)
 
 
+class CompanyLoginRequest(BaseModel):
+    """公司平台账号密码登录（协议同 web 前端，后端代理国密签名）。"""
+
+    username: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=1, max_length=256)
+    verify_code: str = Field(..., min_length=1, max_length=16)
+    captcha_key: str = Field(..., min_length=1, max_length=128)
+
+
+@router.get("/auth/company/captcha")
+async def company_captcha(previous_key: str = Query(default="", max_length=128)) -> dict:
+    """代理平台图形验证码：返回 {captcha_key, image_base64, content_type}。"""
+    if not settings.app_company_password_login_enabled:
+        raise HTTPException(status_code=503, detail="company_password_login_disabled")
+    import httpx
+
+    from app.social.company_password_auth import fetch_company_captcha
+    try:
+        async with httpx.AsyncClient(timeout=settings.company_password_auth_timeout_seconds) as client:
+            return await fetch_company_captcha(client, previous_key=previous_key.strip())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("app_company_captcha_unavailable", error=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="company_captcha_unavailable") from exc
+
+
+@router.post("/auth/company/login", response_model=AppLoginResponse)
+async def company_login(payload: CompanyLoginRequest, request: Request) -> AppLoginResponse:
+    """平台账号密码换取 APP token 对；身份经 PlatformAuthClient 解析（与 web 同链路）。"""
+    if not settings.app_company_password_login_enabled:
+        raise HTTPException(status_code=503, detail="company_password_login_disabled")
+    import httpx
+
+    from app.social.company_password_auth import app_identity_from_current_user, login_company_user
+    try:
+        async with httpx.AsyncClient(timeout=settings.company_password_auth_timeout_seconds) as client:
+            platform_token = await login_company_user(
+                client,
+                username=payload.username,
+                password=payload.password,
+                verify_code=payload.verify_code,
+                captcha_key=payload.captcha_key,
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("app_company_login_unavailable", error=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="company_login_unavailable") from exc
+    auth_service = request.app.state.auth_service
+    if auth_service is None:
+        raise HTTPException(status_code=503, detail="company_auth_not_configured")
+    user = await auth_service.authenticate(platform_token, settings.auth_sys_code)
+    identity = AppIdentity(**app_identity_from_current_user(user))
+    access_token, refresh_token, expires_at, refresh_expires_at = issue_token_pair(identity)
+    return AppLoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_at=expires_at,
+        refresh_expires_at=refresh_expires_at,
+        account_id=identity.account_id,
+        display_name=identity.display_name,
+        social_user_id=identity.social_user_id,
+    )
+
+
 class AppPushDeviceRequest(BaseModel):
     provider: str = Field(default="getui", min_length=1, max_length=32)
     device_id: str = Field(..., min_length=8, max_length=256)

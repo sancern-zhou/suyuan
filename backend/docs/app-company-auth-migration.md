@@ -74,9 +74,17 @@ APP                                     后端                          公司�
 
 以下均已实现，待构建发版（`build-release.ps1`）：
 
-- **OIDC 登录**：`AppViewModel.startCompanyLogin`（PKCE S256 + state）+ `handleCompanyOAuthCallback`（回调校验 + `/auth/oidc/exchange`），manifest 已注册 `com.suyuan.mobile://oauth/callback`。
-- **入口自适应**：登录页按 `/auth/oidc/config` 的 `client_id` 是否非空显示/隐藏「公司统一登录」，每次登录页出现时重探——后端注册 client 后无需发版即出现。
-- **刷新策略**：OkHttp authenticator 收到 401 自动用 refresh token 换发（`tokenRefreshMutex` 防并发），换发失败清库回登录页；access 7d + refresh 1y 与服务端一致。
+- **公司账号密码登录（主路径，与 web 同源）**：登录页双 tab「公司账号 | 访问密钥」，公司账号 tab 为账号+密码+图形验证码；验证码图片经后端代理（`GET /api/social/app/auth/company/captcha` → {captcha_key, image_base64}），登录走 `POST /api/social/app/auth/company/login`。后端不可用时自动回落静态 tab。
+- **OIDC 登录**（备用路径，后端注册 client_id 前不可见）：`startCompanyLogin`（PKCE S256）+ `handleCompanyOAuthCallback`，manifest 已注册 `com.suyuan.mobile://oauth/callback`。
+- **刷新策略**：OkHttp authenticator 401 自动用 refresh token 换发；access 7d + refresh 1y。
+
+## 五A、后端公司密码登录代理（2026-11-26 上线）
+
+- 模块 `app/social/company_password_auth.py`：SM2（C1C3C2 无 04 前缀 hex）/SM4-CBC（PKCS7，key=iv）/SM3 国密实现，协议与 web 前端（frontend/src/auth/）完全一致；**已与 node sm-crypto/gm-crypt 双向交叉验证**（Python 加密→JS 解密、JS 加密→Python 解密、SM3/SM4 向量比对全过）。
+- 链路：APP 明文凭据+验证码 → 后端国密签名调平台 `/api/auth/token/authentication`（本机 5180 platform-web 容器，`AUTH_SERVICE_URL`）→ 平台 accessToken → 复用 `AuthService.authenticate`/PlatformAuthClient 解析 CurrentUser（web 同链路）→ 签发 `company:{userId}` APP token 对（角色码进 token，刷新链保留）。
+- 部署实测：验证码代理返回真实 PNG；假凭据试探得到平台业务级拒绝「验证码错误」——签名/加密格式已被平台接受。
+- 配置：`APP_COMPANY_PASSWORD_LOGIN_ENABLED`（默认开）、`COMPANY_SM2_PUBLIC_KEY`/`COMPANY_SM4_SECRET_KEY`（默认取 web 前端内置值）、`COMPANY_PASSWORD_AUTH_TIMEOUT_SECONDS`；`AUTH_SERVICE_URL`/`AUTH_PLATFORM_SYS_CODE` 复用现有配置。依赖 `gmssl>=3.2.2`（已入 requirements.txt 并 pip 安装）。
+- 用户自动关联与 OIDC 路径相同（identity_matching 归一 `company:{userId}` ⇄ 裸 userId），**web 改密码后 APP 用新密码登录即生效**。
 
 ## 六、相关测试
 
