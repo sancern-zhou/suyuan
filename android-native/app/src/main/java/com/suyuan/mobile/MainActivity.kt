@@ -369,14 +369,11 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
     var companyUser by remember { mutableStateOf("") }
     var companyPassword by remember { mutableStateOf("") }
     var verifyCode by remember { mutableStateOf("") }
-    // 登录方式：公司账号（与 web 同源，默认）/ 访问密钥（静态账号兜底）
-    var formMode by remember { mutableStateOf("company") }
-    // 后端未启用公司密码登录（探测失败）时回落到静态表单
+    // 公司账号登录（与 web 同源）是主入口；访问密钥是备用入口：后端未开放公司登录时自动回落，也可手动切换
+    var useAccessKey by remember { mutableStateOf(false) }
+    // 后端未开放公司账号登录（探测失败）时回落到访问密钥
     LaunchedEffect(state.companyLoginAvailable) {
-        if (!state.companyLoginAvailable) formMode = "static"
-    }
-    LaunchedEffect(formMode) {
-        if (formMode == "company" && state.companyCaptcha == null) viewModel.refreshCompanyCaptcha(silent = true)
+        if (!state.companyLoginAvailable) useAccessKey = true
     }
     Column(
         Modifier.fillMaxSize().background(SuyuanColors.background).padding(horizontal = 28.dp),
@@ -391,33 +388,13 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
         )
         Text("许昌环境Agent", color = SuyuanColors.text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
         Text("连接你的专属智能助手", color = SuyuanColors.secondaryText, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
-        if (state.companyLoginAvailable) {
-            Row(
-                Modifier.fillMaxWidth().background(Color(0xFFEDEEF1), RoundedCornerShape(10.dp)).padding(2.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                listOf("company" to "公司账号", "static" to "访问密钥").forEach { (key, label) ->
-                    val active = formMode == key
-                    Surface(
-                        color = if (active) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp),
-                        shadowElevation = if (active) 1.dp else 0.dp,
-                        modifier = Modifier.weight(1f).clickable { formMode = key; verifyCode = "" },
-                    ) {
-                        Text(
-                            label,
-                            color = if (active) SuyuanColors.text else SuyuanColors.secondaryText,
-                            fontSize = 13.sp,
-                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
-                        )
-                    }
-                }
-            }
-        }
         Spacer(Modifier.height(14.dp))
-        if (formMode == "company" && state.companyLoginAvailable) {
+        if (!useAccessKey) {
+            Text(
+                "使用公司平台账号登录，与 Web 端是同一套账号密码",
+                color = SuyuanColors.secondaryText, fontSize = 13.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
             OutlinedTextField(
                 companyUser, { companyUser = it }, Modifier.fillMaxWidth(), label = { Text("账号") },
                 singleLine = true, shape = RoundedCornerShape(12.dp),
@@ -510,10 +487,33 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
         }
         // 登录页每次出现都重探一次公司登录可用性（后端注册 client 后入口自动出现）。
         LaunchedEffect(Unit) {
-            viewModel.checkCompanyLoginAvailability()
+            viewModel.checkCompanyOidcAvailability()
             viewModel.refreshCompanyCaptcha(silent = true)
         }
-        if (state.companyLoginAvailable) {
+        // 主入口与备用入口之间切换；公司账号登录不可用时不提供切回
+        if (useAccessKey) {
+            if (state.companyLoginAvailable) {
+                TextButton(
+                    onClick = {
+                        useAccessKey = false
+                        if (state.companyCaptcha == null) viewModel.refreshCompanyCaptcha(silent = true)
+                    },
+                    enabled = !state.loading,
+                    modifier = Modifier.padding(top = 8.dp),
+                ) {
+                    Text("使用公司账号登录", color = SuyuanColors.primary, fontSize = 14.sp)
+                }
+            }
+        } else {
+            TextButton(
+                onClick = { useAccessKey = true },
+                enabled = !state.loading,
+                modifier = Modifier.padding(top = 8.dp),
+            ) {
+                Text("使用访问密钥登录", color = SuyuanColors.secondaryText, fontSize = 14.sp)
+            }
+        }
+        if (state.companyOidcAvailable) {
             TextButton(
                 onClick = { viewModel.startCompanyLogin(context) },
                 enabled = !state.loading,

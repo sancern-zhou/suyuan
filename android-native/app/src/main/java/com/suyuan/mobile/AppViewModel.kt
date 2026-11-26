@@ -82,11 +82,14 @@ data class AppUiState(
     val taskTotalPages: Int = 0,
     val taskTotal: Int = 0,
     val taskFacets: org.json.JSONObject = org.json.JSONObject(),
-    // 公司统一登录（OIDC）是否可用：后端 /auth/oidc/config 的 client_id 为空即未启用，
-    // 登录页据此隐藏入口；后端注册 client 后自动出现，无需发版。
+    // 公司账号密码登录（与 web 同源，登录页主入口）是否可用：后端验证码代理成功即 true、失败即 false，
+    // 登录页据此回落到访问密钥表单。
     val companyLoginAvailable: Boolean = true,
-    // 公司账号密码登录（与 web 同源）的验证码；null 表示尚未加载或后端未启用。
+    // 公司账号密码登录的验证码；null 表示尚未加载或加载失败。
     val companyCaptcha: CompanyCaptcha? = null,
+    // 公司统一登录（OIDC 跳转平台授权页）是否可用：后端 /auth/oidc/config 的 client_id 为空即未启用，
+    // 登录页据此隐藏入口；后端注册 client 后自动出现，无需发版。
+    val companyOidcAvailable: Boolean = false,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -136,7 +139,7 @@ class AppViewModel(
         // would keep the stale value.
         repository.setSessionRefreshListener(::applyExternalRefresh)
         viewModelScope.launch { updater.checkOnLaunch() }
-        viewModelScope.launch { checkCompanyLoginAvailability() }
+        viewModelScope.launch { checkCompanyOidcAvailability() }
         viewModelScope.launch { refreshCompanyCaptcha(silent = true) }
     }
 
@@ -515,10 +518,10 @@ class AppViewModel(
     }
 
     /** 探测后端 OIDC 是否启用：client_id 为空或配置接口不可用时，登录页隐藏“公司统一登录”。 */
-    fun checkCompanyLoginAvailability() {
+    fun checkCompanyOidcAvailability() {
         viewModelScope.launch {
             val available = runCatching { repository.oidcConfig().clientId.isNotBlank() }.getOrDefault(false)
-            _state.value = _state.value.copy(companyLoginAvailable = available)
+            _state.value = _state.value.copy(companyOidcAvailable = available)
         }
     }
 
@@ -594,6 +597,7 @@ class AppViewModel(
                     _state.value = AppUiState(
                         error = if (showError) "登录已过期，请重新登录" else null,
                         companyLoginAvailable = _state.value.companyLoginAvailable,
+                        companyOidcAvailable = _state.value.companyOidcAvailable,
                     )
                 }
         }
@@ -1165,7 +1169,11 @@ class AppViewModel(
         registeredPushCid = null
         streamJob?.cancel(); streamJob = null
         store.clear()
-        _state.value = AppUiState(error = message, companyLoginAvailable = current.companyLoginAvailable)
+        _state.value = AppUiState(
+            error = message,
+            companyLoginAvailable = current.companyLoginAvailable,
+            companyOidcAvailable = current.companyOidcAvailable,
+        )
     }
 
     fun refreshBroadcasts(reset: Boolean = true) {
