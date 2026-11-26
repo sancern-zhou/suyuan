@@ -87,8 +87,8 @@ data class AppUiState(
     val companyLoginAvailable: Boolean = true,
     // 公司账号密码登录的验证码；null 表示尚未加载或加载失败。
     val companyCaptcha: CompanyCaptcha? = null,
-    // 公司统一登录（OIDC 跳转平台授权页）是否可用：后端 /auth/oidc/config 的 client_id 为空即未启用，
-    // 登录页据此隐藏入口；后端注册 client 后自动出现，无需发版。
+    // 平台授权页登录（OIDC 跳转平台授权页，账号密码表单不可用时的公司登录入口）是否可用：
+    // 后端 /auth/oidc/config 的 client_id 为空即未启用；后端注册 client 后自动出现，无需发版。
     val companyOidcAvailable: Boolean = false,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
@@ -517,7 +517,7 @@ class AppViewModel(
         }
     }
 
-    /** 探测后端 OIDC 是否启用：client_id 为空或配置接口不可用时，登录页隐藏“公司统一登录”。 */
+    /** 探测后端 OIDC 是否启用：client_id 为空或配置接口不可用时，登录页不提供平台授权页登录。 */
     fun checkCompanyOidcAvailability() {
         viewModelScope.launch {
             val available = runCatching { repository.oidcConfig().clientId.isNotBlank() }.getOrDefault(false)
