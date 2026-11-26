@@ -31,6 +31,16 @@ def test_xuchang_query_prompt_combines_query_and_chart_workflows():
     assert "网页交互查看的 ECharts 图表" in prompt
 
 
+def test_xuchang_query_prompt_defaults_to_actual_state_data():
+    prompt = load_project_mode_prompt("query", load_project_context("xuchang"))
+
+    assert prompt is not None
+    assert "默认只查询并回答实况数据" in prompt
+    assert "仅在用户明确要求标况或实况/标况对比时才查询标况" in prompt
+    assert "状态口径与原始/审核、实时/定版、考核口径不是同一维度" in prompt
+    assert "数据源未说明差异原因时不得自行解释" in prompt
+
+
 def test_xuchang_report_prompt_uses_dynamic_workflow_contract():
     context = load_project_context("xuchang")
     prompt = load_project_mode_prompt("report", context)

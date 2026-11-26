@@ -105,9 +105,10 @@ SITE_EXCLUDED_TYPES = {"GK"}
 SITE_REQUEST_CHUNK_SIZE = 80
 MYSQL_EXECUTEMANY_CHUNK = 200
 
-# ---- 采集窗口策略（三波采样，窗口按波次收窄）----
-# 首波回看 6 小时，覆盖平台按小时发布（约整点后 15-20 分钟）与几分钟级
-# 迟到；次波/三波回看 2 小时，覆盖迟到发布与平台 :27-:28 批量修正。
+# ---- 采集窗口策略（城市四波/站点区县三波采样，窗口按波次收窄）----
+# 首波回看 6 小时，覆盖平台按小时发布（约整点后 8-13 分钟）与几分钟级
+# 迟到；其余波回看 2 小时，覆盖迟到发布与平台 :27-:28 批量修正
+# （:30 波专门及时回吃该修正，:55 波兜底零星修正）。
 FIRST_WAVE_LOOKBACK_HOURS = 6
 RETRY_WAVE_LOOKBACK_HOURS = 2
 # 每日 00:xx 首波做一次全量对账，城市/站点回看 3 天（平台保留约 8 天，
@@ -127,7 +128,9 @@ DAY_FETCH_HOURS = frozenset({7, 10, 13, 16, 19, 22})
 
 # 三波分钟必须与 ``schedule`` 一致（窗口判定依赖当前分钟属于哪一波），
 # 由 wave_schedule() 从同一元组生成，避免两处漂移。
-CITY_WAVE_MINUTES = (14, 20, 55)
+# 城市 :30 波专为及时回吃平台 :27-:28 批量修正（transport 禁用中，若复启用
+# 需重排其 26,31,40,50 波次避免 Crawler MySQL 并发冲突）。
+CITY_WAVE_MINUTES = (14, 20, 30, 55)
 SITE_WAVE_MINUTES = (16, 22, 57)
 COUNTY_WAVE_MINUTES = (18, 24, 59)
 

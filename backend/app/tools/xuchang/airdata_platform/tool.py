@@ -137,6 +137,13 @@ DATA_SOURCE_NOTE = (
     "报表统计）。①②为第一优先级；本工具只查中台独有口径与①②未落库时段。"
 )
 
+# 状态口径默认实况，与原始/审核等其他维度独立
+STATE_CALIBER_NOTE = (
+    "【状态口径】用户未明确要求标况（标准状态/参比状态）时，仅查询并返回实况数据，不得并列返回两种口径；"
+    "仅用户明确要求标况或实况/标况对比时才查标况并分别标注。状态口径与原始/审核、实时/定版、考核口径不得混同；"
+    "数据源未说明差异原因时不得自行解释。"
+)
+
 # 官方口径唯一，不做跨源交叉比对
 OFFICIAL_CALIBER_NOTE = (
     "【官方口径】中台返回即官方口径、唯一权威来源：勿引入外部源（榜单/模式/三方接口）交叉比对，"
@@ -380,6 +387,7 @@ class QueryAirDataPlatformTool(LLMTool):
                 f"空气质量数据接口：{data_hint}。"
                 f"{DATA_SOURCE_NOTE}"
                 f"{VIEW_TIME_RANGES_NOTE}"
+                f"{STATE_CALIBER_NOTE}"
                 f"{OFFICIAL_CALIBER_NOTE}"
                 f"{CITY_NEW_STANDARD_NOTE}"
                 f"{AGGREGATION_RULE_NOTE}"
@@ -589,6 +597,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 f"{table_hint}。"
                 "reportTimeType 决定粒度：4 月报、5 季度报、6 半年报、7 年报、8 任意时间段。"
                 f"{DATA_SOURCE_NOTE}"
+                f"{STATE_CALIBER_NOTE}"
                 f"{OFFICIAL_CALIBER_NOTE}"
                 "【统计口径硬规则】本接口是许昌月度及以上统计的唯一来源（中大平台与长历史采集库均为明细通道）："
                 "月均/季/半年/年、达标率、重污染天、月度同比等一律调本接口并按 report_time_type 定粒度，"

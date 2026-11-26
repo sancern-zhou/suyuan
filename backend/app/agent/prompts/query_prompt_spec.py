@@ -67,6 +67,24 @@ def test_query_sub_mode_prompts_forbid_manual_aggregation_of_monitoring_data():
         assert "禁止对空气监测数据做手动聚合计算" in prompt
 
 
+def test_query_sub_mode_prompts_default_to_actual_state_data():
+    from app.agent.prompts.query_data_prompt import (
+        build_query_monitoring_city_prompt,
+        build_query_monitoring_prompt,
+        build_query_monitoring_station_prompt,
+    )
+
+    for prompt in (
+        build_query_monitoring_prompt([]),
+        build_query_monitoring_station_prompt([]),
+        build_query_monitoring_city_prompt([]),
+    ):
+        assert "默认只查询并回答实况数据" in prompt
+        assert "仅在用户明确要求标况或实况/标况对比时才查询标况" in prompt
+        assert "状态口径与原始/审核、实时/定版、考核口径不是同一维度" in prompt
+        assert "数据源未说明差异原因时不得自行解释" in prompt
+
+
 def test_jiangxi_query_system_prompt_uses_exact_project_override(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "jiangxi")
 

@@ -76,9 +76,9 @@ def test_normalize_province_month_rows_empty_when_not_published():
 def test_build_rank168_section():
     records = [
         {"City": "许昌市", "PeriodType": "monthly", "DataMonth": "2026-09-01",
-         "CompositeIndexRank": 120, "Pm25Rank": 130, "Pm25": 40.0, "CompositeIndex": 4.1},
+         "CompositeIndexRankDesc": 120, "Pm25RankDesc": 130, "Pm25": 40.0, "CompositeIndex": 4.1},
         {"City": "郑州市", "PeriodType": "monthly", "DataMonth": "2026-09-01",
-         "CompositeIndexRank": 110, "Pm25Rank": 120, "Pm25": 38.0, "CompositeIndex": 4.0},
+         "CompositeIndexRankDesc": 110, "Pm25RankDesc": 120, "Pm25": 38.0, "CompositeIndex": 4.0},
     ]
     section = build_rank168_section(records, "2026-10")
     # 目标月未发布 → 引用最新可得月份并标注

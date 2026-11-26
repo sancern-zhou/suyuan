@@ -101,6 +101,51 @@ SOUND_DB_TABLE_PREFIXES = [
     "alm_",
 ]
 
+# 跨库改道指引：前缀放行（含 dat_）会让别库同前缀表名通过白名单，随后必然 UndefinedTableError；在错误信息中直接给出归属工具（错误信息即召回钩子），避免模型在本工具内反复试错（2026-11-26 国控站 5 分钟查询踩坑）。
+_CROSS_BACKEND_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("dat_zhongda_",),
+        ("该表属于中大平台监测库（XcAiDb/SQL Server），不在本工具（PostgreSQL）——请改用 "
+         "execute_sql_query 查询：dat_zhongda_station_minute=国控站5分钟、"
+         "dat_zhongda_station_hour=国控站小时、dat_zhongda_city_hour=城市小时；"
+         "过滤列 station_code 用中大站码 1003A 系，不要用国控唯一编码 4110*。"),
+    ),
+    (
+        ("dat_", "city_168_", "province_statistics_"),
+        ("该表属于监测 SQL Server 库（XcAiDb），不在本工具（PostgreSQL）——请改用 "
+         "execute_sql_query 查询。"),
+    ),
+    (
+        (
+            "stationhour", "stationday", "cityhour", "cityday", "townstation",
+            "town_five", "officestation", "ssfb", "shengkong", "countymonth",
+            "provincemonth", "rank168", "xuchangcityyear", "xuchangcountyyear",
+            "henancityyear",
+        ),
+        ("该表疑似采集长历史库（DataCrawler/MySQL）的表，不在本工具（PostgreSQL）——请改用 "
+         "execute_crawler_sql_query 查询（长历史/同比）；国控站日值走 query_airdata_platform。"),
+    ),
+)
+
+
+def _cross_backend_table_hint(table_name: str) -> str:
+    lowered = str(table_name or "").strip().lower()
+    if not lowered:
+        return ""
+    for prefixes, hint in _CROSS_BACKEND_HINT_RULES:
+        if lowered.startswith(prefixes):
+            return hint
+    return ""
+
+
+def _cross_backend_hints_for_tables(table_names) -> str:
+    hints: list[str] = []
+    for name in table_names or []:
+        hint = _cross_backend_table_hint(str(name))
+        if hint and hint not in hints:
+            hints.append(hint)
+    return (" " + " ".join(hints)) if hints else ""
+
 SOUND_DB_SQL_TABLES = [
     "NoiseRecount",
     "NoiseRecountReportTemplate",
@@ -314,6 +359,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                 "summary": (
                     f"表 '{lookup}' 不在白名单中（库 {target_db}）。"
                     "可传 describe_table='tables' 查看表清单，或传表名前缀做模糊匹配。"
+                    + (lambda _h: f" {_h}" if _h else "")(_cross_backend_table_hint(lookup))
                 ),
             }
 
@@ -341,13 +387,22 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                 database=target_db,
                 error=str(exc),
             )
-            return {"success": False, "data": None, "summary": f"查询表结构失败: {exc}"}
+            hint = _cross_backend_table_hint(lookup)
+            hint_suffix = f" {hint}" if hint else ""
+            return {
+                "success": False,
+                "data": None,
+                "summary": f"查询表结构失败: {exc}{hint_suffix}",
+            }
 
         if not columns:
             return {
                 "success": False,
                 "data": None,
-                "summary": f"库 {target_db} 中未找到白名单表 '{lookup}'。",
+                "summary": (
+                f"库 {target_db} 中未找到白名单表 '{lookup}'。"
+                + (f" {_cross_backend_table_hint(lookup)}" if _cross_backend_table_hint(lookup) else "")
+                ),
             }
         return {
             "success": True,
@@ -487,7 +542,10 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             return {
                 "success": False,
                 "data": [],
-                "summary": f"查询失败: {exc}。字段不确定时请先调用 describe_table。",
+                "summary": (
+                    f"查询失败: {exc}。字段不确定时请先调用 describe_table。"
+                    + _cross_backend_hints_for_tables(referenced_tables)
+                ),
             }
 
         data_shape = await self._build_data_shape(

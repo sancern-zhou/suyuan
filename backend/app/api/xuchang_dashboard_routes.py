@@ -57,18 +57,13 @@ async def require_dashboard_reader(
     request: Request,
     user: CurrentUser | None = Depends(optional_current_user),
 ) -> CurrentUser | None:
-    """大屏读取鉴权：超级管理员网关身份，或部署级大屏直连令牌（?access_token=）。
+    """大屏读取鉴权：登录用户放行，或部署级大屏直连令牌（?access_token=）。
 
-    页面开发阶段：登录身份仅超级管理员放行；令牌直连（墙屏设备）保留，
+    大屏已开放给全部登录用户；令牌直连（墙屏设备）保留，
     令牌校验与中间件 _valid_dashboard_access 同源（dashboard_access_token），
     此处复核是防止中间件配置遗漏时令牌直接命中路由，也覆盖 POST/非 GET 语义。
     """
     if user is not None:
-        if not user.is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="dashboard_admin_only",
-            )
         return user
     from config.settings import settings
 
@@ -279,13 +274,19 @@ async def get_station_series(
     granularity: str = Query(default="5min", pattern="^(5min|hour)$"),
     user: CurrentUser | None = Depends(require_dashboard_reader),
 ) -> Dict[str, Any]:
-    """站点近 6 小时曲线；省控源仅有小时观测，不提供 5 分钟伪切换。"""
+    """站点近 6 小时曲线；省控源仅有小时观测，不提供 5 分钟伪切换。
+
+    PM2.5 固定小时口径：官方评价（GB3095/HJ633）只有小时/24h 值，5 分钟
+    值是仪器原始聚合、非评价口径，切换粒度对 PM2.5 不生效。
+    """
     import asyncio
 
     from app.tools.query.xuchang_cube_metrics.tool import cube_load
 
     if metric not in {"aqi", *_SERIES_MEASURES}:
         raise HTTPException(status_code=400, detail="不支持的指标")
+    if metric == "pm25":
+        granularity = "hour"
     if station_type == "office" and granularity == "5min" and metric in _OFFICE_UNSUPPORTED_METRICS:
         return {"station_name": station_name, "metric": metric, "granularity": "5min", "points": []}
     if station_type == "national":

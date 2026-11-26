@@ -9,7 +9,8 @@
 避免本地计算口径与官方发布值不一致。
 
 结果写入 DataCrawler MySQL ``SsfbCityRanking``（仅 period_type=daily），
-每日重算当期，幂等覆盖；每次运行顺带清理历史遗留的 monthly/yearly 行。
+每日多波次重算当期（紧随城市日值抓取波次），幂等覆盖；每次运行顺带清理
+历史遗留的 monthly/yearly 行。
 """
 
 from __future__ import annotations
@@ -173,8 +174,12 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         super().__init__(
             name="xuchang_henan_ranking_recalc_fetcher",
             description="河南18城市组官方日值排序(日排名,取原值不聚合)入库DataCrawler;月/年累计改走官方月报",
-            schedule="10 6 * * *",
-            version="4.0.0",
+            # 城市日值抓取波次在 7/10/13/16/19/22 点的 :14（DAY_FETCH_HOURS），
+            # 本任务紧随其后 +26 分钟：平台昨日日值何时发布不定（2026-11-25 实测
+            # 16:14 才到），每个波次后重算可让"昨日"排名当日可看；幂等 upsert
+            # 顺带回补/修正 D-2。:40 已核对与 ssfb 三波/乡镇/大屏快照错峰。
+            schedule="40 7,10,13,16,19,22 * * *",
+            version="4.1.0",
         )
         self.client = client or HenanSsfbClient()
         self.now_factory = now_factory

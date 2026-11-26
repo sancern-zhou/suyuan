@@ -133,16 +133,19 @@ def rows_for(high_pm25=(), high_pm10=()):
         rows.append({
             "Tsno": f"normal-{index}", "StationName": f"普通镇{index}",
             "CollectionTime": HOUR, "PM25": 20 + index * 3, "PM10": 40 + index * 5,
+            "CountyName": "鄢陵县",
         })
     for index, value in enumerate(high_pm25):
         rows.append({
             "Tsno": f"pm25-{index}", "StationName": f"高值镇{index}",
             "CollectionTime": HOUR, "PM25": value, "PM10": 35,
+            "CountyName": "鄢陵县",
         })
     for index, value in enumerate(high_pm10):
         rows.append({
             "Tsno": f"pm10-{index}", "StationName": f"颗粒物镇{index}",
             "CollectionTime": HOUR, "PM25": 25, "PM10": value,
+            "CountyName": "鄢陵县",
         })
     return rows
 
@@ -277,8 +280,6 @@ async def test_equipment_same_station_and_pollutant_cools_down_for_twenty_four_h
         if row["Tsno"].startswith("normal-"):
             index = int(row["Tsno"].split("-")[-1])
             row["PM25"] = 38 + index % 2
-        if row["Tsno"].startswith("pm25-"):
-            row["CountyName"] = "魏都区"
     fetcher, sent = build(monkeypatch, tmp_path, rows)
     first = await fetcher.fetch_and_store()
     fetcher.now_factory = lambda: NOW + timedelta(hours=1)
@@ -288,8 +289,6 @@ async def test_equipment_same_station_and_pollutant_cools_down_for_twenty_four_h
     for row in later:
         if row["Tsno"].startswith("normal-"):
             row["PM25"] = 38 + int(row["Tsno"].split("-")[-1]) % 2
-        if row["Tsno"].startswith("pm25-"):
-            row["CountyName"] = "魏都区"
     rows.extend(later)
     third = await fetcher.fetch_and_store()
     assert first["equipment_sent"] == 1
@@ -301,10 +300,12 @@ def regional_rows(extra=()):
     rows = []
     for index in range(10):
         rows.append({"Tsno": f"normal-{index}", "StationName": f"普通镇{index}",
-                     "CollectionTime": HOUR, "PM25": 17 + index * 0.2, "PM10": 35})
+                     "CollectionTime": HOUR, "PM25": 17 + index * 0.2, "PM10": 35,
+                     "CountyName": "鄢陵县"})
     for index, value in enumerate(extra):
         rows.append({"Tsno": f"high-{index}", "StationName": f"高值镇{index}",
-                     "CollectionTime": HOUR, "PM25": value, "PM10": 35})
+                     "CollectionTime": HOUR, "PM25": value, "PM10": 35,
+                     "CountyName": "鄢陵县"})
     return rows
 
 
@@ -318,15 +319,65 @@ def test_unique_polluted_station_survives_regional_candidate_group():
     assert group["stations"][0]["level_name"] == "轻度污染"
 
 
+def test_county_wide_elevation_is_not_reported_as_single_station():
+    # 同一区县整体偏高（对全市是离群、对区县中位数不是）不再触发单站告警。
+    rows = [
+        {"Tsno": f"clean-{index}", "StationName": f"干净镇{index}",
+         "CollectionTime": HOUR, "PM25": 20 + index * 2, "PM10": 40,
+         "CountyName": "鄢陵县"}
+        for index in range(10)
+    ]
+    for index, value in enumerate([45.0, 48.2, 50.1, 53.2, 54.4, 59.9]):
+        rows.append({"Tsno": f"west-{index}", "StationName": f"西部镇{index}",
+                     "CollectionTime": HOUR, "PM25": value, "PM10": 60,
+                     "CountyName": "襄城县"})
+    _, groups = detect_high_value_groups(rows)
+    assert groups == []
+
+
+def test_county_with_too_few_stations_is_skipped():
+    rows = [
+        {"Tsno": f"normal-{index}", "StationName": f"普通镇{index}",
+         "CollectionTime": HOUR, "PM25": 20 + index * 2, "PM10": 40,
+         "CountyName": "鄢陵县"}
+        for index in range(8)
+    ]
+    for index, value in enumerate([120.0, 30.0, 30.0]):
+        rows.append({"Tsno": f"few-{index}", "StationName": f"少站镇{index}",
+                     "CollectionTime": HOUR, "PM25": value, "PM10": 40,
+                     "CountyName": "魏都区"})
+    _, groups = detect_high_value_groups(rows)
+    assert groups == []
+
+
+def test_central_urban_districts_share_one_baseline_and_keep_own_county():
+    rows = [
+        {"Tsno": f"xd-{index}", "StationName": f"东城办事处{index}",
+         "CollectionTime": HOUR, "PM25": 30.0, "PM10": 45, "CountyName": "东城区"}
+        for index in range(5)
+    ]
+    for index in range(8):
+        rows.append({"Tsno": f"wd-{index}", "StationName": f"魏都办事处{index}",
+                     "CollectionTime": HOUR, "PM25": 30.0, "PM10": 45,
+                     "CountyName": "魏都区"})
+    rows.append({"Tsno": "xd-spike", "StationName": "东城区半截河街道办事处",
+                 "CollectionTime": HOUR, "PM25": 90.0, "PM10": 45,
+                 "CountyName": "东城区"})
+    _, groups = detect_high_value_groups(rows)
+    assert len(groups) == 1 and groups[0]["pollutant"] == "PM2.5"
+    assert [item["station_name"] for item in groups[0]["stations"]] == ["东城区半截河街道办事处"]
+    assert groups[0]["stations"][0]["county_name"] == "东城区"
+    assert groups[0]["stations"][0]["peer_count"] == 13
+
+
 def test_structured_county_and_station_type_reach_detector_and_llm():
     rows = regional_rows([90.7])
-    rows[-1]["CountyName"] = "建安区"
     rows[-1]["StationType"] = "township"
     _, groups = detect_high_value_groups(rows)
     item = groups[0]["stations"][0]
-    assert item["county_name"] == "建安区" and item["station_type"] == "township"
+    assert item["county_name"] == "鄢陵县" and item["station_type"] == "township"
     evidence = __import__("app.scenarios.xuchang_town_high_value.message", fromlist=["message_evidence"]).message_evidence(groups[0], {})
-    assert evidence["stations"][0]["county_name"] == "建安区"
+    assert evidence["stations"][0]["county_name"] == "鄢陵县"
 
 
 def test_light_pollution_extreme_level_gap_is_not_equipment_anomaly():

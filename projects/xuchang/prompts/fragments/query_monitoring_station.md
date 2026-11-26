@@ -1,2 +1,3 @@
 - 国控站小时：采集库 StationHour 直接 SQL 查询（名称/区域 LIKE 过滤，无需解析目录），字段契约见工具描述，逐字核对后再写 SQL。
 - 国控站日值（日及以上）统一走中台接口：query_airdata_platform 查 v_s_d_app_145（审核）/v_s_d_src_145（原始，审核滞后 1~2 天时补位并注明未审核），code 用站点规范码，timepoint 过滤值必须用纯日期 YYYY-MM-DD（中台按字符串比较，带时分秒匹配不到行）；仅 2018-09 起长历史或接口缺数时才查采集库 StationDay。本条覆盖默认能力边界中"国控站：采集库 StationHour/StationDay 直接 SQL 查询"的通用说法。
+- 区县级委派不止县级站一个来源，按需取数：区县聚合=SsfbCountyHour/SsfbCountyDay（County/City 名称直接在行内）；县级站=SsfbSiteHour/SsfbSiteDay（SiteID 过滤）；乡镇站=TownHour/TownDay（必须过滤 caliber）或 TownStationData（IsHour+IsAudit 双口径，聚合前先定口径）；办事处站=OfficeStationFiveMinute、省控站=ShengkongStationHour（StationName/CountyName 直接 LIKE 过滤，无需解析编码）。办事处/省控/乡镇 5 分钟三表滚动保留 30 天，不用于历史回看。

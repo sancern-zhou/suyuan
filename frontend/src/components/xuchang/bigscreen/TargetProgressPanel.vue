@@ -46,11 +46,11 @@
       <div class="rank168-strip" v-if="rank168">
         <span class="strip-label">全国 168 城</span>
         <span class="strip-item">
-          综合指数排名 <strong>{{ rank168.composite_rank ?? '—' }}</strong>
+          综合指数排名（倒序） <strong>{{ rank168.composite_rank ?? '—' }}</strong>
           <small>（{{ rank168.composite_index ?? '—' }}）</small>
         </span>
         <span class="strip-item">
-          PM2.5 排名 <strong>{{ rank168.pm25_rank ?? '—' }}</strong>
+          PM2.5 排名（倒序） <strong>{{ rank168.pm25_rank ?? '—' }}</strong>
           <small>（{{ rank168.pm25 ?? '—' }} μg/m³）</small>
         </span>
         <span class="strip-period">{{ rank168.period_label || '' }} · 部发布累计</span>

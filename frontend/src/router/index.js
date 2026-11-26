@@ -30,8 +30,7 @@ const routes = [
       meta: {
         requiredModule: 'xuchang-air-quality',
         title: '数据大屏',
-        allowDashboardToken: true,
-        adminOnly: true
+        allowDashboardToken: true
       }
     },
     {
@@ -51,7 +50,7 @@ const routes = [
       component: () => import('@/views/xuchang/FieldWatchView.vue'),
       meta: {
         requiredModule: 'xuchang-air-quality',
-        title: '现场巡查快报',
+        title: '现场巡查快报（测试）',
         allowDashboardToken: true,
         adminOnly: true
       }

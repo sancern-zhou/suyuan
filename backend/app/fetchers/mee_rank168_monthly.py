@@ -221,9 +221,9 @@ def build_db_rows(article: Article, rows: list[dict[str, Any]]) -> list[dict[str
                 "PeriodEnd": date(article.year, month, last_day) if period_type == "cum" else None,
                 "PeriodLabel": f"{month}月" if period_type == "month" else f"1-{month}月",
                 "CompositeIndex": float(ci),
-                "CompositeIndexRank": ci_rank,
+                "CompositeIndexRankDesc": ci_rank,
                 "Pm25": pm25,
-                "Pm25Rank": pm25_rank,
+                "Pm25RankDesc": pm25_rank,
                 "SourceFile": source,
             })
     return db_rows
@@ -232,15 +232,15 @@ def build_db_rows(article: Article, rows: list[dict[str, Any]]) -> list[dict[str
 UPSERT_SQL = f"""
 INSERT INTO {TABLE} (
     City, PeriodType, DataMonth, PeriodEnd, PeriodLabel,
-    CompositeIndex, CompositeIndexRank, Pm25, Pm25Rank, SourceFile
+    CompositeIndex, CompositeIndexRankDesc, Pm25, Pm25RankDesc, SourceFile
 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON DUPLICATE KEY UPDATE
     PeriodEnd = VALUES(PeriodEnd),
     PeriodLabel = VALUES(PeriodLabel),
     CompositeIndex = VALUES(CompositeIndex),
-    CompositeIndexRank = VALUES(CompositeIndexRank),
+    CompositeIndexRankDesc = VALUES(CompositeIndexRankDesc),
     Pm25 = VALUES(Pm25),
-    Pm25Rank = VALUES(Pm25Rank),
+    Pm25RankDesc = VALUES(Pm25RankDesc),
     SourceFile = VALUES(SourceFile)
 """
 
@@ -274,7 +274,7 @@ class Rank168MySqlStorage:
         if not rows:
             return 0
         cols = ["City", "PeriodType", "DataMonth", "PeriodEnd", "PeriodLabel",
-                "CompositeIndex", "CompositeIndexRank", "Pm25", "Pm25Rank", "SourceFile"]
+                "CompositeIndex", "CompositeIndexRankDesc", "Pm25", "Pm25RankDesc", "SourceFile"]
         values = [tuple(row[c] for c in cols) for row in rows]
         conn = await aiomysql.connect(**self._connection_kwargs())
         try:

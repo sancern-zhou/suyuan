@@ -109,9 +109,9 @@ DDL = [
         PeriodEnd DATE NULL COMMENT '累计行:截止月月末',
         PeriodLabel VARCHAR(20) NULL COMMENT '期次标签(1月/1-7月)',
         CompositeIndex DOUBLE NULL COMMENT '环境空气质量综合指数(生态环境部168城排名口径)',
-        CompositeIndexRank INT NULL COMMENT '综合指数排名(倒序,1=最差)',
+        CompositeIndexRankDesc INT NULL COMMENT '综合指数排名(倒序=按浓度从高到低,1=最差,数值越大空气越好)',
         Pm25 DOUBLE NULL COMMENT 'PM2.5浓度(μg/m³)',
-        Pm25Rank INT NULL COMMENT 'PM2.5浓度排名(倒序,1=最差)',
+        Pm25RankDesc INT NULL COMMENT 'PM2.5浓度排名(倒序=按浓度从高到低,1=最差,数值越大空气越好)',
         SourceFile VARCHAR(255) NULL,
         CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_city_pt_dm (City, PeriodType, DataMonth)
@@ -141,8 +141,8 @@ JOBS = [
      {"GoodDays", "HeavyDays", "O3ExceedDays", "O3ExceedOver", "O3ExceedDaysTarget", "CompletedCount"}),
     ("rank168_monthly.csv", "Rank168CityMonthly",
      ["City", "PeriodType", "DataMonth", "PeriodEnd", "PeriodLabel", "CompositeIndex",
-      "CompositeIndexRank", "Pm25", "Pm25Rank", "SourceFile"],
-     ("City", "PeriodType", "DataMonth"), {"CompositeIndexRank", "Pm25Rank"}),
+      "CompositeIndexRankDesc", "Pm25", "Pm25RankDesc", "SourceFile"],
+     ("City", "PeriodType", "DataMonth"), {"CompositeIndexRankDesc", "Pm25RankDesc"}),
 ]
 
 

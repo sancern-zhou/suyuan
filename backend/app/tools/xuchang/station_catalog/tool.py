@@ -175,6 +175,12 @@ class XuchangStationCatalogTool(LLMTool):
         station_types = {item.get("station_type") for item in stations_payload}
         if "township" in station_types:
             summary_parts.append("（乡镇站编码可直接用于 query_airdata_platform 的 code 过滤）")
+        if "regular" in station_types:
+            summary_parts.append(
+                "（国控站 5 分钟/最新小时实时数据用 execute_sql_query 查 dat_zhongda_station_minute/"
+                "dat_zhongda_station_hour；station_code 过滤用本结果的 station_code（1003A 系中大站码，"
+                "即 dat_zhongda_* 表原生站码），不要用 unique_code）"
+            )
         if "county" in station_types:
             summary_parts.append(
                 "（县级站编码用于 execute_crawler_sql_query 查 SsfbSiteHour/SsfbSiteDay 的 SiteID 过滤）"

@@ -1,11 +1,12 @@
 <template>
-  <section class="map-panel" data-testid="station-map">
+  <section class="map-panel" :class="{ 'is-capture': capture }" data-testid="station-map">
     <div ref="mapContainer" class="map-container" aria-label="许昌市站点空气质量地图"></div>
 
-    <div v-if="capture" class="capture-title">站点{{ townshipGranularity === 'hour' ? '小时' : '5分钟' }}{{ metricLabel }}</div>
+    <div v-if="capture" class="capture-title">站点{{ markerGranularity === 'hour' ? '小时' : '5分钟' }}{{ metricLabel }}<span v-if="captureTimeLabel" class="capture-time">{{ captureTimeLabel }}</span></div>
 
     <div class="map-controls">
-      <div v-if="townshipStations.length || townshipHourStations.length" class="layer-toggle township-granularity-toggle">
+      <!-- PM2.5 固定小时口径，粒度切换对它不生效，选中时隐藏按钮避免无效操作 -->
+      <div v-if="(townshipStations.length || townshipHourStations.length) && displayMetric !== 'pm25'" class="layer-toggle township-granularity-toggle">
         <button type="button" :class="{ on: townshipGranularity === '5min' }" @click="setTownshipGranularity('5min')">5分钟</button>
         <button type="button" :class="{ on: townshipGranularity === 'hour' }" @click="setTownshipGranularity('hour')">小时</button>
       </div>
@@ -39,7 +40,7 @@
     </div>
 
     <button
-      v-if="pitchAvailable"
+      v-if="pitchAvailable && !capture"
       class="view-toggle"
       :class="{ on: isTilted }"
       type="button"
@@ -65,7 +66,9 @@ const props = defineProps({
   capture: { type: Boolean, default: false },
   townshipGranularity: { type: String, default: '5min' },
   metric: { type: String, default: 'pm25' },
-  layers: { type: String, default: '' }
+  layers: { type: String, default: '' },
+  // 逗号分隔的站点名列表：本次告警高值站，地图上加"高值"角标放大标识
+  highlight: { type: String, default: '' }
 })
 
 const emit = defineEmits(['tilt-change', 'ready'])
@@ -108,21 +111,30 @@ const metricOptions = [
 ]
 const displayMetric = ref(metricOptions.some(item => item.key === props.metric) ? props.metric : 'pm25')
 const townshipGranularity = ref(props.townshipGranularity === 'hour' ? 'hour' : '5min')
+// PM2.5 固定小时口径：官方评价（GB3095/HJ633）只有小时/24h 值，5 分钟值是
+// 仪器原始聚合、仅实时监视参考。气泡与弹窗曲线一律读小时数组，粒度切换
+// 对 PM2.5 不生效（后端 station-series 同口径强制，双保险）。
+const markerGranularity = computed(() => (displayMetric.value === 'pm25' ? 'hour' : townshipGranularity.value))
 const townshipStations = computed(() => props.stations?.townships || [])
 const townshipHourStations = computed(() => props.stations?.townships_hour || [])
-const activeTownships = computed(() => townshipGranularity.value === 'hour' ? townshipHourStations.value : townshipStations.value)
+const activeTownships = computed(() => markerGranularity.value === 'hour' ? townshipHourStations.value : townshipStations.value)
 const metricLabel = computed(() => metricOptions.find(item => item.key === displayMetric.value)?.label || displayMetric.value)
 const activeStations = computed(() => {
-  const suffix = townshipGranularity.value === 'hour' ? '_hour' : ''
+  const suffix = markerGranularity.value === 'hour' ? '_hour' : ''
   return {
     national: props.stations?.[`national${suffix}`] || [],
     townships: activeTownships.value,
     // 许昌市空气质量管控平台省控站只有小时数据，5 分钟模式没有对应观测值。
-    shengkong: townshipGranularity.value === 'hour' ? (props.stations?.shengkong_hour || []) : [],
+    shengkong: markerGranularity.value === 'hour' ? (props.stations?.shengkong_hour || []) : [],
     office: props.stations?.[`office${suffix}`] || []
   }
 })
 const townshipDataTime = computed(() => Object.values(activeStations.value).flat().map(item => item.data_time || item.dataTime).find(Boolean) || '')
+// 截图标题附数据时刻：推送图必须能看出数值属于哪个时刻（对齐旧平台做法）
+const captureTimeLabel = computed(() => {
+  const match = String(townshipDataTime.value || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/)
+  return match ? `${match[1]}年${Number(match[2])}月${Number(match[3])}日 ${match[4]}:${match[5]}` : ''
+})
 // AQI=100 对应的二级浓度限值；PM 为 24h、其余为 1h 评价口径。
 const SECONDARY_LIMITS = { aqi: 100, pm25: 60, pm10: 120, o3: 200, so2: 500, no2: 200, co: 10 }
 const metricColor = (metric, value) => metric === 'aqi' ? aqiColor(value) : iaqiColor(metric, value)
@@ -251,7 +263,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   activeStationLayer = layerKey
   const chartId = `station-series-chart-${requestId}`
   const option = metricOptions.find(item => item.key === metric)
-  const granularity = townshipGranularity.value === 'hour' ? '小时' : '5分钟'
+  const granularityLabel = markerGranularity.value === 'hour' ? '小时' : '5分钟'
 
   const info = new AMap.InfoWindow({
     content: `
@@ -260,7 +272,7 @@ const openStationSeries = async (station, marker, layerKey) => {
           <div><strong>${esc(station.station_name)}</strong><span>${esc(option?.label || metric)} 时序</span></div>
           <div class="series-summary"></div>
         </div>
-        <small>${esc(TYPE_LABELS[station.type] || '站点')} · 近6小时${granularity}数据<span>折线按IAQI等级着色</span></small>
+        <small>${esc(TYPE_LABELS[station.type] || '站点')} · 近6小时${granularityLabel === '小时' ? '' : granularityLabel}数据<span>折线按IAQI等级着色</span></small>
         <div id="${chartId}" class="station-series-chart"><span>正在加载时序数据…</span></div>
         <footer><i></i> 二级标准 ${SECONDARY_LIMITS[metric]} ${esc(option?.unit || '')}<span>${['pm25', 'pm10'].includes(metric) ? '24小时限值' : (metric === 'aqi' ? 'IAQI=100' : '1小时限值')}</span></footer>
       </div>`,
@@ -283,7 +295,7 @@ const openStationSeries = async (station, marker, layerKey) => {
   isolateInfoContentEvents(requestId, info, chartId)
   await nextTick()
   try {
-    const payload = await fetchStationSeries(station, metric, townshipGranularity.value)
+    const payload = await fetchStationSeries(station, metric, markerGranularity.value)
     if (requestId !== seriesRequestId || activeInfo !== info) return
     const element = await waitForStationSeriesElement(requestId, info, chartId)
     if (!element) return
@@ -304,7 +316,7 @@ const openStationSeries = async (station, marker, layerKey) => {
 }
 
 // 视角切换：地图以 3D 模式初始化（pitch=0 视觉等同平面），
-// 切换 2.5D 即设置俯仰角并按市界 bounds 自适应视野（构图更满、便于截图）；
+// 切换 2.5D 即设置俯仰角并按市界 bounds 自适应视野（构图更满）；
 // 切回平面恢复初始视野。3D 模式下右键拖拽可旋转。
 // 注意：JSAPI 2.0 在浏览器无 WebGL 时会静默降级为 2D 栅格渲染
 // （无视 viewMode:'3D'），该模式下 setPitch 无效，须隐藏按钮。
@@ -324,7 +336,9 @@ const toggleViewMode = () => {
     map.setPitch(isTilted.value ? 50 : 0)
     emit('tilt-change', isTilted.value)
     if (isTilted.value && boundaryBounds && typeof map.setBounds === 'function') {
-      // setBounds 无 padding 参数，仅外扩 2% 余量让市界尽量铺满画面（俯仰 50° 时底部有透视延伸）
+      // setBounds 无 padding 参数，仅外扩 2% 余量让市界尽量铺满画面。
+      // 截图取景不走这里：capture 用平面视角 fitCaptureBounds，倾斜构图
+      // 会纵向透视压缩、放大两侧空白（许昌市界东西扁平）。
       const sw = boundaryBounds.getSouthWest()
       const ne = boundaryBounds.getNorthEast()
       const dLng = (ne.getLng() - sw.getLng()) * 0.02
@@ -339,6 +353,31 @@ const toggleViewMode = () => {
     console.error('[StationMapPanel] 视角切换失败', exc)
     isTilted.value = false
   }
+}
+
+// 截图取景：平面视角按市界精确铺满。许昌市界东西扁平（Mercator 宽高比≈1.45），
+// 2.5D 倾斜会纵向透视压缩、放大两侧空白，截图不再使用。
+// 不用 map.setBounds：它会把 zoom 吸附到整级，取景框可能溢出画布，遮罩层边缘被裁；
+// 这里按 Web Mercator 自行解算连续 zoom，以像素级留白精确包住市界：
+// 顶部留白给标题、底部留白给图层控件、横向留少量卫星底图边缘。
+// 画布尺寸须与 screenshot.py 的 viewport（1600×1200）保持一致。
+const CAPTURE_CANVAS = { width: 1600, height: 1200 }
+const CAPTURE_PAD = { top: 100, bottom: 48, x: 72 }
+const fitCaptureBounds = () => {
+  if (!map || !boundaryBounds) return
+  const sw = boundaryBounds.getSouthWest()
+  const ne = boundaryBounds.getNorthEast()
+  const lngSpan = ne.getLng() - sw.getLng()
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
+  const mercSpan = merc(ne.getLat()) - merc(sw.getLat())
+  const widthZoom = Math.log2(
+    ((CAPTURE_CANVAS.width - CAPTURE_PAD.x * 2) * 360) / (lngSpan * 256)
+  )
+  const heightZoom = Math.log2(
+    ((CAPTURE_CANVAS.height - CAPTURE_PAD.top - CAPTURE_PAD.bottom) * 2 * Math.PI) / (mercSpan * 256)
+  )
+  const center = [(sw.getLng() + ne.getLng()) / 2, (sw.getLat() + ne.getLat()) / 2]
+  map.setZoomAndCenter(Math.min(widthZoom, heightZoom), center, true)
 }
 
 const METRIC_LABELS = Object.fromEntries(metricOptions.map(item => [item.key, item.label]))
@@ -359,31 +398,47 @@ const formatMetric = (station, key) => {
 const alertKeys = () =>
   new Set(props.alerts.map(item => String(item.station_name || '').trim()))
 
+// 高值站标识：推送截图场景经 URL highlight 参数传入本次告警站名，与
+// 常规 alerts（站点偏离告警）一样在地图上放大加注，便于用户一眼定位
+const highlightNames = computed(() =>
+  new Set(String(props.highlight || '').split(',').map(name => name.trim()).filter(Boolean))
+)
+
+const isFlagged = (station, layerKey, alerting) => ({
+  // 偏离告警（国控）：保留脉冲光晕，不叠"高值"角标
+  alerting: layerKey === 'national' && alerting.has(String(station.station_name || '').trim()),
+  // 乡镇高值：推送截图经 highlight 参数传入，加"高值"角标
+  highlighted: highlightNames.value.has(String(station.station_name || '').trim())
+})
+
 // marker/infoWindow 走 innerHTML 注入，字符串字段一律转义，站点名等来自数据库
 const esc = value =>
   String(value ?? '').replace(/[&<>"']/g, ch => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
   ))
 
-const buildMarker = (station, isAlerting, layerKey) => {
+const buildMarker = (station, flagged, layerKey) => {
+  const { alerting: isAlerting, highlighted } = flagged
   const metric = displayMetric.value
   const text = formatMetric(station, metric)
   // AQI 直接按等级上色；污染物按 HJ633 IAQI 折点换算后上色
   const color = metric === 'aqi' ? aqiColor(station.aqi) : iaqiColor(metric, metricValue(station, metric))
   const label = `${station.station_name} ${METRIC_LABELS[metric]} ${text}`
   const largeShape = ['shengkong', 'office'].includes(station.type)
-  const markerSize = isAlerting ? (largeShape ? 40 : 32) : (largeShape ? 32 : 24)
+  // 点径比常规交互略大一号：推送截图在手机上按宽度缩放显示，
+  // 数值要看得清（旧平台同场景点径也更大）
+  const markerSize = isAlerting || highlighted ? (largeShape ? 44 : 36) : (largeShape ? 36 : 28)
   const marker = new AMap.Marker({
     position: new AMap.LngLat(station.lon, station.lat),
     // 深色大屏样式：等级色图标（国控=三角形/乡镇=圆形/省控=菱形/办事处=六边形），
-    // 告警站点加大加脉冲光晕
+    // 告警站加脉冲光晕；乡镇高值站加红底"高值"角标
     content: `
-      <div class="screen-station-dot type-${esc(station.type || 'national')}${isAlerting ? ' alerting' : ''}" style="--dot-color:${esc(color)}">
-        <span>${esc(text)}</span>
+      <div class="screen-station-dot type-${esc(station.type || 'national')}${isAlerting ? ' alerting' : ''}${highlighted ? ' highlighted' : ''}" style="--dot-color:${esc(color)}">
+        <span>${esc(text)}</span>${highlighted ? '<i class="flag-badge">高值</i>' : ''}
       </div>`,
     offset: new AMap.Pixel(-markerSize / 2, -markerSize / 2),
     title: label,
-    zIndex: isAlerting ? 130 : 110
+    zIndex: isAlerting || highlighted ? 130 : 110
   })
   marker.on('click', () => openStationSeries(station, marker, layerKey))
   return marker
@@ -405,7 +460,7 @@ const markerSignature = (station, alerting) => JSON.stringify([
 const updateMarkerGroup = (key, stations) => {
   const alerting = alertKeys()
   const signatures = stations.map(station => markerSignature(
-    station, key === 'national' && alerting.has(String(station.station_name || '').trim())
+    station, isFlagged(station, key, alerting)
   ))
   const previous = markerGroups[key]
   const unchanged = previous.length === stations.length && previous.every((entry, index) => (
@@ -417,8 +472,8 @@ const updateMarkerGroup = (key, stations) => {
   if (activeInfo && activeStationLayer === key) return
   previous.forEach(entry => entry.marker.setMap(null))
   markerGroups[key] = stations.map(station => {
-    const isAlerting = key === 'national' && alerting.has(String(station.station_name || '').trim())
-    return { marker: buildMarker(station, isAlerting, key), signature: markerSignature(station, isAlerting) }
+    const flagged = isFlagged(station, key, alerting)
+    return { marker: buildMarker(station, flagged, key), signature: markerSignature(station, flagged) }
   })
 }
 
@@ -434,7 +489,7 @@ const renderMarkers = () => {
   if (!map || !AMap) return
   Object.entries(activeStations.value).forEach(([key, stations]) => updateMarkerGroup(key, stations))
   applyLayerVisibility()
-  renderedGranularity = townshipGranularity.value
+  renderedGranularity = markerGranularity.value
   nextTick(notifyReady)
 }
 
@@ -456,10 +511,14 @@ const setTownshipGranularity = value => {
 
 let mapReady = false
 let renderedGranularity = ''
+// 截图模式取景完成前不发 ready：截图页以 ready 判定可以开始截图，
+// 提前发出会截到初始视野而非市界取景后的画面
+let captureFramed = !props.capture
 const notifyReady = () => {
-  if (props.capture && map && mapReady && renderedGranularity === townshipGranularity.value) {
+  if (!captureFramed) return
+  if (props.capture && map && mapReady && renderedGranularity === markerGranularity.value) {
     emit('ready', {
-      townshipGranularity: townshipGranularity.value,
+      townshipGranularity: markerGranularity.value,
       townshipDataTime: townshipDataTime.value,
       townshipCount: activeStations.value.townships.length,
       metric: displayMetric.value,
@@ -549,13 +608,16 @@ onMounted(async () => {
     if (!pitchAvailable.value) {
       console.warn('[StationMapPanel] 当前浏览器 WebGL 不可用，地图已降级为 2D 渲染，2.5D 视角不可用')
     }
-    renderCityBoundary()
+    const boundaryLoaded = renderCityBoundary()
     mapReady = true
     renderMarkers()
     if (props.capture) {
-      // 等边界、站点和底图完成首帧后再倾斜，确保截图取到完整市界的 2.5D 构图。
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      toggleViewMode()
+      // 平面视角按市界取景（许昌市界东西扁平，倾斜构图站点分布不均、
+      // 两侧空白多）；取景完成后才发 ready，确保 Playwright 截到的是
+      // 市界铺满后的画面。市界加载失败时保持初始视野兜底。
+      await boundaryLoaded
+      fitCaptureBounds()
+      captureFramed = true
     }
     await nextTick()
     notifyReady()
@@ -717,6 +779,20 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
   letter-spacing: 2px;
   text-shadow: 0 2px 6px #04141f;
   white-space: nowrap;
+
+  .capture-time {
+    margin-left: 14px;
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    color: #cfe6ee;
+  }
+}
+
+// 截图模式底部控件贴近底边（capture 无 BroadcastTicker，52px 是给它让位的），
+// 给市界取景让出纵向空间
+.map-panel.is-capture .map-controls {
+  bottom: 14px;
 }
 
 .township-granularity-toggle {
@@ -765,14 +841,14 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
   align-items: center;
   justify-content: center;
   position: relative;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--dot-color);
   border: 2px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 0 10px color-mix(in srgb, var(--dot-color) 70%, transparent);
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 
@@ -815,8 +891,8 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
 
   // 省控站：菱形（背景层旋转 45°，AQI 文字保持水平）
   &.type-shengkong {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     background: transparent;
     border-color: transparent;
     box-shadow: none;
@@ -838,8 +914,8 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
 
   // 办事处站：六边形（背景层 clip-path，平顶左右尖）
   &.type-office {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     background: transparent;
     border-color: transparent;
     box-shadow: none;
@@ -871,15 +947,46 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
   }
 
   &.alerting {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     animation: station-pulse 1.4s ease-in-out infinite;
 
     &.type-shengkong,
     &.type-office {
-      width: 40px;
-      height: 40px;
+      width: 44px;
+      height: 44px;
     }
+  }
+
+  // 乡镇高值站：放大醒目（无脉冲动画，与偏离告警的动态光晕区分）
+  &.highlighted {
+    width: 36px;
+    height: 36px;
+
+    &.type-shengkong,
+    &.type-office {
+      width: 44px;
+      height: 44px;
+    }
+  }
+
+  // 高值站"高值"角标：右上角红底白字，截图静态呈现（无动画依赖）
+  .flag-badge {
+    position: absolute;
+    top: -9px;
+    right: -14px;
+    z-index: 4;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: #e34d4d;
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-shadow: none;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
   }
 }
 
@@ -895,12 +1002,20 @@ watch(townshipGranularity, () => nextTick(() => { renderMarkers(); notifyReady()
     display: flex;
     align-items: center;
     justify-content: space-between;
+    // 窄屏（App 端）适配：右侧摘要放不下时整块折到站名下一行，
+    // 不再挤压站名宽度（此前站名恒被 ellipsis 截断）
+    flex-wrap: wrap;
     gap: 10px;
+    row-gap: 2px;
 
     > div:first-child {
       display: flex;
       align-items: baseline;
+      // “XX 时序”标签放不下时折到站名下一行，站名独占整行完整显示；
+      // 站名本身超长才走 ellipsis 兜底
+      flex-wrap: wrap;
       gap: 8px;
+      row-gap: 1px;
       min-width: 0;
     }
 

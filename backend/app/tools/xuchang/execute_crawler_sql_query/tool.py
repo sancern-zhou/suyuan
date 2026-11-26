@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from decimal import Decimal
 import re
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import structlog
 from sqlalchemy import text
@@ -23,6 +23,10 @@ logger = structlog.get_logger()
 
 
 # DataCrawler（MySQL 8，采集库）：许昌本地长历史表 + 河南实时发布采集表（Ssfb*）。
+# 注意：省平台"排名"无物理表——SsfbCityHourRank/SsfbCountyHourRank/SsfbCountyDayRank/
+# SsfbSiteHourRank/SsfbSiteDayRank 是 cube 语义层对 Ssfb*Hour/Day 基表的窗口函数现算；
+# SQL 兜底可直接对基表自写 RANK() OVER（MySQL 8），口径为升序并列、1=最优
+#（与 Rank168CityMonthly 的倒序 1=最重 相反，勿混淆）。
 CRAWLER_SQL_TABLES = [
     "StationHour",
     "CityHour",
@@ -35,6 +39,8 @@ CRAWLER_SQL_TABLES = [
     "SsfbCityDay",
     "SsfbSiteHour",
     "SsfbSiteDay",
+    "SsfbCountyHour",
+    "SsfbCountyDay",
     "SsfbCityRanking",
     "CountyMonthReport",
     "ProvinceMonthReport",
@@ -42,13 +48,16 @@ CRAWLER_SQL_TABLES = [
     "XuchangCountyYearTarget",
     "HenanCityYearTarget",
     "Rank168CityMonthly",
+    "TownStationData",
+    "TownStationFiveMinute",
     "OfficeStationFiveMinute",
     "ShengkongStationHour",
 ]
 
 # 各表白名单对应的数据时间范围（实测），供 Agent 直接判断可查窗口、避免空查。
 TABLE_TIME_RANGES: dict[str, str] = {
-    "StationHour": "2016-01 起，许昌 6 国控站逐小时，更新至实时",
+    "StationHour": "2016-01~2026-11-15，许昌 6 国控站逐小时（政府侧采集镜像，2026-11-15 起停更，勿用于最新值；"
+                   "最新小时与 5 分钟实时数据走 execute_sql_query 的 dat_zhongda_station_hour/dat_zhongda_station_minute）",
     "CityHour": "2020-07 起，许昌市逐小时",
     "StationDay": "2018-09 起，许昌站点逐日",
     "CityDay": "2018-09 起，许昌市逐日",
@@ -59,6 +68,10 @@ TABLE_TIME_RANGES: dict[str, str] = {
     "SsfbCityDay": "2026-10-03 起，河南 18 城市组逐日（含济源）",
     "SsfbSiteHour": "2026-10-09 起，许昌县级站逐小时",
     "SsfbSiteDay": "2026-10-08 起，许昌县级站逐日",
+    "SsfbCountyHour": "2026-10-10 起，河南区县逐小时（189 区县含济源+功能区，"
+                      "与省平台'区县'页签同源同口径；County/City 名称直接在行内；"
+                      "区县排名无物理表，可用窗口函数对基表现算）",
+    "SsfbCountyDay": "2026-10-09 起，河南区县逐日（次日白天陆续发布，个别区县偏晚靠回看补齐）",
     "SsfbCityRanking": "2026-10-09 起（每日 06:10 对官方发布日值排序，仅 daily）",
     "CountyMonthReport": "2020-01 ~ 2026-09，许昌 10 县市区官方月报统计（剔除沙尘；"
                          "Scope=month 当月/cum 1-N月累计；重污染天 2023 起才有；"
@@ -72,8 +85,17 @@ TABLE_TIME_RANGES: dict[str, str] = {
                                "2023 年重污染天与 CountyMonthReport 月报差 3~4 天系沙尘口径）",
     "HenanCityYearTarget": "2021-2025，河南 18 地市年度目标完成情况（省考核；优良天/重污染天"
                            " 2021/2022/2024 为天数、2023/2025 为比例%；2025 行未定稿）",
-    "Rank168CityMonthly": "2026-01~07，生态环境部 168 重点城市排名逐月+累计（PeriodType=month/cum；"
-                          "仅用于全国排名与横向对比，浓度绝对值以本地口径为准）",
+    "Rank168CityMonthly": "2026-01起，生态环境部 168 重点城市排名逐月+累计（01-07人工回补，"
+                          "08起自动采集；PeriodType=month/cum；排名为倒序名次（*RankDesc）："
+                          "1=污染最重，表述只按'倒序排名第N位（污染第N重）'口径，禁止换算"
+                          "'第N好'、禁止得出'空气较好/最优'结论；仅用于全国排名与横向对比，"
+                          "浓度绝对值以本地口径为准）",
+    "TownStationData": "2024-01 起，许昌 76 乡镇站逐小时/逐日（IsHour=1 小时、0 日；"
+                       "IsAudit=1 审核/0 原始，同站同刻各一行，聚合前必须先过滤口径；"
+                       "-99 为无效值；日值约 2024-08 起；禹州 22 站 2026-11-19 起通讯中断；"
+                       "数据现由许昌市空气质量管控平台替代抓取回写）",
+    "TownStationFiveMinute": "2026-10-27 起，许昌乡镇站逐 5 分钟（滚动保留 30 天；"
+                             "原始未审核口径，平台 5 分钟不发布 AQI 恒空；-99 为无效值）",
     "OfficeStationFiveMinute": "2026-11-23 起，许昌 31 办事处站逐 5 分钟（仅 PM2.5/PM10 两因子；"
                                 "滚动保留 30 天；AQI 需按 HJ633 推算并注明）",
     "ShengkongStationHour": "2026-11-23 起，许昌 8 省控站逐小时六参数（平台省控仅小时粒度；"
@@ -82,6 +104,29 @@ TABLE_TIME_RANGES: dict[str, str] = {
 
 MAX_LIMIT = 5000
 DEFAULT_LIMIT = 50
+
+# 结果级口径标注：查询/查结构结果命中下列列名时，在 summary 末尾追加固定方向说明。
+# 背景：Rank168CityMonthly 排名列带 Desc 后缀（倒序=按浓度从高到低，1=最差），
+# 再在结果层强制注入方向说明，双保险防模型/用户误读为"第N好"。
+COLUMN_CALIBER_NOTES: Dict[str, str] = {
+    "compositeindexrankdesc": "倒序名次：1=污染最重（浓度最高），数值越大污染越轻。"
+                              "表述规范：只说'倒序排名第N位（污染第N重）'，禁止换算为"
+                              "'第N好/由好到差第N名'，禁止得出'空气较好/表现最优'类结论",
+    "pm25rankdesc": "倒序名次：1=污染最重（浓度最高），数值越大污染越轻。"
+                    "表述规范：只说'倒序排名第N位（污染第N重）'，禁止换算为"
+                    "'第N好/由好到差第N名'，禁止得出'空气较好/表现最优'类结论",
+}
+
+
+def _append_caliber_notes(summary: str, columns: Any) -> str:
+    names = {str(column).strip().lower() for column in (columns or [])}
+    notes: list[str] = []
+    for note in dict.fromkeys(COLUMN_CALIBER_NOTES.get(name) for name in sorted(names)):
+        if note:
+            notes.append(note)
+    if not notes:
+        return summary
+    return f"{summary} | 口径标注：{'；'.join(notes)}"
 
 _engine = None
 
@@ -115,8 +160,13 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             f"白名单表：{', '.join(CRAWLER_SQL_TABLES)}。只允许 SELECT（禁写/DDL/注释/多语句），"
             f"LIMIT 分页最大 {MAX_LIMIT} 条；不确定字段先 describe_table，禁查 information_schema。"
             "\n【查询优先级】常规指标（排名/最新值/县级站/乡镇站）优先 xuchang_cube_metrics；"
-            "国控站日值（含昨日）优先 query_airdata_platform；本工具用于长历史、同比、跨年趋势"
-            "与语义层未覆盖的明细。"
+            "国控站日值（含昨日）优先 query_airdata_platform；国控站最近小时与 5 分钟实时数据"
+            "走 execute_sql_query（dat_zhongda_station_hour/dat_zhongda_station_minute，实时在流）；"
+            "本工具用于长历史、同比、跨年趋势与语义层未覆盖的明细"
+            "（StationHour 镜像 2026-11-15 起停更，勿用于最新值）。"
+            "\n【状态口径】用户未明确要求标况（标准状态/参比状态）时，仅查询并返回实况数据，不得并列返回两种口径；"
+            "仅用户明确要求标况或实况/标况对比时才查标况并分别标注。状态口径与原始/审核、实时/定版、考核口径不得混同；"
+            "数据源未说明差异原因时不得自行解释。"
             "\n【统计口径硬规则】月度/季度/年度等统计禁止从 CityDay/StationDay/Ssfb* 等明细自算："
             "许昌月度及以上唯一来源 airdata_calc_report_summary；河南官方月报 ProvinceMonthReport；"
             "许昌县市区官方月报 CountyMonthReport；年均历史 CityYearPm25Avg；"
@@ -226,7 +276,10 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                 "sample_data": sample_rows[0] if sample_rows else None,
                 "time_range": TABLE_TIME_RANGES.get(table_name, "未登记"),
             },
-            "summary": f"表 {table_name} 共 {len(columns)} 个字段；已返回字段结构、一条样例与数据时间范围。",
+            "summary": _append_caliber_notes(
+                f"表 {table_name} 共 {len(columns)} 个字段；已返回字段结构、一条样例与数据时间范围。",
+                [column.get("column_name") for column in columns],
+            ),
         }
 
     async def _execute_sql(
@@ -383,7 +436,11 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                     "data_id": data_id,
                     "count": len(rows),
                     "sample_count": len(sample),
-                    "summary": f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。{shape_summary_suffix(data_shape)}",
+                    "summary": _append_caliber_notes(
+                        f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。"
+                        f"{shape_summary_suffix(data_shape)}",
+                        columns,
+                    ),
                     "data_shape": data_shape,
                     "metadata": {"columns": columns, "externalized": True},
                 }
@@ -394,7 +451,9 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "success": True,
             "data": rows,
             "count": len(rows),
-            "summary": f"查询到 {len(rows)} 条记录。{shape_summary_suffix(data_shape)}",
+            "summary": _append_caliber_notes(
+                f"查询到 {len(rows)} 条记录。{shape_summary_suffix(data_shape)}", columns
+            ),
             "data_shape": data_shape,
             "metadata": {"columns": columns, "externalized": False},
         }

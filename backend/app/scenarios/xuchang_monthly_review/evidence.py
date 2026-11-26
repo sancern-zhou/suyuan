@@ -176,8 +176,8 @@ def build_rank168_section(
         entry = {
             "city": city,
             "data_month": month_value,
-            "composite_index_rank": _int_or_none(record.get("CompositeIndexRank")),
-            "pm25_rank": _int_or_none(record.get("Pm25Rank")),
+            "composite_index_rank": _int_or_none(record.get("CompositeIndexRankDesc")),
+            "pm25_rank": _int_or_none(record.get("Pm25RankDesc")),
             "pm25": _number(record.get("Pm25")),
             "composite_index": _number(record.get("CompositeIndex")),
         }

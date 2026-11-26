@@ -968,9 +968,9 @@ tables:
     - SourceFile
     value_columns:
     - CompositeIndex
-    - CompositeIndexRank
+    - CompositeIndexRankDesc
     - Pm25
-    - Pm25Rank
+    - Pm25RankDesc
     mark_columns: []
     caliber_columns:
     - PeriodType
@@ -982,8 +982,8 @@ tables:
       PeriodEnd: date
       PeriodLabel: varchar
       CompositeIndex: double
-      CompositeIndexRank: int
+      CompositeIndexRankDesc: int
       Pm25: double
-      Pm25Rank: int
+      Pm25RankDesc: int
       SourceFile: varchar
       CreatedAt: datetime

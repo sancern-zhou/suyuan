@@ -348,9 +348,9 @@ def parse_rank168(src_dir: Path) -> list[dict]:
                                  if period_type == "cum" else "",
                     "PeriodLabel": f"{month}月" if period_type == "month" else f"1-{month}月",
                     "CompositeIndex": _num(ci)[0],
-                    "CompositeIndexRank": _int(ci_rank),
+                    "CompositeIndexRankDesc": _int(ci_rank),
                     "Pm25": _num(pm25)[0],
-                    "Pm25Rank": _int(pm25_rank),
+                    "Pm25RankDesc": _int(pm25_rank),
                     "SourceFile": SRC06,
                 })
     return rows
@@ -370,7 +370,7 @@ HENAN_COLS = ["City", "Year", "Pm10Target", "Pm10", "Pm10Completed", "Pm25Target
               "O3ExceedDaysTarget", "O3ExceedDays", "O3ExceedOver", "CompletedCount",
               "Remark", "SourceFile"]
 RANK_COLS = ["City", "PeriodType", "DataMonth", "PeriodEnd", "PeriodLabel", "CompositeIndex",
-             "CompositeIndexRank", "Pm25", "Pm25Rank", "SourceFile"]
+             "CompositeIndexRankDesc", "Pm25", "Pm25RankDesc", "SourceFile"]
 
 
 def write_csv(path: Path, rows: list[dict], cols: list[str]) -> None:

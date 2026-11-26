@@ -51,7 +51,7 @@ from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
-SNAPSHOT_SCHEMA_VERSION = 2
+SNAPSHOT_SCHEMA_VERSION = 3
 XUCHANG_CITY = "许昌市"
 # 与 app/api/xuchang_air_quality_routes.py 同源（XcAiDb WeatherForecast7Day）
 XUCHANG_CITY_CODE = "411000"
@@ -216,7 +216,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         errors: Dict[str, str] = {}
 
         cutoff = await self._guarded("cutoff", errors, self._detect_cutoff_hour)
-        header = city_rank = county_rank = trend = None
+        header = city_rank = county_rank = trend = county_day_rank = None
         if cutoff:
             header = await self._guarded("header", errors, lambda: self._header(cutoff))
             city_rank = await self._guarded(
@@ -224,6 +224,9 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             )
             county_rank = await self._guarded(
                 "county_hour_rank", errors, lambda: self._county_hour_rank(cutoff)
+            )
+            county_day_rank = await self._guarded(
+                "county_day_rank", errors, self._county_day_rank
             )
             trend = await self._guarded(
                 "city_trend_24h", errors, lambda: self._city_trend_24h(cutoff)
@@ -275,6 +278,9 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         province_city_ranking = await self._guarded(
             "province_city_ranking", errors, self._province_city_ranking
         )
+        ssfb_daily_ranking = await self._guarded(
+            "ssfb_daily_ranking", errors, self._ssfb_daily_ranking
+        )
         city_year_target_official = await self._guarded(
             "city_year_target_official", errors, self._city_year_target_official
         )
@@ -306,6 +312,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "header": header,
             "city_hour_rank": city_rank,
             "county_hour_rank": county_rank,
+            "county_day_rank": county_day_rank,
             "city_trend_24h": trend,
             "forecast_72h": forecast,
             "year_target": year_target,
@@ -318,6 +325,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "quality": quality,
             "city_period_stats": city_period_stats,
             "province_city_ranking": province_city_ranking,
+            "ssfb_daily_ranking": ssfb_daily_ranking,
             "city_year_target_official": city_year_target_official,
             "county_year_targets": county_year_targets,
             "rank168_series": rank168_series,
@@ -469,6 +477,9 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "measures": [
                 "SsfbCityHourRank.rankAqi", "SsfbCityHourRank.avgAqi",
                 "SsfbCityHourRank.avgPm25", "SsfbCityHourRank.avgPm10",
+                "SsfbCityHourRank.avgO3",
+                "SsfbCityHourRank.rankPm25", "SsfbCityHourRank.rankPm10",
+                "SsfbCityHourRank.rankO3",
             ],
             "dimensions": [
                 "SsfbCityHourRank.city", "SsfbCityHourRank.quality",
@@ -489,18 +500,27 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                     "rank": _int_or_none(item.get("rankAqi")),
                     "aqi": _int_or_none(item.get("avgAqi")),
                     "pm25": _number(item.get("avgPm25")),
+                    "pm10": _number(item.get("avgPm10")),
+                    "o3": _number(item.get("avgO3")),
                     "quality": _text(item.get("quality")),
                     "primary": _text(item.get("primaryPollutant")),
+                    "rank_pm25": _int_or_none(item.get("rankPm25")),
+                    "rank_pm10": _int_or_none(item.get("rankPm10")),
+                    "rank_o3": _int_or_none(item.get("rankO3")),
                 }
                 for item in _flat(rows, "SsfbCityHourRank")
             ],
         }
 
     async def _county_hour_rank(self, cutoff_iso: str) -> dict[str, Any]:
+        # 区县小时平台只发布 O3 小时值（O3_8H 恒空），展示/排名均用小时 O3
         rows = await cube_load({
             "measures": [
                 "SsfbCountyHourRank.rankAqi", "SsfbCountyHourRank.avgAqi",
-                "SsfbCountyHourRank.avgPm25",
+                "SsfbCountyHourRank.avgPm25", "SsfbCountyHourRank.avgPm10",
+                "SsfbCountyHourRank.avgO3",
+                "SsfbCountyHourRank.rankPm25", "SsfbCountyHourRank.rankPm10",
+                "SsfbCountyHourRank.rankO3",
             ],
             "dimensions": [
                 "SsfbCountyHourRank.county", "SsfbCountyHourRank.quality",
@@ -526,10 +546,74 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                     "rank": _int_or_none(item.get("rankAqi")),
                     "aqi": _int_or_none(item.get("avgAqi")),
                     "pm25": _number(item.get("avgPm25")),
+                    "pm10": _number(item.get("avgPm10")),
+                    "o3": _number(item.get("avgO3")),
                     "quality": _text(item.get("quality")),
                     "primary": _text(item.get("primaryPollutant")),
+                    "rank_pm25": _int_or_none(item.get("rankPm25")),
+                    "rank_pm10": _int_or_none(item.get("rankPm10")),
+                    "rank_o3": _int_or_none(item.get("rankO3")),
                 }
                 for item in _flat(rows, "SsfbCountyHourRank")
+            ],
+        }
+
+    async def _county_day_rank(self) -> dict[str, Any]:
+        """许昌 10 县市区日排名（平台日值口径，与省平台"区县排名"同口径）。
+
+        SsfbCountyDayRank 由 SsfbCountyDay 窗口函数现算（全省 190 区县），
+        这里取最新日（通常为昨日）并按城市过滤；O3 排名基于 O3_8H 滑动值。
+        """
+        latest = await cube_load({
+            "measures": ["SsfbCountyDayRank.count"],
+            "dimensions": ["SsfbCountyDayRank.dataDate"],
+            "order": {"SsfbCountyDayRank.dataDate": "desc"},
+            "limit": 1,
+        })
+        data_date = _text(latest[0].get("SsfbCountyDayRank.dataDate")) if latest else None
+        if not data_date:
+            raise RuntimeError("SsfbCountyDayRank 无日排名期次（区县日值未入库？）")
+        rows = await cube_load({
+            "measures": [
+                "SsfbCountyDayRank.rankAqi", "SsfbCountyDayRank.avgAqi",
+                "SsfbCountyDayRank.avgPm25", "SsfbCountyDayRank.avgPm10",
+                "SsfbCountyDayRank.avgO38h",
+                "SsfbCountyDayRank.rankPm25", "SsfbCountyDayRank.rankPm10",
+                "SsfbCountyDayRank.rankO3",
+            ],
+            "dimensions": [
+                "SsfbCountyDayRank.county", "SsfbCountyDayRank.quality",
+                "SsfbCountyDayRank.primaryPollutant",
+            ],
+            "timeDimensions": [{
+                "dimension": "SsfbCountyDayRank.dataDate",
+                "dateRange": [data_date, data_date],
+            }],
+            "filters": [{
+                "member": "SsfbCountyDayRank.city",
+                "operator": "equals",
+                "values": [XUCHANG_CITY],
+            }],
+            "order": {"SsfbCountyDayRank.rankAqi": "asc"},
+            "limit": 15,
+        })
+        return {
+            "data_date": data_date,
+            "rows": [
+                {
+                    "county": _text(item.get("county")),
+                    "rank": _int_or_none(item.get("rankAqi")),
+                    "aqi": _int_or_none(item.get("avgAqi")),
+                    "pm25": _number(item.get("avgPm25")),
+                    "pm10": _number(item.get("avgPm10")),
+                    "o3_8h": _number(item.get("avgO38h")),
+                    "quality": _text(item.get("quality")),
+                    "primary": _text(item.get("primaryPollutant")),
+                    "rank_pm25": _int_or_none(item.get("rankPm25")),
+                    "rank_pm10": _int_or_none(item.get("rankPm10")),
+                    "rank_o3": _int_or_none(item.get("rankO3")),
+                }
+                for item in _flat(rows, "SsfbCountyDayRank")
             ],
         }
 
@@ -1493,13 +1577,16 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 {"member": "Rank168CityMonthly.periodType", "operator": "equals", "values": ["cum"]},
                 {"member": "Rank168CityMonthly.city", "operator": "equals", "values": [XUCHANG_CITY]},
             ],
-            "order": {"Rank168CityMonthly.periodEnd": "desc"},
-            "limit": 1,
+            # 排序键必须选已在 dimensions 中的成员：periodEnd 不在查询里时
+            # Cube 会静默忽略该排序（实测仍按升序返回），limit 1 会取到最旧期次。
+            "order": {"Rank168CityMonthly.dataMonth": "desc"},
+            "limit": 12,
         })
         if not rows:
             return None
         # Cube 对 time 维度派生列的排序可能按字符串处理，取最新期次在 Python 侧兜底。
-        row = _flat(rows, "Rank168CityMonthly")[0]
+        flat_rows = _flat(rows, "Rank168CityMonthly")
+        row = max(flat_rows, key=lambda item: (_text(item.get("dataMonth")) or ""))
         return {
             "period_label": _text(row.get("periodLabel")),
             "period_type": _text(row.get("periodType")),
@@ -1759,6 +1846,97 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             result[scope] = {"data_month": month[:7], "rows": entries}
         return result
 
+    async def _ssfb_daily_ranking(self) -> dict[str, Any]:
+        """全省 18 市(区)日报排名（最新期次，通常为昨日）+ 许昌昨日单日实况。
+
+        河南省实时发布平台采集口径（SsfbCityRanking 日排名 / SsfbCityDay 日值）：
+        排名由日排名任务对官方发布日值直接排序（PM2.5/PM10/O3 升序 1=最优，
+        并列 1,1,3）；AQI 取 SsfbCityDay 官方日值 AQI，排名在此按同规则现算。
+        与官方月报定版（province_city_ranking 段）互不影响；日值 PM10 源接口
+        2026-10 起不发布，排名表已按小时均值补齐。
+        """
+        latest = await cube_load({
+            "measures": ["SsfbCityRanking.count"],
+            "dimensions": ["SsfbCityRanking.period"],
+            "order": {"SsfbCityRanking.period": "desc"},
+            "limit": 1,
+        })
+        period = _text(latest[0].get("SsfbCityRanking.period")) if latest else None
+        if not period:
+            raise RuntimeError("SsfbCityRanking 无日排名期次（日排名重算任务未运行？）")
+        rows = await cube_load({
+            "measures": [
+                "SsfbCityRanking.avgPm25", "SsfbCityRanking.avgPm10",
+                "SsfbCityRanking.avgO38h", "SsfbCityRanking.rankPm25",
+                "SsfbCityRanking.rankPm10", "SsfbCityRanking.rankO3",
+            ],
+            "dimensions": ["SsfbCityRanking.city"],
+            "filters": [{
+                "member": "SsfbCityRanking.period",
+                "operator": "equals",
+                "values": [period],
+            }],
+            "limit": 20,
+        })
+        entries = [
+            {
+                "city": _text(item.get("city")),
+                "pm25": _number(item.get("avgPm25")),
+                "pm10": _number(item.get("avgPm10")),
+                "o3_8h": _number(item.get("avgO38h")),
+                "rank_pm25": _int_or_none(item.get("rankPm25")),
+                "rank_pm10": _int_or_none(item.get("rankPm10")),
+                "rank_o3": _int_or_none(item.get("rankO3")),
+            }
+            for item in _flat(rows, "SsfbCityRanking")
+        ]
+        entries.sort(key=lambda item: (
+            item["rank_pm25"] is None,
+            item["rank_pm25"] if item["rank_pm25"] is not None else 0,
+        ))
+        # 全市日值一段取齐：AQI（官方日值，排名表无此列）+ 许昌等级/首要污染物
+        day_rows = await cube_load({
+            "measures": [
+                "SsfbCityDay.aqiVal", "SsfbCityDay.avgPm25",
+                "SsfbCityDay.avgPm10", "SsfbCityDay.avgO38h",
+            ],
+            "dimensions": [
+                "SsfbCityDay.city", "SsfbCityDay.quality",
+                "SsfbCityDay.primaryPollutant",
+            ],
+            "timeDimensions": [{
+                "dimension": "SsfbCityDay.dataDate",
+                "dateRange": [period, period],
+            }],
+            "limit": 20,
+        })
+        day_items = _flat(day_rows, "SsfbCityDay")
+        aqi_by_city = {
+            _text(item.get("city")): _int_or_none(item.get("aqiVal"))
+            for item in day_items
+        }
+        for entry in entries:
+            entry["aqi"] = aqi_by_city.get(entry["city"])
+        # AQI 升序竞争排名（并列 1,1,3），缺测不参与
+        known = sorted(aqi for aqi in aqi_by_city.values() if aqi is not None)
+        for entry in entries:
+            aqi = entry["aqi"]
+            entry["rank"] = known.index(aqi) + 1 if aqi is not None else None
+        xuchang = None
+        for item in day_items:
+            if _text(item.get("city")) != XUCHANG_CITY:
+                continue
+            xuchang = {
+                "date": period,
+                "aqi": _int_or_none(item.get("aqiVal")),
+                "pm25": _number(item.get("avgPm25")),
+                "pm10": _number(item.get("avgPm10")),
+                "o3_8h": _number(item.get("avgO38h")),
+                "quality": _text(item.get("quality")),
+                "primary": _text(item.get("primaryPollutant")),
+            }
+        return {"period": period, "rows": entries, "xuchang": xuchang}
+
     async def _city_year_target_official(self) -> dict[str, Any]:
         """许昌市年度目标与实际（官方考核定版）+ 当前在途年度目标。"""
         rows = await cube_load({
@@ -1945,7 +2123,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             cursor.execute(
                 """
                 SELECT forecast_time, temperature, humidity, wind_speed, wind_direction,
-                       precipitation_probability, weather_text, publish_time
+                       wind_direction_degrees, precipitation_probability, weather_text, publish_time
                 FROM dbo.XuchangNmcHourlyWeatherForecast
                 WHERE city_name=N'许昌市' AND forecast_time >= ?
                   AND publish_time=(SELECT MAX(publish_time) FROM dbo.XuchangNmcHourlyWeatherForecast
@@ -1969,6 +2147,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "humidity": _number(item.get("humidity")),
                 "wind_speed": _number(item.get("wind_speed")),
                 "wind_direction": _text(item.get("wind_direction")),
+                "wind_direction_degrees": _number(item.get("wind_direction_degrees")),
                 "precipitation_probability": _number(item.get("precipitation_probability")),
                 "weather_text": _text(item.get("weather_text")),
             } for item in rows],

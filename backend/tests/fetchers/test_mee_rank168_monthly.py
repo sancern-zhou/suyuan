@@ -110,9 +110,9 @@ def test_build_db_rows_month_and_cum_ranks():
     month_rows = [r for r in db_rows if r["PeriodType"] == "month"]
     cum_rows = [r for r in db_rows if r["PeriodType"] == "cum"]
     # 附表序号=当月综合指数排名（降序）
-    assert [r["CompositeIndexRank"] for r in month_rows] == [1, 2, 3]
-    assert [r["Pm25Rank"] for r in month_rows] == [1, 2, 3]
-    assert [r["CompositeIndexRank"] for r in cum_rows] == [1, 2, 3]
+    assert [r["CompositeIndexRankDesc"] for r in month_rows] == [1, 2, 3]
+    assert [r["Pm25RankDesc"] for r in month_rows] == [1, 2, 3]
+    assert [r["CompositeIndexRankDesc"] for r in cum_rows] == [1, 2, 3]
     assert all(r["PeriodEnd"] is None for r in month_rows)
     assert all(r["PeriodEnd"] == date(2026, 9, 30) for r in cum_rows)
     assert month_rows[0]["PeriodLabel"] == "9月"
@@ -126,7 +126,7 @@ def test_build_db_rows_pm25_ties_share_rank():
     rows[1]["month_pm25"] = rows[0]["month_pm25"]  # 前两名并列
     db_rows = build_db_rows(article, rows)
     month_rows = [r for r in db_rows if r["PeriodType"] == "month"]
-    assert [r["Pm25Rank"] for r in month_rows] == [1, 1, 3]
+    assert [r["Pm25RankDesc"] for r in month_rows] == [1, 1, 3]
 
 
 def test_slice_image_produces_requested_count():

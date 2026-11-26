@@ -463,6 +463,26 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_postgres_sql_query", error=str(e))
 
+    # 监测数据 SQL Server 工具（XcAiDb）：仅在部署配置了 XCAI 连接时注册。
+    # 背景：3cab8916（回合江西 SQL 工具双库适配）删除本注册块后，许昌问数模式
+    # 丢失监测数据唯一通道（国控站 5 分钟/小时 = dat_zhongda_station_minute/hour），
+    # 2026-11-26 恢复；未配 SQL Server 的部署保持不注册。
+    try:
+        from app.integrations.xcai_station_sql import xcai_connection_string
+
+        xcai_connection_string()
+        from app.tools.query.execute_sql_query.tool import (
+            ExecuteOpsSQLQueryTool,
+            ExecuteSQLQueryTool,
+        )
+
+        registry.register(ExecuteSQLQueryTool(project_id=context.manifest.project), priority=47)
+        logger.info("tool_loaded", tool="execute_sql_query")
+        registry.register(ExecuteOpsSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_ops_sql_query")
+    except (ImportError, RuntimeError, OSError) as e:
+        logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
+
     # MySQL 采集库长历史数据查询工具（许昌本地站点/城市小时、逐日、PM2.5 年均值）：
     # 模块本体与数据源均属许昌（backend/app/tools/xuchang/），按项目声明启用。
     # 共享 main 不注册（其他部署无许昌采集库，注册也查不到数据）。

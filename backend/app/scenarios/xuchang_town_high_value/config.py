@@ -18,6 +18,7 @@ class HighValueConfig:
     min_level_difference: int = 1
     min_absolute_difference: float = 20.0
     min_relative_difference: float = 0.5
+    # 区县内参与比较的最少周边站数（不含自身）；区县有效站点不足时该区县整组不判定。
     minimum_peer_stations: int = 5
     # 单因子有效高值达到 5 站通常视为大范围污染；若仅一站轻度及以上则优先孤立提醒。
     max_alert_stations: int = 4

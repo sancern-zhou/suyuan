@@ -17,7 +17,9 @@
 
     <div v-show="rows.length" ref="chartEl" class="nmc-chart"></div>
     <div v-if="!rows.length" class="empty-hint">暂无 NMC 气象预报数据</div>
-    <div class="caliber-note">逐3小时 · 7天 · 发布 {{ publishLabel }}</div>
+    <div class="caliber-note">
+      逐3小时 · 7天 · 发布 {{ publishLabel }}<template v-if="metric === 'wind_speed'"> · 箭头指向风的去向</template>
+    </div>
   </section>
 </template>
 
@@ -46,12 +48,53 @@ const publishLabel = computed(() =>
   String(props.forecast?.publish_time || '').replace('T', ' ').slice(5, 16)
 )
 const currentMetric = computed(() => metrics.find(item => item.key === metric.value))
+// 风向箭头：气象角度=风的来向，箭头指向风的去向（+180）
+const WIND_ARROW_PATH = 'path://M0,-7 L4.5,7 L0,4 L-4.5,7 Z'
+const windArrows = computed(() => rows.value
+  .map((row, index) => {
+    const degrees = Number(row.wind_direction_degrees)
+    if (row.wind_speed == null || !Number.isFinite(degrees)) return null
+    return {
+      value: [index, row.wind_speed],
+      symbolRotate: (degrees + 180) % 360
+    }
+  })
+  .filter(Boolean)
+)
 
 const render = () => {
   if (!chart) return
   const meta = currentMetric.value
+  const showArrows = metric.value === 'wind_speed' && windArrows.value.length > 0
+  const series = [{
+    name: meta.label,
+    type: 'line',
+    data: rows.value.map(row => row[meta.key]),
+    showSymbol: false,
+    lineStyle: { width: 2, color: meta.color },
+    itemStyle: { color: meta.color },
+    areaStyle: {
+      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+        { offset: 0, color: meta.color + '55' },
+        { offset: 1, color: meta.color + '00' }
+      ])
+    }
+  }]
+  if (showArrows) {
+    series.push({
+      name: '风向',
+      type: 'scatter',
+      data: windArrows.value,
+      symbol: WIND_ARROW_PATH,
+      symbolSize: 15,
+      symbolOffset: [0, -12],
+      itemStyle: { color: '#c9def2' },
+      z: 5,
+      tooltip: { show: false }
+    })
+  }
   chart.setOption({
-    grid: { left: 36, right: 14, top: 24, bottom: 24 },
+    grid: { left: 36, right: 14, top: showArrows ? 32 : 24, bottom: 24 },
     tooltip: {
       trigger: 'axis',
       backgroundColor: 'rgba(7, 41, 59, 0.95)',
@@ -62,7 +105,8 @@ const render = () => {
         const value = row?.[meta.key]
         return `${String(row?.time || '').replace('T', ' ').slice(5, 16)}<br/>` +
           `${meta.label} ${value ?? '—'} ${meta.unit}<br/>` +
-          `${row?.weather_text || ''} ${row?.wind_direction || ''}`
+          `${row?.weather_text || ''} ${row?.wind_direction || ''}` +
+          (showArrows ? '<br/><span style="color:#8fa8b8">箭头指向风的去向</span>' : '')
       }
     },
     xAxis: {
@@ -86,20 +130,7 @@ const render = () => {
       splitLine: { lineStyle: { color: 'rgba(138, 163, 174, 0.12)' } },
       axisLabel: { color: '#7f9caa', fontSize: 10 }
     },
-    series: [{
-      name: meta.label,
-      type: 'line',
-      data: rows.value.map(row => row[meta.key]),
-      showSymbol: false,
-      lineStyle: { width: 2, color: meta.color },
-      itemStyle: { color: meta.color },
-      areaStyle: {
-        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: meta.color + '55' },
-          { offset: 1, color: meta.color + '00' }
-        ])
-      }
-    }]
+    series
   }, { notMerge: true })
 }
 

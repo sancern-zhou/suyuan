@@ -10,6 +10,7 @@ cube(`SsfbCityDay`, {
 
   measures: {
     count: { type: `count` },
+    aqiVal: { type: `avg`, sql: `NULLIF(AQI, -99)` },
     avgPm25: { type: `avg`, sql: `PM25` },
     avgPm10: { type: `avg`, sql: `PM10` },
     avgO38h: { type: `avg`, sql: `O3_8H` },

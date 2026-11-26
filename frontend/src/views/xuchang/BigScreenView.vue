@@ -8,6 +8,7 @@
       :township-granularity="townshipGranularity"
       :metric="metric"
       :layers="layers"
+      :highlight="highlight"
       @ready="onMapReady"
       @tilt-change="onTiltChange"
     />
@@ -32,11 +33,15 @@
     >{{ leftOpen ? '‹' : '›' }}</button>
 
     <aside v-show="leftOpen" class="side-panel panel-left">
-      <CityStatsRankPanel :stats="store.cityPeriodStats" :province="store.provinceCityRanking" />
-      <CityYearTargetPanel :target="store.cityYearTargetOfficial" />
-      <CountyYearTargetPanel :data="store.countyYearTargets" />
+      <CityStatsRankPanel
+        :city-hour-rank="store.cityHourRank"
+        :daily-ranking="store.ssfbDailyRanking"
+      />
       <Rank168Panel :series="store.rank168Series" />
-      <CountyMonthReportPanel :report="store.countyMonthReport" />
+      <CountyRankPanel
+        :county-hour-rank="store.countyHourRank"
+        :county-day-rank="store.countyDayRank"
+      />
     </aside>
 
     <button
@@ -63,10 +68,8 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import ScreenHeader from '@/components/xuchang/bigscreen/ScreenHeader.vue'
 import CityStatsRankPanel from '@/components/xuchang/bigscreen/CityStatsRankPanel.vue'
-import CityYearTargetPanel from '@/components/xuchang/bigscreen/CityYearTargetPanel.vue'
-import CountyYearTargetPanel from '@/components/xuchang/bigscreen/CountyYearTargetPanel.vue'
 import Rank168Panel from '@/components/xuchang/bigscreen/Rank168Panel.vue'
-import CountyMonthReportPanel from '@/components/xuchang/bigscreen/CountyMonthReportPanel.vue'
+import CountyRankPanel from '@/components/xuchang/bigscreen/CountyRankPanel.vue'
 import AlertListPanel from '@/components/xuchang/bigscreen/AlertListPanel.vue'
 import AirForecastPanel from '@/components/xuchang/bigscreen/AirForecastPanel.vue'
 import NmcForecastPanel from '@/components/xuchang/bigscreen/NmcForecastPanel.vue'
@@ -90,6 +93,7 @@ const capture = captureParams.get('capture') === '1'
 const townshipGranularity = captureParams.get('township_granularity') === 'hour' ? 'hour' : '5min'
 const metric = captureParams.get('metric') || 'pm25'
 const layers = captureParams.get('layers') || ''
+const highlight = captureParams.get('highlight') || ''
 const onMapReady = detail => {
   window.__XUCHANG_BIGSCREEN_CAPTURE__ = { ready: true, page: 'bigscreen', ...detail }
 }

@@ -645,12 +645,8 @@ const modules = filterSidebarModules(allModules, projectConfig.hasModule)
 const showSharedConversations = projectConfig.hasModule('shared-conversations')
 
 // 数据大屏按项目模块声明显隐：project.yaml modules 含 xuchang-air-quality 才展示。
-// 开发阶段仅超级管理员可见。
-const showBigScreen =
-  projectConfig.hasModule('xuchang-air-quality') &&
-  (auth.user?.isAdmin === true ||
-    auth.user?.admin === true ||
-    (Array.isArray(auth.user?.roleCodes) && auth.user.roleCodes.includes('SUYUAN_ADMIN')))
+// 已开放给全部登录用户，不再限超级管理员。
+const showBigScreen = projectConfig.hasModule('xuchang-air-quality')
 
 const SIDEBAR_AGENT_MODE_ENTRIES = {
   query: { action: 'query-dashboard', title: '智能问数', icon: 'query-dashboard' },

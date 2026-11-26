@@ -62,16 +62,28 @@ def _default_handlers() -> dict[str, Any]:
         "SsfbCityHourRank.rankAqi": [
             *_cube_rows("SsfbCityHourRank", {
                 "city": "漯河市", "rankAqi": 1, "avgAqi": 61, "avgPm25": 43,
-                "quality": "良", "primaryPollutant": None,
+                "avgPm10": 81, "avgO3": 96, "rankPm25": 1, "rankPm10": 2,
+                "rankO3": 3, "quality": "良", "primaryPollutant": None,
             }),
             *_cube_rows("SsfbCityHourRank", {
                 "city": "许昌市", "rankAqi": 5, "avgAqi": 82, "avgPm25": 58,
-                "quality": "良", "primaryPollutant": "PM2.5",
+                "avgPm10": 96, "avgO3": 105, "rankPm25": 4, "rankPm10": 6,
+                "rankO3": 8, "quality": "良", "primaryPollutant": "PM2.5",
             }),
         ],
         "SsfbCountyHourRank.rankAqi": _cube_rows("SsfbCountyHourRank", {
             "county": "建安区", "rankAqi": 1, "avgAqi": 79, "avgPm25": 55,
-            "quality": "良", "primaryPollutant": "PM2.5",
+            "avgPm10": 96, "avgO3": 102, "rankPm25": 2, "rankPm10": 3,
+            "rankO3": 4, "quality": "良", "primaryPollutant": "PM2.5",
+        }),
+        # 区县日排名（10 县市区，最新日 + 许昌过滤）
+        "SsfbCountyDayRank.count": _cube_rows("SsfbCountyDayRank", {
+            "dataDate": "2026-10-23T00:00:00.000", "count": 188,
+        }),
+        "SsfbCountyDayRank.rankAqi": _cube_rows("SsfbCountyDayRank", {
+            "county": "襄城县", "rankAqi": 66, "avgAqi": 68, "avgPm25": 47,
+            "avgPm10": 83, "avgO38h": 128, "rankPm25": 3, "rankPm10": 5,
+            "rankO3": 7, "quality": "良", "primaryPollutant": None,
         }),
         # 区县代表点（地图 counties 层）：先探测最新可用小时
         "SsfbCountyHour.count": _cube_rows("SsfbCountyHour", {
@@ -82,12 +94,22 @@ def _default_handlers() -> dict[str, Any]:
             "county": "建安区", "avgPm25": 55,
             "avgPm10": 96, "avgO3": 102, "avgSo2": 8, "avgNo2": 28, "avgCo": 0.6,
         }),
-        # 168 城全国排名（累计期次）
-        "Rank168CityMonthly.compositeIndexRank": _cube_rows("Rank168CityMonthly", {
-            "periodLabel": "1-9月", "periodType": "cum",
-            "compositeIndexRank": 88, "pm25Rank": 102,
-            "compositeIndex": 4.31, "pm25": 43.2,
-        }),
+        # 168 城全国排名（累计期次）：Cube 对 periodEnd 排序可能被静默忽略，
+        # 夹具按升序（最旧在前）返回，断言 fetcher 仍取最新期次 1-9月
+        "Rank168CityMonthly.compositeIndexRank": [
+            *_cube_rows("Rank168CityMonthly", {
+                "periodLabel": "1-1月", "periodType": "cum",
+                "dataMonth": "2026-01-01T00:00:00.000",
+                "compositeIndexRank": 13, "pm25Rank": 7,
+                "compositeIndex": 13.1, "pm25": 83.1,
+            }),
+            *_cube_rows("Rank168CityMonthly", {
+                "periodLabel": "1-9月", "periodType": "cum",
+                "dataMonth": "2026-09-01T00:00:00.000",
+                "compositeIndexRank": 88, "pm25Rank": 102,
+                "compositeIndex": 4.31, "pm25": 43.2,
+            }),
+        ],
         # 数据质量在线率
         "SsfbSiteHour.onlineSites": _cube_rows("SsfbSiteHour", {
             "dataTime": CUTOFF, "city": "许昌市", "onlineSites": 23,
@@ -177,6 +199,33 @@ def _default_handlers() -> dict[str, Any]:
             "pm25": 32.0, "pm10": 60.0, "so2": 10, "no2": 20, "co95": 1.0,
             "o3_8h_90": 175, "goodDays": 200, "heavyDays": 1, "compositeIndex": 7.2,
         }),
+        # ssfb 日报排名段（昨日官方日值 + 许昌昨日单日）
+        "SsfbCityRanking.count": _cube_rows("SsfbCityRanking", {
+            "period": "2026-10-23", "count": 18,
+        }),
+        "SsfbCityRanking.avgPm25": [
+            *_cube_rows("SsfbCityRanking", {
+                "city": "漯河市", "avgPm25": 43.0, "avgPm10": 81.0,
+                "avgO38h": 132.0, "rankPm25": 1, "rankPm10": 2, "rankO3": 4,
+            }),
+            *_cube_rows("SsfbCityRanking", {
+                "city": "许昌市", "avgPm25": 58.0, "avgPm10": 96.0,
+                "avgO38h": 155.0, "rankPm25": 5, "rankPm10": 7, "rankO3": 9,
+            }),
+        ],
+        # 日报排名段：全市日值一段取齐（AQI + 许昌等级/首要污染物）
+        "SsfbCityDay.aqiVal": [
+            *_cube_rows("SsfbCityDay", {
+                "city": "漯河市", "aqiVal": 61, "avgPm25": 43.0,
+                "avgPm10": None, "avgO38h": 132.0,
+                "quality": "良", "primaryPollutant": None,
+            }),
+            *_cube_rows("SsfbCityDay", {
+                "city": "许昌市", "aqiVal": 82, "avgPm25": 58.0,
+                "avgPm10": None, "avgO38h": 155.0,
+                "quality": "良", "primaryPollutant": "PM2.5",
+            }),
+        ],
     }
 
 
@@ -260,6 +309,7 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
             "publish_time": "2026-10-24T14:30:00",
             "rows": [{"time": "2026-10-24T15:00:00", "temperature": 18.0,
                       "humidity": 60, "wind_speed": 3.0, "wind_direction": "北风",
+                      "wind_direction_degrees": 0.0,
                       "precipitation_probability": 10, "weather_text": "多云"}],
         },
     )
@@ -303,7 +353,7 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert result["segments_failed"] == []
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
 
-    assert snapshot["schema_version"] == 2
+    assert snapshot["schema_version"] == 3
     assert snapshot["data_cutoff_hour"] == CUTOFF
     assert snapshot["latest_station_time"] == TOWN_SLOT
     assert snapshot["errors"] is None
@@ -311,10 +361,20 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert snapshot["header"]["aqi"] == 82
     assert snapshot["header"]["quality"] == "良"
     assert snapshot["header"]["met"]["humidity"] == 61
-    # 排名
+    # 排名（实时：AQI/PM2.5/PM10/O3 值 + 分因子排名）
     assert snapshot["city_hour_rank"]["rows"][0]["city"] == "漯河市"
     assert snapshot["city_hour_rank"]["rows"][1]["rank"] == 5
+    assert snapshot["city_hour_rank"]["rows"][1]["pm10"] == 96
+    assert snapshot["city_hour_rank"]["rows"][1]["o3"] == 105
+    assert snapshot["city_hour_rank"]["rows"][1]["rank_pm25"] == 4
+    assert snapshot["city_hour_rank"]["rows"][1]["rank_o3"] == 8
     assert snapshot["county_hour_rank"]["rows"][0]["county"] == "建安区"
+    assert snapshot["county_hour_rank"]["rows"][0]["rank_pm10"] == 3
+    assert snapshot["county_hour_rank"]["rows"][0]["o3"] == 102
+    assert snapshot["county_day_rank"]["data_date"].startswith("2026-10-23")
+    assert snapshot["county_day_rank"]["rows"][0]["county"] == "襄城县"
+    assert snapshot["county_day_rank"]["rows"][0]["aqi"] == 68
+    assert snapshot["county_day_rank"]["rows"][0]["rank_o3"] == 7
     # 达标：官方累计截至 9 月，本地 10 月自算 14 天中 14 天优良
     assert snapshot["year_target"]["official_cum"]["as_of_month"] == "2026-09"
     local = snapshot["year_target"]["local_since_official"]
@@ -396,6 +456,22 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert snapshot["quality"]["town_hour"]["data_time"] == TOWN_SLOT
     # 播报
     assert snapshot["broadcast"][0]["task_name"] == "站点日污染溯源报告"
+    # ssfb 日报排名段：最新期次 + PM2.5 升序 + 分因子排名 + AQI（官方日值现算排名）
+    daily_rank = snapshot["ssfb_daily_ranking"]
+    assert daily_rank["period"] == "2026-10-23"
+    assert [row["city"] for row in daily_rank["rows"]] == ["漯河市", "许昌市"]
+    assert daily_rank["rows"][1]["rank_pm25"] == 5
+    assert daily_rank["rows"][1]["rank_pm10"] == 7
+    assert daily_rank["rows"][1]["rank_o3"] == 9
+    assert daily_rank["rows"][0]["aqi"] == 61
+    assert daily_rank["rows"][0]["rank"] == 1
+    assert daily_rank["rows"][1]["aqi"] == 82
+    assert daily_rank["rows"][1]["rank"] == 2
+    assert daily_rank["xuchang"]["date"] == "2026-10-23"
+    assert daily_rank["xuchang"]["quality"] == "良"
+    assert daily_rank["xuchang"]["primary"] == "PM2.5"
+    assert daily_rank["xuchang"]["pm25"] == 58.0
+    assert daily_rank["xuchang"]["pm10"] is None
 
 
 async def test_segment_failure_degrades_without_killing_screen(monkeypatch, registry):
@@ -413,6 +489,25 @@ async def test_segment_failure_degrades_without_killing_screen(monkeypatch, regi
     assert "语义层排队超时" in snapshot["errors"]["city_hour_rank"]
     assert snapshot["header"]["aqi"] == 82
     assert result["segments_failed"] == ["city_hour_rank"]
+
+
+async def test_ssfb_daily_ranking_failure_degrades(monkeypatch, registry):
+    """日报排名段独立降级：任务未跑出期次时整屏其余段不受影响。"""
+    handlers = _default_handlers()
+    handlers["SsfbCityRanking.count"] = []
+    _write_episode_state(registry, {"active": [], "history": []})
+
+    fetcher = _make_fetcher(monkeypatch, handlers)
+    result = await fetcher.fetch_and_store()
+
+    snapshot = json.loads(
+        (registry / SNAPSHOT_DIR / SNAPSHOT_FILE).read_text(encoding="utf-8")
+    )
+    assert snapshot["ssfb_daily_ranking"] is None
+    assert "无日排名期次" in snapshot["errors"]["ssfb_daily_ranking"]
+    # 与日报段无依赖的段照常生成
+    assert snapshot["province_city_ranking"]["month"]["rows"]
+    assert result["segments_failed"] == ["ssfb_daily_ranking"]
 
 
 async def test_cutoff_missing_skips_realtime_segments(monkeypatch, registry):

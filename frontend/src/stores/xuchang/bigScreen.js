@@ -17,6 +17,7 @@ export const useBigScreenStore = defineStore('bigScreen', {
     header: state => state.snapshot?.header || null,
     cityHourRank: state => state.snapshot?.city_hour_rank || null,
     countyHourRank: state => state.snapshot?.county_hour_rank || null,
+    countyDayRank: state => state.snapshot?.county_day_rank || null,
     cityTrend: state => state.snapshot?.city_trend_24h || null,
     forecast: state => state.snapshot?.forecast_72h || null,
     yearTarget: state => state.snapshot?.year_target || null,
@@ -28,12 +29,10 @@ export const useBigScreenStore = defineStore('bigScreen', {
     rank168: state => state.snapshot?.rank168 || null,
     minute: state => state.snapshot?.minute || null,
     quality: state => state.snapshot?.quality || null,
-    cityPeriodStats: state => state.snapshot?.city_period_stats || null,
-    provinceCityRanking: state => state.snapshot?.province_city_ranking || null,
+    ssfbDailyRanking: state => state.snapshot?.ssfb_daily_ranking || null,
     cityYearTargetOfficial: state => state.snapshot?.city_year_target_official || null,
     countyYearTargets: state => state.snapshot?.county_year_targets || null,
     rank168Series: state => state.snapshot?.rank168_series || null,
-    countyMonthReport: state => state.snapshot?.county_month_report || null,
     nmcForecast: state => state.snapshot?.nmc_forecast || null
   },
   actions: {

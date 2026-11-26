@@ -23,9 +23,28 @@ def client(tmp_path, monkeypatch):
     )
     app = FastAPI()
     app.include_router(router)
-    # 大屏页面开发阶段仅超级管理员可见：require_dashboard_reader 校验 is_admin
+    # 大屏已开放给全部登录用户：require_dashboard_reader 只要求已登录
     app.dependency_overrides[optional_current_user] = lambda: SimpleNamespace(is_admin=True)
     return TestClient(app)
+
+
+def test_non_admin_authenticated_user_can_read_snapshot(tmp_path, monkeypatch):
+    """大屏开放给所有登录用户：非管理员登录身份不再 403。"""
+    monkeypatch.setattr(
+        "app.api.xuchang_dashboard_routes.get_data_registry",
+        lambda: tmp_path,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[optional_current_user] = lambda: SimpleNamespace(
+        is_admin=False
+    )
+    non_admin_client = TestClient(app)
+    _write_snapshot(tmp_path, {"schema_version": 1, "header": {"aqi": 82}})
+
+    response = non_admin_client.get("/api/xuchang-dashboard/screen-snapshot")
+    assert response.status_code == 200
+    assert response.json()["header"]["aqi"] == 82
 
 
 @pytest.fixture
@@ -178,16 +197,35 @@ def test_asset_route_404_for_missing_file(client, tmp_path):
 
 def test_station_series_queries_selected_metric(client, monkeypatch):
     async def fake_cube_load(query):
-        assert query["measures"] == ["TownFiveMinute.avgPm25"]
+        assert query["measures"] == ["TownFiveMinute.avgPm10"]
         assert query["filters"][0]["values"] == ["禹州市范坡镇"]
-        return [{"TownFiveMinute.dataTime": "2026-11-23T21:05:00", "TownFiveMinute.avgPm25": 61.2}]
+        return [{"TownFiveMinute.dataTime": "2026-11-23T21:05:00", "TownFiveMinute.avgPm10": 61.2}]
+
+    monkeypatch.setattr("app.tools.query.xuchang_cube_metrics.tool.cube_load", fake_cube_load)
+    response = client.get("/api/xuchang-dashboard/station-series", params={
+        "station_name": "禹州市范坡镇", "station_type": "township", "metric": "pm10",
+    })
+    assert response.status_code == 200
+    assert response.json()["points"] == [{"time": "2026-11-23T21:05:00", "value": 61}]
+
+
+def test_pm25_series_forced_to_hour_caliber(client, monkeypatch):
+    """PM2.5 固定小时口径：显式传 5min 也强制走 TownHour(app) 小时值。"""
+    async def fake_cube_load(query):
+        assert query["measures"] == ["TownHour.avgPm25"]
+        caliber = next(f for f in query["filters"] if f["member"] == "TownHour.caliber")
+        assert caliber["values"] == ["app"]
+        return [{"TownHour.dataTime": "2026-11-23T21:00:00", "TownHour.avgPm25": 61.2}]
 
     monkeypatch.setattr("app.tools.query.xuchang_cube_metrics.tool.cube_load", fake_cube_load)
     response = client.get("/api/xuchang-dashboard/station-series", params={
         "station_name": "禹州市范坡镇", "station_type": "township", "metric": "pm25",
+        "granularity": "5min",
     })
     assert response.status_code == 200
-    assert response.json()["points"] == [{"time": "2026-11-23T21:05:00", "value": 61}]
+    payload = response.json()
+    assert payload["granularity"] == "hour"
+    assert payload["points"] == [{"time": "2026-11-23T21:00:00", "value": 61}]
 
 
 def test_office_unsupported_metric_returns_empty_without_query(client):
@@ -241,8 +279,9 @@ def test_national_series_normalizes_platform_station_suffix(monkeypatch):
 
 
 def test_shengkong_does_not_fake_five_minute_series(client):
+    # PM2.5 已强制小时口径，这里用 PM10 验证省控 5 分钟 guard
     response = client.get("/api/xuchang-dashboard/station-series", params={
-        "station_name": "禹州神龙公司", "station_type": "shengkong", "metric": "pm25",
+        "station_name": "禹州神龙公司", "station_type": "shengkong", "metric": "pm10",
         "granularity": "5min",
     })
     assert response.status_code == 200

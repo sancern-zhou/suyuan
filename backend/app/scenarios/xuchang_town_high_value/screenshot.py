@@ -40,6 +40,14 @@ def capture_township_hour_map(
         "capture": "1", "township_granularity": "hour",
         "layers": ",".join(CAPTURE_LAYERS), "metric": metric,
     }
+    # 告警高值站传给截图页，地图上加"高值"角标，方便用户在图中定位告警站点
+    highlight_names = sorted({
+        str(item.get("station_name") or "").strip()
+        for group in groups for item in (group.get("stations") or [])
+        if str(item.get("station_name") or "").strip()
+    })
+    if highlight_names:
+        query["highlight"] = ",".join(highlight_names)
     token = getattr(settings, "dashboard_access_token", "")
     if token:
         query["access_token"] = token
@@ -53,7 +61,9 @@ def capture_township_hour_map(
         browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
         try:
             context = browser.new_context(
-                viewport={"width": 1600, "height": 1000}, device_scale_factor=1
+                # 画布尺寸与 StationMapPanel 的 CAPTURE_CANVAS 保持一致：
+                # 平面视角按市界精确取景（像素级留白），市界占约九成画面且完整不裁边
+                viewport={"width": 1600, "height": 1200}, device_scale_factor=1
             )
             page = context.new_page()
             page.set_default_timeout(90_000)

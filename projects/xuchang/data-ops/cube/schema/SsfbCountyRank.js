@@ -29,8 +29,8 @@ cube(`SsfbCountyHourRank`, {
            ELSE RANK() OVER (PARTITION BY DataTime ORDER BY PM25 ASC) END AS rank_pm25,
       CASE WHEN PM10 IS NULL THEN NULL
            ELSE RANK() OVER (PARTITION BY DataTime ORDER BY PM10 ASC) END AS rank_pm10,
-      CASE WHEN O3_8H IS NULL THEN NULL
-           ELSE RANK() OVER (PARTITION BY DataTime ORDER BY O3_8H ASC) END AS rank_o3,
+      CASE WHEN O3 IS NULL THEN NULL
+           ELSE RANK() OVER (PARTITION BY DataTime ORDER BY O3 ASC) END AS rank_o3,
       CASE WHEN NO2 IS NULL THEN NULL
            ELSE RANK() OVER (PARTITION BY DataTime ORDER BY NO2 ASC) END AS rank_no2,
       CASE WHEN SO2 IS NULL THEN NULL
@@ -53,6 +53,8 @@ cube(`SsfbCountyHourRank`, {
     avgAqi: { type: `avg`, sql: `aqi_val` },
     avgPm25: { type: `avg`, sql: `pm25_val` },
     avgPm10: { type: `avg`, sql: `pm10_val` },
+    // 区县小时平台只发 O3 小时值（O3_8H 恒空，实测 0/10125 非空），展示与排名均用小时值
+    avgO3: { type: `avg`, sql: `o3_val` },
     avgO38h: { type: `avg`, sql: `o3_8h_val` },
     avgNo2: { type: `avg`, sql: `no2_val` },
     avgSo2: { type: `avg`, sql: `so2_val` },

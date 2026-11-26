@@ -129,9 +129,9 @@ class XuchangMonthlyReviewEvidenceFetcher(DataFetcher):
             query_crawler_mysql(
                 """
                 SELECT City, PeriodType, DataMonth, PeriodLabel,
-                       CompositeIndex, CompositeIndexRank, Pm25, Pm25Rank
+                       CompositeIndex, CompositeIndexRankDesc, Pm25, Pm25RankDesc
                 FROM Rank168CityMonthly
-                WHERE PeriodType = 'monthly'
+                WHERE PeriodType = 'month'
                 ORDER BY DataMonth DESC
                 LIMIT 400
                 """
