@@ -176,6 +176,66 @@ class Win32WindowApi:
         )
 
 
+def describe_window_for_diagnostics(window: WindowInfo) -> str:
+    """把窗口原始属性与识别结论压成一行，供"未找到主窗"时定位真值。
+
+    只读、不改变任何状态；列出被拒绝的具体原因（进程名查询失败、标题不符、
+    尺寸低于阈值），避免事后只能靠系统事件猜测。
+    """
+    process = window.process_name.strip().lower()
+    reasons: list[str] = []
+    if process != PERSONAL_WECHAT_PROCESS:
+        reasons.append(f"process={process or '查询失败'}")
+    title = window.title.strip()
+    if "企业微信" in title or "wecom" in title.lower():
+        reasons.append("企业微信标题")
+    elif not _title_matches(title):
+        reasons.append(f"title={title!r}")
+    width, height = window.width, window.height
+    if width <= 0 or height <= 0:
+        reasons.append(f"size={width}x{height}非正")
+    elif not (
+        width >= MIN_WINDOW_SIZE
+        or height >= MIN_WINDOW_SIZE
+        or (width < height and height >= MIN_WINDOW_PORTRAIT)
+    ):
+        reasons.append(f"size={width}x{height}低于阈值")
+    verdict = "ACCEPT" if is_personal_wechat_main(window) else "reject:" + ";".join(reasons)
+    return (
+        f"hwnd=0x{window.hwnd:x} pid={window.pid} class={window.class_name!r} "
+        f"{'visible' if window.visible else 'hidden'} rect={window.rect} -> {verdict}"
+    )
+
+
+def _emit_window_diagnostics(windows: Iterable[WindowInfo], emit) -> None:
+    """找不到主窗时输出枚举真值：微信相关窗口逐条列出，其余应用只计数。"""
+    related, other = [], 0
+    for window in windows:
+        process = window.process_name.strip().lower()
+        if (
+            process in (PERSONAL_WECHAT_PROCESS, WECOM_PROCESS)
+            or not process
+            or _title_matches(window.title)
+            or "企业微信" in window.title
+            or window.class_name.startswith(MAIN_CLASS_PREFIX)
+        ):
+            related.append(window)
+        else:
+            other += 1
+    if not related:
+        emit(
+            f"[warn] 诊断：本次 {other} 个候选窗口中没有任何微信相关窗口"
+            "（主窗可能未创建、已销毁，或标题/类名读取异常被前置过滤）"
+        )
+        return
+    emit(
+        f"[warn] 诊断：本次枚举 {len(related) + other} 个候选，"
+        f"其中 {len(related)} 个微信相关（其余 {other} 个为其他应用），逐条："
+    )
+    for window in related:
+        emit("  " + describe_window_for_diagnostics(window))
+
+
 def find_and_restore_personal_wechat_main(
     api=None,
     *,
@@ -204,6 +264,7 @@ def find_and_restore_personal_wechat_main(
     )
     if hidden is None:
         emit("[warn] 未找到个人微信主窗口（仅识别 Weixin.exe，已排除企业微信 WXWork.exe）")
+        _emit_window_diagnostics(windows, emit)
         return 0
 
     emit(f"[info] 发现隐藏的个人微信主窗口 hwnd=0x{hidden.hwnd:x}，尝试恢复")

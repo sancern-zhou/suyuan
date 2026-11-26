@@ -143,5 +143,46 @@ class WindowRecoveryTests(unittest.TestCase):
         self.assertTrue(any("仍不可见" in line for line in logs))
 
 
+class WindowDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def recover(self, api, logs):
+        return find_and_restore_personal_wechat_main(
+            api,
+            logger=logs.append,
+            timeout_seconds=0.6,
+            clock=self.clock,
+            sleep=self.sleep,
+        )
+
+    def test_not_found_logs_size_rejection_reason(self):
+        small = make_window(60, title="微信", rect=(0, 0, 500, 400), visible=False)
+        logs = []
+        self.assertEqual(self.recover(FakeWindowApi([small]), logs), 0)
+        joined = "\n".join(logs)
+        self.assertIn("诊断", joined)
+        self.assertIn("size=500x400低于阈值", joined)
+
+    def test_not_found_logs_process_lookup_failure(self):
+        no_process = make_window(61, process="", visible=False)
+        logs = []
+        self.assertEqual(self.recover(FakeWindowApi([no_process]), logs), 0)
+        self.assertIn("process=查询失败", "\n".join(logs))
+
+    def test_not_found_with_only_unrelated_windows_reports_absence(self):
+        other = make_window(62, process="other.exe", title="记事本", class_name="Notepad")
+        logs = []
+        self.assertEqual(self.recover(FakeWindowApi([other]), logs), 0)
+        joined = "\n".join(logs)
+        self.assertIn("没有任何微信相关窗口", joined)
+
+
 if __name__ == "__main__":
     unittest.main()
