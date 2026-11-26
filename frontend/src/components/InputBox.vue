@@ -1435,17 +1435,20 @@ const processFiles = async (files) => {
     // 添加到附件列表
     attachments.value.push(attachment)
 
-    // 上传文件
+    // 上传文件（挂到当前输入框所属模式的会话：浮窗助手等场景不切换全局模式，
+    // 全局 currentState 可能停在其他模式的会话，跨会话引用会被后端 409 拒绝）
     try {
-      if (!reactStore.currentState?.sessionId) {
+      const uploadMode = props.agentMode || props.assistantMode || reactStore.currentMode
+      let uploadSessionId = props.sessionId
+      if (!uploadSessionId) {
         selectionRestoreGuard.invalidate()
         restoringSelection = false
-        reactStore.createSessionId()
+        uploadSessionId = reactStore.ensureModeSessionId(uploadMode)
       }
       const result = await uploadChatFile(
         file,
-        reactStore.currentState?.sessionId,
-        reactStore.currentMode
+        uploadSessionId,
+        uploadMode
       )
       completeUploadedAttachment(attachments.value, attachment, result)
       const [resource] = normalizeConversationResources({ resources: [result.resource_ref] })

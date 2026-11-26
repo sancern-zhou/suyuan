@@ -1121,6 +1121,27 @@ export const useReactStore = defineStore('react', {
       }
     },
 
+    // 为指定模式解析（必要时创建）会话 ID：与该模式发送路径（startAnalysis）同一状态源，
+    // 不切换全局 currentMode。上传附件等先于发送的动作必须挂到模式自己的会话上
+    //（浮窗助手不切全局模式，全局 currentState 可能停在其他模式的会话），
+    // 否则附件资源注册在 A 会话、分析请求发给 B 会话，后端按无效引用拒绝（409）。
+    ensureModeSessionId(mode = null) {
+      const targetMode = VALID_MODES.includes(mode) ? mode : this.currentMode
+      const activeId = this.activeSessionByMode[targetMode]
+      if (activeId && this.sessionStates[activeId]?.sessionId) return activeId
+      const modeState = this.modeStates[targetMode]
+      if (modeState?.sessionId) {
+        this.activeSessionByMode[targetMode] = modeState.sessionId
+        return modeState.sessionId
+      }
+      const sessionId = `${targetMode}_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      const sessionState = this._ensureSessionState(sessionId, targetMode)
+      this.activeSessionByMode[targetMode] = sessionId
+      sessionState.sessionId = sessionId
+      console.log('[ensureModeSessionId] Created session for', targetMode, ':', sessionId)
+      return sessionId
+    },
+
     // 重置当前模式的会话
     reset() {
       const mode = this.currentMode
