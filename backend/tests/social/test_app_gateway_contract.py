@@ -259,10 +259,40 @@ def test_company_identity_token_pair_round_trip_without_local_account(monkeypatc
         auth_source="company",
         username="company.user",
         sys_code="SUYUAN",
+        role_codes=("agent.user", "agent.admin"),
     )
     access, refresh, _, _ = app_identity.issue_token_pair(identity)
-    assert app_identity.resolve_access_token(access).as_current_user().auth_source == "company"
-    assert app_identity.resolve_refresh_token(refresh).username == "company.user"
+    resolved_access = app_identity.resolve_access_token(access)
+    assert resolved_access.as_current_user().auth_source == "company"
+    assert resolved_access.as_current_user().role_codes == ("agent.user", "agent.admin")
+    resolved_refresh = app_identity.resolve_refresh_token(refresh)
+    assert resolved_refresh.username == "company.user"
+    assert resolved_refresh.role_codes == ("agent.user", "agent.admin")
+    # 刷新换发后角色码继续保留（长期 refresh 链不掉权限）
+    access2, refresh2, _, _ = app_identity.issue_token_pair(resolved_refresh)
+    assert app_identity.resolve_access_token(access2).role_codes == ("agent.user", "agent.admin")
+    assert app_identity.resolve_refresh_token(refresh2).role_codes == ("agent.user", "agent.admin")
+
+
+def test_app_source_tokens_do_not_carry_roles(monkeypatch):
+    monkeypatch.setattr(app_identity.settings, "app_auth_secret", "test-signing-secret")
+    monkeypatch.setattr(
+        app_identity.settings,
+        "app_accounts_json",
+        '{"android_demo": {"secret": "s", "name": "演示用户", "status": "active"}}',
+    )
+    identity = app_identity.AppIdentity(
+        "android_demo",
+        "演示用户",
+        "app:android:android_demo",
+        0,
+        auth_source="app",
+        username="android_demo",
+        sys_code="SUYUAN_APP",
+    )
+    access, refresh, _, _ = app_identity.issue_token_pair(identity)
+    assert app_identity.resolve_access_token(access).role_codes == ()
+    assert app_identity.resolve_refresh_token(refresh).role_codes == ()
 
 
 @pytest.mark.asyncio

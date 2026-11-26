@@ -17,6 +17,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.view.View
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.webkit.WebView
@@ -57,6 +58,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -95,11 +97,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -111,15 +115,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.roundToInt
+
+// 体验调优期暂时下线的入口；面板代码保留，恢复开放时改回 true 并补回入口接线。
+// 注意：三 tab 导航后共享对话在顶栏没有挂载点，恢复时需在任务 tab 子切换或对话
+// 顶栏重新接入（SharedConversationsPanel 仍可复用）。
+private const val SHOW_ASSISTANT_MODE_ENTRY = false
+private const val SHOW_SHARED_CONVERSATIONS_ENTRY = false
 
 class MainActivity : ComponentActivity() {
     private var oauthCallback by mutableStateOf<Uri?>(null)
@@ -226,17 +239,32 @@ private fun FilterDropdown(
 ) {
     Box(modifier) {
         var expanded by remember { mutableStateOf(false) }
-        TextButton(
-            onClick = { expanded = true },
-            modifier = Modifier.defaultMinSize(minWidth = 1.dp),
-            contentPadding = PaddingValues(horizontal = 4.dp),
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White, RoundedCornerShape(8.dp))
+                .border(
+                    1.dp,
+                    if (selected == null) SuyuanColors.border else SuyuanColors.primary.copy(alpha = 0.45f),
+                    RoundedCornerShape(8.dp),
+                )
+                .clickable { expanded = true }
+                .padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
         ) {
             Text(
                 if (selected == null) "$label: 全部" else "$label: $selected",
-                color = SuyuanColors.primary,
+                color = if (selected == null) SuyuanColors.secondaryText else SuyuanColors.primary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                painterResource(R.drawable.ic_chevron_down),
+                contentDescription = null,
+                tint = SuyuanColors.secondaryText,
+                modifier = Modifier.size(14.dp),
             )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -252,6 +280,22 @@ private fun FilterDropdown(
             }
         }
     }
+}
+
+/** 广播卡片上的站点/污染物小标签 */
+@Composable
+private fun BroadcastTag(text: String) {
+    Text(
+        text,
+        fontSize = 10.sp,
+        color = Color(0xFF4A5058),
+        maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        modifier = Modifier
+            .padding(end = 6.dp)
+            .background(Color(0xFFF0F1F4), RoundedCornerShape(4.dp))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+    )
 }
 
 @Composable
@@ -361,19 +405,23 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
             if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
             else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
-        TextButton(
-            onClick = { viewModel.startCompanyLogin(context) },
-            enabled = !state.loading,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        ) {
-            Text("公司统一登录", color = SuyuanColors.primary, fontSize = 15.sp)
+        // 登录页每次出现都重探一次公司登录可用性（后端注册 client 后入口自动出现）。
+        LaunchedEffect(Unit) { viewModel.checkCompanyLoginAvailability() }
+        if (state.companyLoginAvailable) {
+            TextButton(
+                onClick = { viewModel.startCompanyLogin(context) },
+                enabled = !state.loading,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                Text("公司统一登录", color = SuyuanColors.primary, fontSize = 15.sp)
+            }
         }
         state.error?.let { Text(it, color = SuyuanColors.error, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp)) }
     }
 }
 
 @Composable
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -393,19 +441,39 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var requestKeyboardFocus by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
-    var showBroadcasts by remember { mutableStateOf(false) }
-    var showReports by remember { mutableStateOf(false) }
-    var showShared by remember { mutableStateOf(false) }
-    LaunchedEffect(showHistory, showBroadcasts, showReports, showShared) {
-        viewModel.setChatVisible(!showHistory && !showBroadcasts && !showReports && !showShared)
+    // 四 tab 导航：chat（对话）/ watch（巡查快报）/ map（实时地图）/ tasks（任务中心）。
+    // 历史会话仍是对话 tab 内的覆盖层；共享对话入口由特性开关下线（面板代码保留）。
+    var currentTab by rememberSaveable { mutableStateOf("chat") }
+    var tasksSubTab by rememberSaveable { mutableStateOf("reports") }
+    val dashboardConfigured = remember {
+        BuildConfig.WEB_FRONTEND_URL.isNotBlank() &&
+            BuildConfig.DASHBOARD_ACCESS_TOKEN.isNotBlank() &&
+            dashboardEntryUrl(BuildConfig.WEB_FRONTEND_URL, "/fieldwatch", BuildConfig.DASHBOARD_ACCESS_TOKEN) != null
     }
-    var selectedTaskId by remember { mutableStateOf<String?>(null) }
-    // 系统返回（侧滑/返回键）在面板打开时先回对话页，而不是走 Activity 默认行为直接退出。
-    BackHandler(enabled = showHistory || showBroadcasts || showReports || showShared) {
-        showHistory = false
-        showBroadcasts = false
-        showReports = false
-        showShared = false
+    var inputFocused by remember { mutableStateOf(false) }
+    // 底部 tab 栏隐藏信号 = 键盘真实占位。不用 WindowInsets.isImeVisible：它读的是系统的
+    // "可见性"标志位，且只在该类 inset 发生变化时刷新；本应用未开边到边，Compose 侧 IME
+    // inset 通常恒为 0，标志位会停在首帧的值（HarmonyOS 实测停在 true，底栏永久隐藏）。
+    // 输入框聚焦也不等于键盘弹出：收起键盘后焦点往往还在，只作为不下发 IME inset 的
+    // API 30 以下的退路。
+    val view = LocalView.current
+    // 窗口根 inset 不是 Compose 状态：DecorView 为键盘让位（内容区尺寸变化）时重读 IME 高度。
+    var rootImeBottom by remember { mutableIntStateOf(0) }
+    fun refreshRootIme() {
+        rootImeBottom = ViewCompat.getRootWindowInsets(view)
+            ?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+    }
+    val keyboardUp = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        currentTab == "chat" && inputFocused
+    } else {
+        WindowInsets.ime.getBottom(LocalDensity.current) > 0 || rootImeBottom > 0
+    }
+    LaunchedEffect(currentTab, showHistory) {
+        viewModel.setChatVisible(currentTab == "chat" && !showHistory)
+    }
+    // 系统返回（侧滑/返回键）：历史面板先收起，非对话 tab 回对话，而不是直接退出 Activity。
+    BackHandler(enabled = showHistory || currentTab != "chat") {
+        if (showHistory) showHistory = false else currentTab = "chat"
     }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     val scope = rememberCoroutineScope()
@@ -526,30 +594,44 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(SuyuanColors.background)) {
+    Box(Modifier.fillMaxSize().background(SuyuanColors.background).onSizeChanged { refreshRootIme() }) {
         Column(Modifier.fillMaxSize()) {
-        AppTopBar(
+            AppTopBar(
+            currentTab = currentTab,
             showHistory = showHistory,
-            showBroadcasts = showBroadcasts,
-            showReports = showReports,
-            showShared = showShared,
-            taskTitles = state.scheduledTasks.map { it.taskId to it.name },
-            onSelectTask = { selectedTaskId = it },
-            onHistory = { showHistory = true; showBroadcasts = false; showReports = false; showShared = false },
-            onBack = { showHistory = false; showBroadcasts = false; showReports = false; showShared = false },
-            onBroadcasts = { showBroadcasts = true; showHistory = false; showReports = false; showShared = false; viewModel.openBroadcasts() },
-                onReports = { selectedTaskId = null; showReports = true; showHistory = false; showBroadcasts = false; showShared = false; viewModel.refreshScheduledTasks() },
-            onShared = { showShared = true; showHistory = false; showBroadcasts = false; showReports = false; viewModel.loadSharedConversations() },
-            unreadBroadcastCount = state.unreadBroadcastCount,
-            unreadReportCount = state.reportUnreadCount,
-            onNew = { showHistory = false; showBroadcasts = false; showReports = false; showShared = false; viewModel.newConversation() },
+            accountName = state.displayName.ifBlank { state.accountId },
+            onLogout = { viewModel.logout() },
+            onHistory = { showHistory = true },
+            onBack = { showHistory = false },
+            onNew = { showHistory = false; viewModel.newConversation() },
         )
-        if (showShared) {
-            SharedConversationsPanel(state, viewModel, onBack = { showShared = false })
-        } else if (showReports) {
-            ScheduledTaskPanel(state, viewModel, selectedTaskId, onSession = { showReports = false })
-        } else if (showBroadcasts) {
-            BroadcastPanel(state, viewModel, onBack = { showBroadcasts = false })
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+        if (currentTab == "watch") {
+            DashboardWebViewScreen(
+                entryUrl = dashboardEntryUrl(
+                    BuildConfig.WEB_FRONTEND_URL, "/fieldwatch", BuildConfig.DASHBOARD_ACCESS_TOKEN
+                ),
+                allowedBaseUrl = BuildConfig.WEB_FRONTEND_URL
+            )
+        } else if (currentTab == "map") {
+            DashboardWebViewScreen(
+                entryUrl = dashboardEntryUrl(
+                    BuildConfig.WEB_FRONTEND_URL, "/mobile-map", BuildConfig.DASHBOARD_ACCESS_TOKEN
+                ),
+                allowedBaseUrl = BuildConfig.WEB_FRONTEND_URL
+            )
+        } else if (currentTab == "tasks") {
+            Column(Modifier.fillMaxSize().background(Color(0xFFF4F5F7))) {
+                TasksSubTabRow(tasksSubTab, state.unreadBroadcastCount) { sub ->
+                    tasksSubTab = sub
+                    if (sub == "broadcasts") viewModel.openBroadcasts()
+                }
+                if (tasksSubTab == "broadcasts") {
+                    BroadcastPanel(state, viewModel)
+                } else {
+                    ScheduledTaskPanel(state, viewModel, onSession = { currentTab = "chat" })
+                }
+            }
         } else if (showHistory) {
             HistoryPanel(state, viewModel, onBack = { showHistory = false })
         } else Column(Modifier.fillMaxSize()) {
@@ -557,7 +639,9 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 Surface(
                     color = SuyuanColors.primary.copy(alpha = .08f),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth().padding(top = 6.dp).clickable { showBroadcasts = true; viewModel.openBroadcasts() },
+                    modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth().padding(top = 6.dp).clickable {
+                        tasksSubTab = "broadcasts"; currentTab = "tasks"; viewModel.openBroadcasts()
+                    },
                 ) {
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Icon(painterResource(R.drawable.ic_broadcast), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(18.dp))
@@ -619,8 +703,9 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x22000000), spotColor = Color(0x18000000))
                 .border(1.dp, Color(0xFFE7E9EE), RoundedCornerShape(22.dp))
                 .padding(vertical = 8.dp)
-                .imePadding()
-                .navigationBarsPadding(),
+                .imePadding(),
+                // 底部导航栏（BottomNavBar）已消费导航栏 inset，键盘弹起时导航栏隐藏、
+                // 由 imePadding 把输入框顶到键盘上方，这里不再叠加 navigationBarsPadding。
         ) {
             Column {
             Row(
@@ -675,7 +760,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                         contentAlignment = androidx.compose.ui.Alignment.Center,
                     ) {
                         Icon(
-                            painterResource(R.drawable.ic_voice_right),
+                            painterResource(R.drawable.ic_voice_wave),
                             contentDescription = if (recording) "松开停止" else "按住切换语音输入",
                             tint = if (recording) SuyuanColors.error else SuyuanColors.controlIcon,
                             modifier = Modifier.size(16.dp),
@@ -684,7 +769,8 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     BasicTextField(
                         value = state.draft,
                         onValueChange = viewModel::updateDraft,
-                        modifier = Modifier.weight(1f).heightIn(min = 40.dp, max = 72.dp).focusRequester(focusRequester),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp, max = 72.dp).focusRequester(focusRequester)
+                            .onFocusChanged { inputFocused = it.isFocused },
                         enabled = true,
                         minLines = 1,
                         maxLines = 4,
@@ -759,18 +845,20 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     }
                 }
             }
-            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("auto" to "自动", "fast" to "快速模式", "deep" to "深度思考").forEach { (tier, label) ->
-                    val selected = state.modelTier == tier
-                    Text(label, color = if (selected) SuyuanColors.primary else SuyuanColors.secondaryText, fontSize = 12.sp,
-                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (selected) SuyuanColors.primary.copy(alpha = .12f) else Color.Transparent)
-                            .border(1.dp, if (selected) SuyuanColors.primary.copy(alpha = .4f) else SuyuanColors.border, RoundedCornerShape(16.dp))
-                            .clickable { viewModel.selectModelTier(tier) }.padding(horizontal = 12.dp, vertical = 6.dp))
-                }
-            }
             }
         }
         (state.error ?: localError)?.let { Text(it, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
+        }
+        }
+        BottomNavBar(
+            currentTab = currentTab,
+            showWatch = dashboardConfigured,
+            taskBadge = state.reportUnreadCount,
+            hidden = keyboardUp,
+        ) { tab ->
+            showHistory = false
+            if (tab == "tasks" && currentTab != "tasks") viewModel.refreshScheduledTasks()
+            currentTab = tab
         }
     }
         if (recording) VoiceRecordingOverlay(voiceGestureOffsetX.value, voiceGestureOffsetY.value, voiceCancelArmed.value)
@@ -819,72 +907,72 @@ private fun VoiceRecordingOverlay(offsetX: Float, offsetY: Float, cancelArmed: B
 
 @Composable
 private fun AppTopBar(
+    currentTab: String,
     showHistory: Boolean,
-    showBroadcasts: Boolean,
-    showReports: Boolean,
-    showShared: Boolean,
-    taskTitles: List<Pair<String, String>>,
-    onSelectTask: (String) -> Unit,
+    accountName: String,
+    onLogout: () -> Unit,
     onHistory: () -> Unit,
     onBack: () -> Unit,
-    onBroadcasts: () -> Unit,
-    onReports: () -> Unit,
-    onShared: () -> Unit,
-    unreadBroadcastCount: Int,
-    unreadReportCount: Int,
     onNew: () -> Unit,
 ) {
-    var taskMenuExpanded by remember { mutableStateOf(false) }
+    // 对话/现状两个 tab 的名称由底部 tab 栏表达，顶栏不重复显示；
+    // 历史会话（对话内覆盖层）与任务中心仍带标题。空标题时顶栏仅作状态栏留白。
+    // 定时任务的任务切换由 ScheduledTaskPanel 内可见的任务切换器承担。
+    val title = when {
+        showHistory -> "历史会话"
+        currentTab == "tasks" -> "任务中心"
+        else -> null
+    }
+    // 任务中心 tab 的右上角提供账号入口（头像图标 → 弹层展示当前账号 + 退出）。
+    var showLogoutConfirm by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().padding(horizontal = 18.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            IconButton(onClick = if (showHistory || showBroadcasts || showReports || showShared) onBack else onHistory) {
-                Icon(painterResource(if (showHistory || showBroadcasts || showReports || showShared) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory || showBroadcasts || showReports || showShared) "返回对话" else "历史会话", tint = SuyuanColors.text)
+            if (showHistory) {
+                IconButton(onClick = onBack) {
+                    Icon(painterResource(R.drawable.ic_back), contentDescription = "返回对话", tint = SuyuanColors.text)
+                }
+            } else if (currentTab == "chat") {
+                IconButton(onClick = onHistory) {
+                    Icon(painterResource(R.drawable.ic_menu), contentDescription = "历史会话", tint = SuyuanColors.text)
+                }
             }
-            if (showHistory) Text("历史会话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
-            if (showBroadcasts) {
-                Text("广播消息", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
-            } else if (showShared) {
-                Text("共享对话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
-            } else if (showReports) {
-                Icon(painterResource(R.drawable.ic_history), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
-                Text("定时任务", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
-            } else if (!showHistory) {
-                Box {
-                    IconButton(onClick = onBroadcasts) {
-                        Icon(painterResource(R.drawable.ic_broadcast), contentDescription = "广播消息", tint = SuyuanColors.text)
-                    }
-                    if (unreadBroadcastCount > 0) {
-                        Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
-                    }
-                }
-                IconButton(onClick = onShared) {
-                    Icon(painterResource(R.drawable.ic_people), contentDescription = "共享对话", tint = SuyuanColors.text)
-                }
-                IconButton(onClick = onReports) {
-                    Box {
-                        Icon(painterResource(R.drawable.ic_history), contentDescription = "定时任务", tint = SuyuanColors.text)
-                        if (unreadReportCount > 0) Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
-                    }
-                }
+            if (title != null) {
+                Text(title, color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             }
         }
-        if (showReports) {
-            Box {
-                IconButton(onClick = { taskMenuExpanded = true }) {
-                    Icon(painterResource(R.drawable.ic_menu), contentDescription = "切换任务", tint = SuyuanColors.text)
-                }
-                DropdownMenu(expanded = taskMenuExpanded, onDismissRequest = { taskMenuExpanded = false }) {
-                    taskTitles.forEach { (id, title) ->
-                        DropdownMenuItem(text = { Text(title) }, onClick = { onSelectTask(id); taskMenuExpanded = false })
-                    }
-                }
+        when {
+            currentTab == "chat" -> IconButton(onClick = onNew) {
+                Icon(painterResource(R.drawable.ic_new_chat), contentDescription = "新建对话", tint = SuyuanColors.text, modifier = Modifier.size(28.dp))
             }
-        } else if (!showBroadcasts) IconButton(onClick = onNew) {
-            Icon(painterResource(R.drawable.ic_new_chat), contentDescription = "新建对话", tint = SuyuanColors.text, modifier = Modifier.size(28.dp))
+            currentTab == "tasks" -> IconButton(onClick = { showLogoutConfirm = true }) {
+                Icon(painterResource(R.drawable.ic_account), contentDescription = "账号与退出", tint = SuyuanColors.text, modifier = Modifier.size(26.dp))
+            }
         }
+    }
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = { Text("退出当前账号", fontWeight = FontWeight.SemiBold) },
+            text = {
+                Column {
+                    Text("当前账号：${accountName.ifBlank { "未知" }}", color = SuyuanColors.text, fontSize = 14.sp)
+                    Text("退出后将清除本机的登录状态，需要重新登录。", color = SuyuanColors.secondaryText, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLogoutConfirm = false; onLogout() }) {
+                    Text("退出当前账号", color = SuyuanColors.error, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("取消", color = SuyuanColors.secondaryText)
+                }
+            },
+        )
     }
 }
 
@@ -1164,7 +1252,7 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
 }
 
 @Composable
-private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
+private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel) {
     var expandedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     var stationFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var pollutantFilter by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1179,7 +1267,7 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             FilterDropdown(
                 label = "站点",
                 options = state.broadcastMessages.mapNotNull { it.stationName }.distinct().sorted(),
@@ -1197,8 +1285,11 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             TextButton(
                 onClick = { unreadOnly = !unreadOnly },
                 modifier = Modifier.defaultMinSize(minWidth = 1.dp),
-                contentPadding = PaddingValues(horizontal = 4.dp),
-            ) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = if (unreadOnly) SuyuanColors.primary.copy(alpha = 0.12f) else Color.Transparent,
+                ),
+            ) { Text("未读", color = if (unreadOnly) SuyuanColors.primary else SuyuanColors.secondaryText, fontSize = 12.sp) }
             if (state.broadcastMessages.any { !it.read }) {
                 TextButton(
                     onClick = { viewModel.markAllBroadcastsRead() },
@@ -1211,7 +1302,10 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
         } else if (state.broadcastError != null && state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                Text(state.broadcastError, color = SuyuanColors.error, fontSize = 14.sp)
+                Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                    Text(state.broadcastError, color = SuyuanColors.error, fontSize = 14.sp)
+                    TextButton(onClick = { viewModel.openBroadcasts() }) { Text("重试") }
+                }
             }
         } else if (state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无广播消息", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
@@ -1225,46 +1319,71 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 16.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
             ) {
+                if (filteredMessages.isEmpty()) {
+                    item(key = "broadcast-filtered-empty") {
+                        Box(Modifier.fillParentMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                            Text("没有符合筛选条件的广播", color = SuyuanColors.secondaryText, fontSize = 14.sp)
+                        }
+                    }
+                }
                 items(filteredMessages, key = { it.messageId }) { broadcast ->
                     val expanded = expandedMessageId == broadcast.messageId
+                    var actionsExpanded by remember { mutableStateOf(false) }
                     Surface(
-                        color = if (expanded) SuyuanColors.panel else Color.White,
+                        color = Color.White,
                         shape = RoundedCornerShape(12.dp),
-                        tonalElevation = 1.dp,
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            expandedMessageId = if (expanded) null else broadcast.messageId
-                            viewModel.markBroadcastRead(broadcast)
-                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFFECEEF1), RoundedCornerShape(12.dp))
+                            .clickable {
+                                expandedMessageId = if (expanded) null else broadcast.messageId
+                                viewModel.markBroadcastRead(broadcast)
+                            },
                     ) {
-                        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 12.dp)) {
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                // 未读用圆点 + 正文加粗表达，不再占用一行文字标签
                                 if (!broadcast.read) {
-                                    Text("未读", color = SuyuanColors.primary, fontSize = 12.sp)
+                                    Box(Modifier.size(6.dp).background(SuyuanColors.primary, CircleShape))
+                                    Spacer(Modifier.size(6.dp))
                                 }
+                                broadcast.stationName?.takeIf { it.isNotBlank() }?.let { BroadcastTag(it) }
+                                broadcast.pollutant?.takeIf { it.isNotBlank() }?.let { BroadcastTag(it) }
                                 Spacer(Modifier.weight(1f))
                                 broadcast.timestamp?.let { Text(it.replace('T', ' ').take(16), color = SuyuanColors.secondaryText, fontSize = 11.sp) }
-                                IconButton(onClick = { deleteMessage = broadcast }) {
-                                    Icon(painterResource(R.drawable.ic_more), contentDescription = "广播消息操作", tint = SuyuanColors.secondaryText)
+                                Box {
+                                    IconButton(onClick = { actionsExpanded = true }, modifier = Modifier.size(28.dp)) {
+                                        Icon(painterResource(R.drawable.ic_more), contentDescription = "广播消息操作", tint = SuyuanColors.secondaryText, modifier = Modifier.size(18.dp))
+                                    }
+                                    DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text("删除消息", color = SuyuanColors.error) },
+                                            onClick = { actionsExpanded = false; deleteMessage = broadcast },
+                                        )
+                                    }
                                 }
                             }
                             if (expanded) {
-                                if (broadcast.content.isNotBlank()) {
-                                    MarkdownContent(broadcast.content, SuyuanColors.text, state, viewModel)
-                                }
-                                broadcast.attachments.forEach { attachment ->
-                                    AttachmentView(attachment, state, viewModel, LocalContext.current)
+                                Column(Modifier.padding(end = 8.dp)) {
+                                    if (broadcast.content.isNotBlank()) {
+                                        MarkdownContent(broadcast.content, SuyuanColors.text, state, viewModel)
+                                    }
+                                    broadcast.attachments.forEach { attachment ->
+                                        AttachmentView(attachment, state, viewModel, LocalContext.current)
+                                    }
                                 }
                             } else {
                                 Text(
                                     broadcast.content.replace(Regex("\\s+"), " ").trim(),
-                                    color = SuyuanColors.text,
+                                    color = if (broadcast.read) Color(0xFF3A3F47) else SuyuanColors.text,
+                                    fontWeight = if (broadcast.read) FontWeight.Normal else FontWeight.Medium,
                                     fontSize = 14.sp,
-                                    lineHeight = 20.sp,
+                                    lineHeight = 21.sp,
                                     maxLines = 2,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 8.dp),
+                                    modifier = Modifier.padding(top = 6.dp, end = 8.dp),
                                 )
                                 if (broadcast.attachments.isNotEmpty()) {
                                     Text(
@@ -1307,21 +1426,47 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
 private fun EmptyChatState(loading: Boolean = false, mode: String = "query", onModeSelected: (String) -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(top = 110.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
         Text(if (loading) "正在恢复会话" else modeTitle(mode), color = SuyuanColors.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 22.dp, start = 12.dp, end = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("assistant" to "助手模式", "query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式").forEach { (key, label) ->
-                Surface(
-                    color = if (mode == key) SuyuanColors.primary.copy(alpha = .22f) else SuyuanColors.panel,
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.clickable { onModeSelected(key) },
-                ) { Text(label, color = if (mode == key) SuyuanColors.primary else SuyuanColors.text, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) }
-            }
-        }
+        ModeSwitchRow(mode, onModeSelected)
         Text(
-            if (loading) "正在加载最近的会话内容…" else "向许昌环境Agent 描述你想完成的任务",
+            if (loading) "正在加载最近的会话内容…" else modeSubtitle(mode),
             color = SuyuanColors.secondaryText,
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 8.dp),
         )
+    }
+}
+
+/**
+ * 空态的模式切换钮。整体放得下时居中；放不下（窄屏 / 大字号 / 四个入口）时从左侧起横向滚动。
+ * 不能在可滚动 Row 上直接用居中排列：滚动容器给内容的是无界宽度，居中不生效，或溢出时向两侧分散、最左侧一项滚不到。
+ */
+@Composable
+private fun ModeSwitchRow(selected: String, onSelected: (String) -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 22.dp)) {
+        val viewport = constraints.maxWidth
+        Layout(
+            content = {
+                listOf("assistant" to "助手模式", "query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式")
+                    .filter { (key, _) -> key != "assistant" || SHOW_ASSISTANT_MODE_ENTRY }
+                    .forEach { (key, label) ->
+                        Surface(
+                            color = if (selected == key) SuyuanColors.primary.copy(alpha = .22f) else SuyuanColors.panel,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.clickable { onSelected(key) },
+                        ) { Text(label, color = if (selected == key) SuyuanColors.primary else SuyuanColors.text, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) }
+                    }
+            },
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) { measurables, incoming ->
+            val side = 12.dp.roundToPx()
+            val gap = 8.dp.roundToPx()
+            val placeables = measurables.map { it.measure(incoming.copy(minWidth = 0, maxWidth = Constraints.Infinity)) }
+            val contentWidth = side * 2 + placeables.sumOf { it.width } + gap * (placeables.size - 1).coerceAtLeast(0)
+            layout(maxOf(viewport, contentWidth), placeables.maxOfOrNull { it.height } ?: 0) {
+                var x = if (contentWidth <= viewport) (viewport - contentWidth) / 2 else side
+                placeables.forEach { it.placeRelative(x, 0); x += it.width + gap }
+            }
+        }
     }
 }
 
@@ -1380,7 +1525,6 @@ private fun progressTips(mode: String): List<String> {
         "说明目标、可用资料和输出格式，Agent 会更快对齐需求",
         "复杂任务可以分步提出，先确认方向再继续完善",
         "提供一个满意的参考样例，通常比抽象描述更有效",
-        "日常查询可用快速模式，复杂研判建议使用深度思考",
     )
 }
 
@@ -1389,6 +1533,14 @@ private fun modeTitle(mode: String): String = when (mode) {
     "query" -> "问数生图模式开始对话"
     "knowledge" -> "知识问答模式开始对话"
     else -> "专家模式开始对话"
+}
+
+// 空态欢迎词按模式定制（对齐各模式提示词的能力定位），不再共用一句。
+private fun modeSubtitle(mode: String): String = when (mode) {
+    "assistant" -> "描述你想完成的任务"
+    "query" -> "描述要查的数据和时段，直接生成结果与图表"
+    "knowledge" -> "提问业务规则与口径，回答附知识库原文依据"
+    else -> "描述污染过程或天气形势，获得可追溯的成因研判"
 }
 
 @Composable

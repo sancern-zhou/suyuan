@@ -1,11 +1,13 @@
 package com.suyuan.mobile
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 
 internal data class ReplyOutcomes(val files: List<UploadedAttachment>, val others: List<UploadedAttachment>)
@@ -44,7 +46,14 @@ internal fun ReplyOutcomeCards(attachments: List<UploadedAttachment>, placed: Se
         outcomes.files.forEach { AttachmentView(it, state, viewModel, context) }
         if (outcomes.others.isNotEmpty()) {
             TextButton(onClick = { expanded = !expanded }) {
-                Text("其他成果（${outcomes.others.size}） ${if (expanded) "⌃" else "⌄"}", color = SuyuanColors.secondaryText)
+                Text("其他成果（${outcomes.others.size}）", color = SuyuanColors.secondaryText)
+                // 折叠指示与「思考过程」一致：收起向右、展开向下
+                Icon(
+                    painterResource(if (expanded) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right),
+                    contentDescription = null,
+                    tint = SuyuanColors.secondaryText,
+                    modifier = Modifier.padding(start = 4.dp).size(16.dp),
+                )
             }
             if (expanded) outcomes.others.forEach {
                 if (isInteractiveChart(it)) InlineChart(it, state, viewModel)

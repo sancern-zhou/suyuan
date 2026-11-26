@@ -86,6 +86,14 @@ android {
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
         buildConfigField("String", "GETUI_APPID", "\"$getuiAppId\"")
+        // 大屏/巡看看板直连：Web 前端地址（白名单 host 的唯一来源）与部署级共享令牌。
+        // 两者任一未配置时 App 内大屏入口自动隐藏（登录后的 Web 端入口不受影响）。
+        val configuredWebFrontendUrl = (project.findProperty("webFrontendUrl") as String?)
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: ""
+        val configuredDashboardToken = (project.findProperty("dashboardAccessToken") as String?)
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: ""
+        buildConfigField("String", "WEB_FRONTEND_URL", "\"$configuredWebFrontendUrl\"")
+        buildConfigField("String", "DASHBOARD_ACCESS_TOKEN", "\"$configuredDashboardToken\"")
     }
 }
 
