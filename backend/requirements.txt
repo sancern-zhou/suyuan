@@ -122,3 +122,6 @@ pyyaml>=6.0  # YAML configuration parsing
 
 # Search APIs (for web_search tool)
 tencentcloud-sdk-python>=3.0.0  # Tencent Cloud WSA API (optional, for enhanced Chinese search)
+
+# Company platform password login for Android App (SM2/SM3/SM4 国密，协议同 web 前端)
+gmssl>=3.2.2
