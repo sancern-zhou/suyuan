@@ -67,25 +67,29 @@ APP                                     后端                          公司�
 
 - 后端 token 为无状态 HMAC 签名，**退出无需后端接口**：APP 端 `logout()` 清除本地 access/refresh token、注销个推设备、取消在跑流式任务。
 - **按钮位置（已实现）**：任务中心 tab 顶栏右上角账号图标 → 弹层展示「当前账号：{display_name}」+「退出当前账号」（红色，二次确认）。
-- 退出后回到登录页；公司登录可用时优先走 OIDC WebView（自然支持改密后的新密码），否则静态账号表单。
+- 退出后回到登录页（默认「公司账号」tab，后端未启用公司登录时回落「访问密钥」）。
 - 若后续要求服务端强制失效（设备丢失场景），再补 jti 黑名单（Redis）+ `/auth/logout` 端点，当前不建。
 
 ## 五、APP 端改造现状（2026-11-26，android-native）
 
 以下均已实现，待构建发版（`build-release.ps1`）：
 
-- **公司账号密码登录（主路径，与 web 同源）**：登录页双 tab「公司账号 | 访问密钥」，公司账号 tab 为账号+密码+图形验证码；验证码图片经后端代理（`GET /api/social/app/auth/company/captcha` → {captcha_key, image_base64}），登录走 `POST /api/social/app/auth/company/login`。后端不可用时自动回落静态 tab。
+- **公司账号密码登录（主路径，与 web 同源）**：登录页双 tab「公司账号 | 访问密钥」，公司账号 tab 为账号+密码+图形验证码；验证码图片经后端代理（`GET /api/social/app/auth/company/captcha` → {captcha_key, image_base64}），登录走 `POST /api/social/app/auth/company/login`，**账号密码先在本机做 SM2 公钥加密**（`CompanyCrypto.kt`，纯 JDK、无第三方依赖），只发密文。后端不可用时自动回落静态 tab。
 - **OIDC 登录**（备用路径，后端注册 client_id 前不可见）：`startCompanyLogin`（PKCE S256）+ `handleCompanyOAuthCallback`，manifest 已注册 `com.suyuan.mobile://oauth/callback`。
 - **刷新策略**：OkHttp authenticator 401 自动用 refresh token 换发；access 7d + refresh 1y。
 
-## 五A、后端公司密码登录代理（2026-11-26 上线）
+## 五A、后端公司密码登录代理（2026-11-26 调整：SM2 加密移到 APP 端）
 
-- 模块 `app/social/company_password_auth.py`：SM2（C1C3C2 无 04 前缀 hex）/SM4-CBC（PKCS7，key=iv）/SM3 国密实现，协议与 web 前端（frontend/src/auth/）完全一致；**已与 node sm-crypto/gm-crypt 双向交叉验证**（Python 加密→JS 解密、JS 加密→Python 解密、SM3/SM4 向量比对全过）。
-- 链路：APP 明文凭据+验证码 → 后端国密签名调平台 `/api/auth/token/authentication`（本机 5180 platform-web 容器，`AUTH_SERVICE_URL`）→ 平台 accessToken → 复用 `AuthService.authenticate`/PlatformAuthClient 解析 CurrentUser（web 同链路）→ 签发 `company:{userId}` APP token 对（角色码进 token，刷新链保留）。
-- 部署实测：验证码代理返回真实 PNG；假凭据试探得到平台业务级拒绝「验证码错误」——签名/加密格式已被平台接受。
-- 配置：`APP_COMPANY_PASSWORD_LOGIN_ENABLED`（默认开）、`COMPANY_SM2_PUBLIC_KEY`/`COMPANY_SM4_SECRET_KEY`（默认取 web 前端内置值）、`COMPANY_PASSWORD_AUTH_TIMEOUT_SECONDS`；`AUTH_SERVICE_URL`/`AUTH_PLATFORM_SYS_CODE` 复用现有配置。依赖 `gmssl>=3.2.2`（已入 requirements.txt 并 pip 安装）。
+- **凭据不出明文**：账号与密码由 APP 在本机用平台 SM2 公钥加密（`android-native/app/src/main/java/com/suyuan/mobile/CompanyCrypto.kt`：sm2p256v1 + SM3 + KDF 的纯 JDK 实现，公钥编译在包内，与 web 前端 `frontend/src/auth/SM2.js` 内置值一致），后端只生成国密签名头（SM3 + SM4-CBC，`app/social/company_password_auth.py`）并把密文原样转发。私钥只在公司平台，溯源后端与链路上的窃听者都拿不到明文——APP 到后端默认是明文 HTTP，这与 web 前端在浏览器里先加密再发送的防护口径一致（只防被动窃听；token 与业务数据仍需 HTTPS 才能保护）。
+- **请求契约**：`POST /api/social/app/auth/company/login` body 为 `{secret_name, secret_code, verify_code, captcha_key}`；`secret_*` 为 SM2 密文 hex（C1 64 字节无 04 前缀 + C3 32 字节 + C2 与明文等长，即 sm-crypto doEncrypt 的 C1C3C2 格式）。格式不合法、或仍传明文 `username`/`password`，一律 422，不回落明文。
+- 链路：APP 密文+验证码 → 后端国密签名调平台 `/api/auth/token/authentication`（本机 5180 platform-web 容器，`AUTH_SERVICE_URL`）→ 平台 accessToken → 复用 `AuthService.authenticate`/PlatformAuthClient 解析 CurrentUser（web 同链路）→ 签发 `company:{userId}` APP token 对（角色码进 token，刷新链保留）。
+- **验证**：APP 密文用 web 前端同款 sm-crypto `doDecrypt` 与 gmssl `decrypt` 双向解回；SM3 向量取 sm-crypto 与 gmssl 一致的输出；SM2 固定随机数向量与 GB/T 32918.5 附录 A.2 标准例一致（`CompanyCryptoTest.kt` 已知答案，`test_company_password_auth.py` 用 APP 真实输出反向解密）。此前部署实测验证码代理返回真实 PNG、假凭据得到平台业务级拒绝「验证码错误」（签名头被平台接受）；**APP 端密文被真实平台接受与否，待发版后用真实账号登录确认**。
+- **部署顺序**：后端先于 APK——新包只发密文，旧后端只认明文。
+- 配置：`APP_COMPANY_PASSWORD_LOGIN_ENABLED`（默认开）、`COMPANY_SM4_SECRET_KEY`（默认取 web 前端内置值，仅用于签名头）、`COMPANY_PASSWORD_AUTH_TIMEOUT_SECONDS`；`AUTH_SERVICE_URL`/`AUTH_PLATFORM_SYS_CODE` 复用现有配置。依赖 `gmssl>=3.2.2`（已入 requirements.txt）。`COMPANY_SM2_PUBLIC_KEY` 已移除（后端不再加密）。
 - 用户自动关联与 OIDC 路径相同（identity_matching 归一 `company:{userId}` ⇄ 裸 userId），**web 改密码后 APP 用新密码登录即生效**。
 
 ## 六、相关测试
 
 - `backend/tests/social/test_app_gateway_contract.py`：OIDC exchange→authenticationMore 契约、company token 往返（含角色码跨刷新保留）、app 来源不带角色码。
+- `backend/tests/social/test_company_password_auth.py`：SM3/SM4 与 web 前端向量、APP 密文按线上格式可解、密文原样转发且明文不出现在平台请求里、明文/畸形密文 422 且不触达平台。
+- `android-native/app/src/test/java/com/suyuan/mobile/CompanyCryptoTest.kt`：SM3 补位边界向量、SM2 标准例与 gmssl 固定随机数向量、线上格式、非法公钥与空明文拒绝。
