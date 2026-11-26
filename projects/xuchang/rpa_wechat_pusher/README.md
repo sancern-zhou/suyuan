@@ -8,9 +8,9 @@
 ```
 服务器后端                                  本机（Windows + 微信4.x电脑版）
 通报文案/附图/附件 → pending/*.json ◄──────  GET  /api/xuchang-wechat-push/pending?caps=attachments
-                                  ────────►  quick_send(文案, who=群名)
-                                  ────────►  GET  /media/{id}/{序号} → quick_send_image
-                                  ────────►  GET  /attachment/{id}/{序号} → quick_send_file
+                                  ────────►  PersonalWeChatGUI.send_msg(文案, who=群名)
+                                  ────────►  GET  /media/{id}/{序号} → send_image
+                                  ────────►  GET  /attachment/{id}/{序号} → send_file
                                   ────────►  POST /api/xuchang-wechat-push/ack
 ```
 
@@ -22,8 +22,11 @@
 |---|---|
 | 操作系统 | Windows 10/11（需有桌面会话，不能跑在 Windows 服务/Session 0） |
 | Python | 3.11+（本机 3.13 实测通过） |
-| 微信电脑版 | **4.x**（4.2.0.12 实测发送通过；不建议也不需要装 3.9.x，见下） |
+| 微信电脑版 | **个人微信 4.x**（4.2.0.12 实测发送通过；不建议也不需要装 3.9.x，见下） |
 | 微信号 | **专用小号**（实名、有一点正常使用记录），不要用任何人的主号 |
+
+> 窗口识别只接受进程名 `Weixin.exe` 的个人微信主窗；企业微信 `WXWork.exe`
+> 即使标题包含“微信”也会被排除，不会被恢复、置前或用于发送。
 
 > **为什么不用微信 3.9.x + 老版 wxauto？** 2025 年 10 月起腾讯对新设备/新号
 > 登录 3.9.x 拦截（提示版本过低），绕过法随时失效；开源 wxauto/wxauto4 主线
@@ -76,7 +79,9 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
 
 ## 运行注意事项（都是实测坑）
 
-- **微信主窗口保持打开**：可最小化到任务栏，不要关闭到托盘、不要多开。
+- **微信主窗口隐藏恢复**：可最小化到任务栏；关闭到托盘后，agent 会在实际
+  发送前严格识别 `Weixin.exe` 主窗并自动恢复，恢复结果写入 `agent.log`。
+  不要多开个人微信；企业微信窗口始终不参与。
 - **电脑不能睡眠**；如通过远程桌面操作，断开 RDP 会停掉 UI 自动化
   （远程场景用 `tscon <会话id> /dest:console` 把会话切回控制台再断开）。
 - **发送那几秒会占用真实的鼠标键盘**：wechatauto 的发送是"微信置顶抢焦点
@@ -97,7 +102,7 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
   字段（`{path, filename, mime}`），web 侧由
   `GET /attachment/{消息id}/{序号}` 下发（扩展名白名单 docx/pdf、
   仅 data registry 内、单文件 ≤50MB），agent 下载后用
-  `quick_send_file` 以文件消息发群。
+  `PersonalWeChatGUI.send_file` 以文件消息发群。
 - agent 拉取 `/pending` 时带 `caps=attachments` 上报能力。**旧版 agent
   不带该参数，后端会把带附件的消息留在 pending 不下发**——文本会晚发但
   附件不会被静默丢掉；升级新版 agent 后自动补发。
@@ -127,7 +132,7 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
 |---|---|
 | 401 token 不正确 | 核对 config.toml 与后端 `.env` 的 token |
 | 403 wechat_push_disabled | 后端 `.env` 未配置 prefix/token，或漏重启 web |
-| 初始化微信失败 / 找不到主窗口 | 微信未登录 / 关到托盘；确认装的是 wechatauto-replica 而非旧 wxauto |
+| 初始化微信失败 / 找不到主窗口 | 新版会自动恢复关到托盘的个人微信主窗；仍失败时查微信是否登录、桌面是否锁屏，以及日志中的隐藏窗口恢复结果 |
 | 发送失败：找不到会话 | 群名不唯一或不在会话列表，置顶目标群 |
 | 心跳有但积压上涨 | 微信掉线或窗口不可用，看 agent.log |
 | agent.log 出现 "已有 agent 实例在运行" | 已有常驻实例，正常退出无需处理；确认只需一套自启（快捷方式 + 看门狗） |
@@ -143,8 +148,8 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
   闸门特征，大版本更新可能需要等它适配；因此**关闭微信自动更新**，
   升级前先在 `--test` 模式验证。
 - **能不能发图片/文件/@所有人**：图片与文件均已支持——证据附图走
-  `GET /media/{id}/{序号}` + `quick_send_image`；污染原因分析通报等报告
-  文档走 `GET /attachment/{id}/{序号}` + `quick_send_file`（微信按文件
+  `GET /media/{id}/{序号}` + `PersonalWeChatGUI.send_image`；污染原因分析通报等报告
+  文档走 `GET /attachment/{id}/{序号}` + `PersonalWeChatGUI.send_file`（微信按文件
   消息展示，保留原文件名）。单项失败不影响文本与其余附图/附件，回执
   detail 会记"附图 N/M 张成功；附件 K/L 份成功"。@所有人、"快讯先行+
   详报后补"仍为二期计划。

@@ -1,7 +1,8 @@
 """许昌站点告警 → 个人微信群 RPA 推送 agent（wechatauto-replica 驱动微信 4.x）。
 
-常驻轮询后端待发队列，把告警通报发进指定群。仅发不收；依赖微信 4.x
-电脑版已登录且主窗口可用。部署步骤见 README.md。
+常驻轮询后端待发队列，把告警通报发进指定群。仅发不收；依赖个人微信 4.x
+电脑版已登录，主窗隐藏到托盘时会在实发前自动恢复。企业微信不参与识别。
+部署步骤见 README.md。
 
 用法：
     python agent.py                # 常驻轮询（Ctrl+C 退出）
@@ -141,43 +142,49 @@ def ensure_winsdk_shim() -> None:
 
 
 class WeChatSender:
-    """wechatauto-replica 驱动（微信 4.x 客户端）。
+    """wechatauto-replica 驱动（仅限个人微信 4.x，明确排除企业微信）。
 
-    微信 3.9.x + wxauto 的老路线已被腾讯强制升级拦截（2025-10 起新设备登录
-    提示版本过低），本 agent 直接适配微信 4.x：wechatauto 热激活 Weixin.dll
-    的无障碍闸门使 UIA 树物化后发送，UIA 优先、OCR 兜底（OCR 依赖 winsdk，
-    缺失时仅少一层兜底，不影响发送）。
+    长驻复用同一个 GUI 实例；每次实发前严格识别 Weixin.exe 主窗，隐藏到
+    托盘时先恢复。上游 quick_send 每次重建实例且只找可见窗口，会漏掉隐藏
+    主窗，并可能因“企业微信”也含“微信”而误选，故不在这里使用。
     """
 
     def __init__(self) -> None:
         ensure_winsdk_shim()
         try:
-            from wechatauto.guia import quick_send, quick_send_file, quick_send_image
+            from wechat_gui import PersonalWeChatGUI
         except ImportError as exc:
             raise RuntimeError(
                 "未安装 wechatauto-replica，请先运行 install.bat"
             ) from exc
-        self._send = quick_send
-        self._send_image = quick_send_image
-        self._send_file = quick_send_file
+        self._gui_class = PersonalWeChatGUI
+        self._gui = None
+
+    def _get_gui(self):
+        if self._gui is None:
+            self._gui = self._gui_class(event_logger=log)
+        else:
+            self._gui.prepare_for_send()
+        return self._gui
+
+    @staticmethod
+    def _check_result(result, action: str) -> None:
+        status = str((result or {}).get("status") or "")
+        if "成功" not in status and "ok" not in status.lower():
+            raise RuntimeError(f"{action}未确认：{result}")
 
     def send_text(self, group_name: str, text: str) -> None:
-        result = self._send(text, group_name)
-        status = str((result or {}).get("status") or "")
-        if "成功" not in status and "ok" not in status.lower():
-            raise RuntimeError(f"发送未确认：{result}")
+        self._check_result(self._get_gui().send_msg(text, group_name), "发送")
 
     def send_image(self, group_name: str, image_path: str) -> None:
-        result = self._send_image(image_path, group_name)
-        status = str((result or {}).get("status") or "")
-        if "成功" not in status and "ok" not in status.lower():
-            raise RuntimeError(f"图片发送未确认：{result}")
+        self._check_result(
+            self._get_gui().send_image(image_path, group_name), "图片发送"
+        )
 
     def send_file(self, group_name: str, file_path: str) -> None:
-        result = self._send_file(file_path, group_name)
-        status = str((result or {}).get("status") or "")
-        if "成功" not in status and "ok" not in status.lower():
-            raise RuntimeError(f"文件发送未确认：{result}")
+        self._check_result(
+            self._get_gui().send_file(file_path, group_name), "文件发送"
+        )
 
 
 def http_headers(cfg: dict) -> dict:
