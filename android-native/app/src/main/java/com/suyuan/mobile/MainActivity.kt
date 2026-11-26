@@ -366,6 +366,18 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
     val context = LocalContext.current
     var accountId by remember { mutableStateOf("") }
     var secret by remember { mutableStateOf("") }
+    var companyUser by remember { mutableStateOf("") }
+    var companyPassword by remember { mutableStateOf("") }
+    var verifyCode by remember { mutableStateOf("") }
+    // 登录方式：公司账号（与 web 同源，默认）/ 访问密钥（静态账号兜底）
+    var formMode by remember { mutableStateOf("company") }
+    // 后端未启用公司密码登录（探测失败）时回落到静态表单
+    LaunchedEffect(state.companyLoginAvailable) {
+        if (!state.companyLoginAvailable) formMode = "static"
+    }
+    LaunchedEffect(formMode) {
+        if (formMode == "company" && state.companyCaptcha == null) viewModel.refreshCompanyCaptcha(silent = true)
+    }
     Column(
         Modifier.fillMaxSize().background(SuyuanColors.background).padding(horizontal = 28.dp),
         verticalArrangement = Arrangement.Center,
@@ -379,34 +391,128 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
         )
         Text("许昌环境Agent", color = SuyuanColors.text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
         Text("连接你的专属智能助手", color = SuyuanColors.secondaryText, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
-        OutlinedTextField(
-            accountId, { accountId = it }, Modifier.fillMaxWidth(), label = { Text("账号") },
-            singleLine = true, shape = RoundedCornerShape(12.dp),
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = SuyuanColors.primary, unfocusedBorderColor = SuyuanColors.border,
-                focusedLabelColor = SuyuanColors.primary, unfocusedLabelColor = SuyuanColors.secondaryText,
-            ),
-        )
-        OutlinedTextField(
-            secret, { secret = it }, Modifier.fillMaxWidth().padding(top = 12.dp), label = { Text("访问密钥") },
-            singleLine = true, shape = RoundedCornerShape(12.dp),
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = SuyuanColors.primary, unfocusedBorderColor = SuyuanColors.border,
-                focusedLabelColor = SuyuanColors.primary, unfocusedLabelColor = SuyuanColors.secondaryText,
-            ),
-        )
-        Button(
-            onClick = { viewModel.login(accountId, secret) },
-            enabled = !state.loading && accountId.isNotBlank() && secret.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(50.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SuyuanColors.primary, disabledContainerColor = SuyuanColors.primary.copy(alpha = .38f)),
-        ) {
-            if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
-            else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        if (state.companyLoginAvailable) {
+            Row(
+                Modifier.fillMaxWidth().background(Color(0xFFEDEEF1), RoundedCornerShape(10.dp)).padding(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                listOf("company" to "公司账号", "static" to "访问密钥").forEach { (key, label) ->
+                    val active = formMode == key
+                    Surface(
+                        color = if (active) Color.White else Color.Transparent,
+                        shape = RoundedCornerShape(8.dp),
+                        shadowElevation = if (active) 1.dp else 0.dp,
+                        modifier = Modifier.weight(1f).clickable { formMode = key; verifyCode = "" },
+                    ) {
+                        Text(
+                            label,
+                            color = if (active) SuyuanColors.text else SuyuanColors.secondaryText,
+                            fontSize = 13.sp,
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        if (formMode == "company" && state.companyLoginAvailable) {
+            OutlinedTextField(
+                companyUser, { companyUser = it }, Modifier.fillMaxWidth(), label = { Text("账号") },
+                singleLine = true, shape = RoundedCornerShape(12.dp),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = SuyuanColors.primary, unfocusedBorderColor = SuyuanColors.border,
+                    focusedLabelColor = SuyuanColors.primary, unfocusedLabelColor = SuyuanColors.secondaryText,
+                ),
+            )
+            OutlinedTextField(
+                companyPassword, { companyPassword = it }, Modifier.fillMaxWidth().padding(top = 12.dp), label = { Text("密码") },
+                singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                shape = RoundedCornerShape(12.dp),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = SuyuanColors.primary, unfocusedBorderColor = SuyuanColors.border,
+                    focusedLabelColor = SuyuanColors.primary, unfocusedLabelColor = SuyuanColors.secondaryText,
+                ),
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                OutlinedTextField(
+                    verifyCode, { verifyCode = it }, Modifier.weight(1f), label = { Text("验证码") },
+                    singleLine = true, shape = RoundedCornerShape(12.dp),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SuyuanColors.primary, unfocusedBorderColor = SuyuanColors.border,
+                        focusedLabelColor = SuyuanColors.primary, unfocusedLabelColor = SuyuanColors.secondaryText,
+                    ),
+                )
+                val captcha = state.companyCaptcha
+                if (captcha == null) {
+                    Text("验证码加载中…", color = SuyuanColors.secondaryText, fontSize = 12.sp, modifier = Modifier.padding(start = 12.dp))
+                } else {
+                    val bitmap = remember(captcha.imageBase64) {
+                        runCatching {
+                            val bytes = android.util.Base64.decode(captcha.imageBase64, android.util.Base64.DEFAULT)
+                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        }.getOrNull()
+                    }
+                    if (bitmap != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = androidx.compose.ui.graphics.asImageBitmap(bitmap),
+                            contentDescription = "验证码，点击刷新",
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { verifyCode = ""; viewModel.refreshCompanyCaptcha() },
+                        )
+                    } else {
+                        Text("点击重试", color = SuyuanColors.error, fontSize = 12.sp,
+                            modifier = Modifier.padding(start = 12.dp).clickable { viewModel.refreshCompanyCaptcha() })
+                    }
+                }
+            }
+            Button(
+                onClick = { viewModel.companyLogin(companyUser, companyPassword, verifyCode) },
+                enabled = !state.loading && companyUser.isNotBlank() && companyPassword.isNotBlank() && verifyCode.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(50.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = SuyuanColors.primary, disabledContainerColor = SuyuanColors.primary.copy(alpha = .38f)),
+            ) {
+                if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+        } else {
+            OutlinedTextField(
+                accountId, { accountId = it }, Modifier.fillMaxWidth(), label = { Text("账号") },
+                singleLine = true, shape = RoundedCornerShape(12.dp),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = SuyuanColors.primary, unfocusedBorderColor = SuyuanColors.border,
+                    focusedLabelColor = SuyuanColors.primary, unfocusedLabelColor = SuyuanColors.secondaryText,
+                ),
+            )
+            OutlinedTextField(
+                secret, { secret = it }, Modifier.fillMaxWidth().padding(top = 12.dp), label = { Text("访问密钥") },
+                singleLine = true, shape = RoundedCornerShape(12.dp),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = SuyuanColors.primary, unfocusedBorderColor = SuyuanColors.border,
+                    focusedLabelColor = SuyuanColors.primary, unfocusedLabelColor = SuyuanColors.secondaryText,
+                ),
+            )
+            Button(
+                onClick = { viewModel.login(accountId, secret) },
+                enabled = !state.loading && accountId.isNotBlank() && secret.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(50.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = SuyuanColors.primary, disabledContainerColor = SuyuanColors.primary.copy(alpha = .38f)),
+            ) {
+                if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
         // 登录页每次出现都重探一次公司登录可用性（后端注册 client 后入口自动出现）。
-        LaunchedEffect(Unit) { viewModel.checkCompanyLoginAvailability() }
+        LaunchedEffect(Unit) {
+            viewModel.checkCompanyLoginAvailability()
+            viewModel.refreshCompanyCaptcha(silent = true)
+        }
         if (state.companyLoginAvailable) {
             TextButton(
                 onClick = { viewModel.startCompanyLogin(context) },
