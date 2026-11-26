@@ -74,8 +74,8 @@ APP                                     后端                          公司�
 
 以下均已实现，待构建发版（`build-release.ps1`）：
 
-- **公司账号密码登录（主路径，与 web 同源）**：登录页双 tab「公司账号 | 访问密钥」，公司账号 tab 为账号+密码+图形验证码；验证码图片经后端代理（`GET /api/social/app/auth/company/captcha` → {captcha_key, image_base64}），登录走 `POST /api/social/app/auth/company/login`，**账号密码先在本机做 SM2 公钥加密**（`CompanyCrypto.kt`，纯 JDK、无第三方依赖），只发密文。后端不可用时自动回落静态 tab。
-- **OIDC 登录**（备用路径，后端注册 client_id 前不可见）：`startCompanyLogin`（PKCE S256）+ `handleCompanyOAuthCallback`，manifest 已注册 `com.suyuan.mobile://oauth/callback`。
+- **公司账号密码登录（主路径，与 web 同源）**：登录页以公司账号密码表单为主入口（账号+密码+图形验证码，按钮统一叫「登录」），访问密钥是备用入口（「使用访问密钥登录」文字切换；后端未开放公司登录时自动回落）；验证码图片经后端代理（`GET /api/social/app/auth/company/captcha` → {captcha_key, image_base64}），登录走 `POST /api/social/app/auth/company/login`，**账号密码先在本机做 SM2 公钥加密**（`CompanyCrypto.kt`，纯 JDK、无第三方依赖），只发密文。
+- **OIDC 登录**（备用路径，后端注册 client_id 前不可见）：`startCompanyLogin`（PKCE S256）+ `handleCompanyOAuthCallback`，manifest 已注册 `com.suyuan.mobile://oauth/callback`。仅在账号密码表单不可用且后端已注册 client 时出现，此时同一个「登录」按钮改为跳转平台授权页；页面上任何时刻只有一个「登录」按钮。
 - **刷新策略**：OkHttp authenticator 401 自动用 refresh token 换发；access 7d + refresh 1y。
 
 ## 五A、后端公司密码登录代理（2026-11-26 调整：SM2 加密移到 APP 端）

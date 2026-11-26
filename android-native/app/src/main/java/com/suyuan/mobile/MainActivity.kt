@@ -369,12 +369,13 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
     var companyUser by remember { mutableStateOf("") }
     var companyPassword by remember { mutableStateOf("") }
     var verifyCode by remember { mutableStateOf("") }
-    // 公司账号登录（与 web 同源）是主入口；访问密钥是备用入口：后端未开放公司登录时自动回落，也可手动切换
-    var useAccessKey by remember { mutableStateOf(false) }
-    // 后端未开放公司账号登录（探测失败）时回落到访问密钥
-    LaunchedEffect(state.companyLoginAvailable) {
-        if (!state.companyLoginAvailable) useAccessKey = true
-    }
+    // 公司账号登录（与 web 同源）是主入口。入口优先级：账号密码表单 > 平台授权页登录（OIDC）> 访问密钥，
+    // 页面上任何时刻只有一个「登录」按钮；访问密钥始终可手动切换。accessKeyChosen 为 null 表示用户未选过，按可用性自动决定。
+    var accessKeyChosen by remember { mutableStateOf<Boolean?>(null) }
+    val useAccessKey = accessKeyChosen == true ||
+        (accessKeyChosen == null && !state.companyLoginAvailable && !state.companyOidcAvailable)
+    val showPasswordForm = !useAccessKey && state.companyLoginAvailable
+    val showOidcLogin = !useAccessKey && !state.companyLoginAvailable && state.companyOidcAvailable
     Column(
         Modifier.fillMaxSize().background(SuyuanColors.background).padding(horizontal = 28.dp),
         verticalArrangement = Arrangement.Center,
@@ -389,7 +390,7 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
         Text("许昌环境Agent", color = SuyuanColors.text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
         Text("连接你的专属智能助手", color = SuyuanColors.secondaryText, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
         Spacer(Modifier.height(14.dp))
-        if (!useAccessKey) {
+        if (showPasswordForm) {
             Text(
                 "使用公司平台账号登录，与 Web 端是同一套账号密码",
                 color = SuyuanColors.secondaryText, fontSize = 13.sp, textAlign = TextAlign.Center,
@@ -457,7 +458,7 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
                 if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
                 else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
-        } else {
+        } else if (useAccessKey) {
             OutlinedTextField(
                 accountId, { accountId = it }, Modifier.fillMaxWidth(), label = { Text("账号") },
                 singleLine = true, shape = RoundedCornerShape(12.dp),
@@ -490,12 +491,30 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
             viewModel.checkCompanyOidcAvailability()
             viewModel.refreshCompanyCaptcha(silent = true)
         }
-        // 主入口与备用入口之间切换；公司账号登录不可用时不提供切回
+        // 仅平台授权页登录可用（账号密码表单不可用）时，由同一个「登录」按钮跳转平台授权页
+        if (showOidcLogin) {
+            Text(
+                "点击登录将打开公司平台登录页",
+                color = SuyuanColors.secondaryText, fontSize = 13.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
+            Button(
+                onClick = { viewModel.startCompanyLogin(context) },
+                enabled = !state.loading,
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = SuyuanColors.primary, disabledContainerColor = SuyuanColors.primary.copy(alpha = .38f)),
+            ) {
+                if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        // 主入口与备用入口之间切换；两种公司登录都不可用时不提供切回
         if (useAccessKey) {
-            if (state.companyLoginAvailable) {
+            if (state.companyLoginAvailable || state.companyOidcAvailable) {
                 TextButton(
                     onClick = {
-                        useAccessKey = false
+                        accessKeyChosen = false
                         if (state.companyCaptcha == null) viewModel.refreshCompanyCaptcha(silent = true)
                     },
                     enabled = !state.loading,
@@ -506,20 +525,11 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
             }
         } else {
             TextButton(
-                onClick = { useAccessKey = true },
+                onClick = { accessKeyChosen = true },
                 enabled = !state.loading,
                 modifier = Modifier.padding(top = 8.dp),
             ) {
                 Text("使用访问密钥登录", color = SuyuanColors.secondaryText, fontSize = 14.sp)
-            }
-        }
-        if (state.companyOidcAvailable) {
-            TextButton(
-                onClick = { viewModel.startCompanyLogin(context) },
-                enabled = !state.loading,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            ) {
-                Text("公司统一登录", color = SuyuanColors.primary, fontSize = 15.sp)
             }
         }
         state.error?.let { Text(it, color = SuyuanColors.error, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp)) }
