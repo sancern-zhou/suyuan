@@ -85,6 +85,8 @@ data class AppUiState(
     // 公司统一登录（OIDC）是否可用：后端 /auth/oidc/config 的 client_id 为空即未启用，
     // 登录页据此隐藏入口；后端注册 client 后自动出现，无需发版。
     val companyLoginAvailable: Boolean = true,
+    // 公司账号密码登录（与 web 同源）的验证码；null 表示尚未加载或后端未启用。
+    val companyCaptcha: CompanyCaptcha? = null,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -135,6 +137,7 @@ class AppViewModel(
         repository.setSessionRefreshListener(::applyExternalRefresh)
         viewModelScope.launch { updater.checkOnLaunch() }
         viewModelScope.launch { checkCompanyLoginAvailability() }
+        viewModelScope.launch { refreshCompanyCaptcha(silent = true) }
     }
 
     override fun onCleared() {
@@ -471,6 +474,43 @@ class AppViewModel(
                     applyLoginResult(result)
                 }
                 .onFailure { _state.value = _state.value.copy(loading = false, error = friendlyError(it)) }
+        }
+    }
+
+    /** 拉取公司账号登录的图形验证码；silent=true 时失败只降级隐藏入口，不弹错。 */
+    fun refreshCompanyCaptcha(silent: Boolean = false) {
+        val previous = _state.value.companyCaptcha?.captchaKey.orEmpty()
+        viewModelScope.launch {
+            runCatching { repository.companyCaptcha(previous) }
+                .onSuccess { captcha ->
+                    _state.value = _state.value.copy(companyCaptcha = captcha, companyLoginAvailable = true)
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(
+                        companyCaptcha = null,
+                        companyLoginAvailable = false,
+                        error = if (!silent && _state.value.token.isBlank()) friendlyError(it) else _state.value.error,
+                    )
+                }
+        }
+    }
+
+    fun companyLogin(username: String, password: String, verifyCode: String) {
+        val captcha = _state.value.companyCaptcha
+        if (captcha == null) {
+            refreshCompanyCaptcha()
+            return
+        }
+        if (_state.value.loading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = null)
+            runCatching { repository.companyLogin(username, password, verifyCode, captcha.captchaKey) }
+                .onSuccess { result -> applyLoginResult(result) }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(loading = false, error = friendlyError(failure))
+                    // 验证码一次性，失败后自动换新
+                    refreshCompanyCaptcha(silent = true)
+                }
         }
     }
 

@@ -10,6 +10,9 @@ class SocialAppRepository(private val api: SocialAppApi) {
     suspend fun resolveInteraction(token: String, question: AgentQuestionInteraction, decision: String, answers: List<AgentQuestionAnswer>) =
         api.resolveInteraction(token, question.sessionId, question.interactionId, decision, answers)
     suspend fun login(accountId: String, secret: String) = api.login(accountId, secret)
+    suspend fun companyCaptcha(previousKey: String = "") = api.companyCaptcha(previousKey)
+    suspend fun companyLogin(username: String, password: String, verifyCode: String, captchaKey: String) =
+        api.companyLogin(username, password, verifyCode, captchaKey)
     suspend fun oidcConfig() = api.oidcConfig()
     suspend fun exchangeOidcCode(code: String, codeVerifier: String, redirectUri: String) =
         api.exchangeOidcCode(code, codeVerifier, redirectUri)

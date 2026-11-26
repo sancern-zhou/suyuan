@@ -33,6 +33,12 @@ data class OidcConfig(
     val redirectUri: String,
     val scopes: String,
 )
+
+data class CompanyCaptcha(
+    val captchaKey: String,
+    val imageBase64: String,
+    val contentType: String,
+)
 data class AgentEvent(val type: String, val data: String)
 data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null, val unreadCount: Int = 0)
 
@@ -306,8 +312,49 @@ class SocialAppApi(
         }
     }
 
-    suspend fun oidcConfig(): OidcConfig = withContext(Dispatchers.IO) {
-        val response = client.newCall(Request.Builder().url(url("/api/social/app/auth/oidc/config")).get().build()).execute()
+    /** 公司平台图形验证码（后端代理平台 /auth/token/captcha）。 */
+    suspend fun companyCaptcha(previousKey: String = ""): CompanyCaptcha = withContext(Dispatchers.IO) {
+        val query = if (previousKey.isBlank()) "" else "&previous_key=" + java.net.URLEncoder.encode(previousKey, "UTF-8")
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/auth/company/captcha?_=1$query")).get().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, readErrorDetail(it) ?: "验证码加载失败 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty())
+            CompanyCaptcha(
+                captchaKey = json.getString("captcha_key"),
+                imageBase64 = json.getString("image_base64"),
+                contentType = json.optString("content_type", "image/png"),
+            )
+        }
+    }
+
+    /** 公司平台账号密码登录（与 web 同源；后端负责国密签名）。 */
+    suspend fun companyLogin(username: String, password: String, verifyCode: String, captchaKey: String): LoginResult = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("username", username)
+            put("password", password)
+            put("verify_code", verifyCode)
+            put("captcha_key", captchaKey)
+        }.toString().toRequestBody("application/json".toMediaType())
+        val response = client.newCall(Request.Builder().url(url("/api/social/app/auth/company/login")).post(body).build()).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, readErrorDetail(it) ?: "登录失败 (${it.code})")
+            parseLogin(it.body?.string().orEmpty())
+        }
+    }
+
+    /** 从后端错误响应中提取 detail 文案（如平台透出的“验证码错误”）。 */
+    private fun readErrorDetail(response: okhttp3.Response): String? = runCatching {
+        val body = response.body?.string().orEmpty()
+        if (body.isBlank()) return null
+        val detail = JSONObject(body).optString("detail", "")
+        if (detail.isBlank()) return null
+        val separator = detail.indexOf(':')
+        if (detail.startsWith("company_login_rejected:") && separator >= 0) detail.substring(separator + 1) else detail
+    }.getOrNull()
+
+    suspend fun oidcConfig(): OidcConfig = withContext(Dispatchers.IO) {        val response = client.newCall(Request.Builder().url(url("/api/social/app/auth/oidc/config")).get().build()).execute()
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "公司认证配置不可用 (${it.code})")
             val json = JSONObject(it.body?.string().orEmpty())
