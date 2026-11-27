@@ -108,6 +108,9 @@ class ExecutePythonTool(LLMTool):
         # 永久文件存储目录（统一使用 backend/backend_data_registry）
         self.PERMANENT_DIR = str(get_data_registry() / "python_generated_files")
 
+        # 会话数据文件的重复分析计数（进程内提示用，丢失即失效，fail-open）
+        self._session_file_touch_counts: Dict[Tuple[str, str], int] = {}
+
         # ✅ 图表文件存储目录
         self.CHARTS_DIR = str(get_charts_dir())
         self.REPORTS_DIR = str(get_reports_dir())
@@ -295,14 +298,52 @@ class ExecutePythonTool(LLMTool):
             requested_paths.append(resolved_path)
         return json.dumps(list(dict.fromkeys(requested_paths)), ensure_ascii=False)
 
+    def _session_file_repeat_hint(self, context, code: str) -> str:
+        """统计本次代码访问的会话数据文件；同一文件反复分析时给出收口提醒。
+
+        进程内计数（fail-open）：仅作提醒附注，不阻断执行。
+        """
+        try:
+            session_data_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+        except Exception:
+            return ""
+        touched = []
+        for raw in self._find_data_file_accesses(code):
+            try:
+                resolved = resolve_agent_path(raw)
+            except Exception:
+                continue
+            if resolved == session_data_dir or session_data_dir in resolved.parents:
+                touched.append(str(resolved))
+        if not touched:
+            return ""
+        hint = ""
+        for path in set(touched):
+            key = (str(session_data_dir), path)
+            count = self._session_file_touch_counts.get(key, 0) + 1
+            self._session_file_touch_counts[key] = count
+            if count >= 3:
+                hint = (
+                    f"⚠️ 本会话已第{count}次用 execute_python 分析同一数据文件 {Path(path).name}："
+                    "证据已充分，请停止继续打磨/换视图，直接基于已有输出撰写结论并回复用户。"
+                )
+        return hint
+
     async def execute(self, context=None, code: str = None, timeout: Optional[int] = None,
                       input_files: Optional[List[str]] = None, **kwargs) -> Dict[str, Any]:
         """Run one Python call while protecting the session output namespace."""
+        repeat_hint = self._session_file_repeat_hint(context, code or "")
         lock = _execution_lock_for(context)
         if lock is None:
-            return await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
-        async with lock:
-            return await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
+            result = await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
+        else:
+            async with lock:
+                result = await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
+        if repeat_hint and isinstance(result, dict) and result.get("success"):
+            summary = result.get("summary") or ""
+            if repeat_hint not in summary:
+                result["summary"] = f"{summary} {repeat_hint}".strip()
+        return result
 
     async def _execute_unlocked(
         self,
@@ -3364,8 +3405,13 @@ def merge_excel_with_charts(file_paths, output_path):
             suggestions.append("• **示例修复**: `if i < len(lst): value = lst[i]`")
 
         elif error_type == "FileNotFoundError":
-            suggestions.append("• **文件不存在**: 找不到指定的文件")
-            suggestions.append("• **解决方案**: 检查文件路径是否正确，使用绝对路径或相对于当前目录的路径")
+            if "/sessions/" in error_msg and "/data/" in error_msg:
+                # 会话数据目录内的路径往往真实存在（已注册为会话资源），
+                # 只是沙箱未挂载——按契约指引，勿误导为"路径写错"
+                pass
+            else:
+                suggestions.append("• **文件不存在**: 找不到指定的文件")
+                suggestions.append("• **解决方案**: 检查文件路径是否正确，使用绝对路径或相对于当前目录的路径")
 
         elif error_type == "ZeroDivisionError":
             suggestions.append("• **除零错误**: 尝试除以零")
@@ -3378,9 +3424,11 @@ def merge_excel_with_charts(file_paths, output_path):
             suggestions.append("• **解决方案**: 检查括号、引号是否配对，检查缩进是否正确")
 
         # 基于错误内容的补充建议（不依赖错误类型分类）
-        if "未找到会话数据文件" in error_msg:
-            suggestions.append("• **输入文件未挂载**: 沙箱只挂载本次调用 input_files 参数中声明的文件，挂载不跨调用保留")
-            suggestions.append("• **解决方案**: 把报错中提到的文件路径加入本次 execute_python 调用的 input_files 数组后重试")
+        if "未找到会话数据文件" in error_msg or (
+            error_type == "FileNotFoundError" and "/sessions/" in error_msg and "/data/" in error_msg
+        ):
+            suggestions.append("• **输入文件未挂载**: 沙箱只挂载本次调用 input_files 参数中声明的文件，挂载不跨调用保留；路径本身可能已注册为会话资源，并非写错")
+            suggestions.append("• **解决方案**: 把报错中提到的文件路径加入本次 execute_python 调用的 input_files 数组后重试；或改用 read_session_resource 直接读取该资源")
 
         if "No module named 'backend'" in error_msg or "No module named 'backend." in error_msg:
             suggestions.append("• **导入路径**: 沙箱内应用包名为 `app`，推荐 `from app.xxx import ...`；`backend.app.*` 已自动兼容映射，但新代码请统一使用 `app.*`")

@@ -702,16 +702,14 @@ tables:
       PM10: double
       SO2: double
       NO2: double
-      CO95: double
-      O3_8H_90: double
+      CO: double
+      O3_8H: double
       RankPM25: int
       RankPM10: int
       RankSO2: int
       RankNO2: int
       RankO3: int
       RankCO: int
-      OfficialZong: double
-      OfficialRank: int
       ComputedAt: datetime
       CreatedAt: datetime
   CountyMonthReport:
@@ -812,6 +810,90 @@ tables:
       CompositeIndex_YoY: decimal
       SourceFile: varchar
       CreatedAt: datetime
+  HenanPlatformAqYearStat: &id001
+    time_columns:
+    - period_start
+    - period_end
+    - fetched_at
+    - created_at
+    dimension_columns:
+    - standard
+    - data_type
+    - region_level
+    - region_id
+    - admin_code
+    - region_name
+    value_columns:
+    - pm25
+    - pm10
+    - so2
+    - no2
+    - co
+    - o3_8h_90
+    - total_index
+    - good_rate
+    - good_days
+    - bad_days
+    - bad_rate
+    - o3_over_days
+    - lost_fine_days
+    - dust_days
+    mark_columns:
+    - raw_json
+    caliber_columns:
+    - standard
+    - data_type
+    - is_deduct
+    - period_type
+    column_types:
+      id: bigint
+      standard: varchar
+      data_type: varchar
+      is_deduct: tinyint
+      region_level: varchar
+      region_id: varchar
+      admin_code: varchar
+      region_name: varchar
+      stat_year: int
+      stat_month: int
+      period_type: varchar
+      period_start: date
+      period_end: date
+      pm25: decimal
+      pm10: decimal
+      so2: decimal
+      no2: decimal
+      co: decimal
+      o3_8h_90: decimal
+      total_index: decimal
+      good_rate: decimal
+      good_days: decimal
+      bad_days: decimal
+      bad_rate: decimal
+      o3_over_days: decimal
+      lost_fine_days: decimal
+      dust_days: decimal
+      yoy_pm25: decimal
+      yoy_pm10: decimal
+      yoy_so2: decimal
+      yoy_no2: decimal
+      yoy_co: decimal
+      yoy_o3_8h_90: decimal
+      yoy_total_index: decimal
+      yoy_good_rate: decimal
+      yoy_good_days: decimal
+      yoy_bad_days: decimal
+      yoy_bad_rate: decimal
+      yoy_o3_over_days: decimal
+      yoy_lost_fine_days: decimal
+      yoy_dust_days: decimal
+      yoy_base_year: int
+      fetched_at: datetime
+      raw_json: longtext
+      created_at: datetime
+      synced_at: datetime
+  HenanPlatformAqMonthStat: *id001
+  HenanPlatformAqAccumulateStat: *id001
   XuchangCityYearTarget:
     time_columns: []
     dimension_columns:

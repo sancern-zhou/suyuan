@@ -91,6 +91,9 @@ def test_tool_description_routes_to_describe_table_not_embeds_contracts(tmp_path
     assert "describe_table" in description
     assert "StationDay" in description
     assert "统计口径硬规则" in description
+    assert "许昌市及县市区当月MTD、当年截至某日YTD、完整月/年及官方报表缺期一律优先" in description
+    assert "airdata_calc_report_summary不支持区县市" in description
+    assert "许昌月度及以上唯一来源" not in description
     assert "站点字段 StationCode/StationName/" not in description
 
 

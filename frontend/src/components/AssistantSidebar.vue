@@ -246,6 +246,17 @@
           <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
           <span>{{ module.name }}</span>
         </button>
+        <div class="settings-menu-divider" role="separator"></div>
+        <button
+          class="settings-menu-item danger"
+          type="button"
+          role="menuitem"
+          :disabled="loggingOut"
+          @click="handleLogout"
+        >
+          <span class="module-icon" v-html="logoutIcon"></span>
+          <span>{{ loggingOut ? '退出中…' : '退出登录' }}</span>
+        </button>
       </div>
 
       <div class="user-identity" :title="userDisplayName">
@@ -804,6 +815,31 @@ const handleSettingsSelect = (moduleId) => {
   closeSettingsMenu()
 }
 
+const logoutIcon = `
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
+  </svg>
+`
+
+const loggingOut = ref(false)
+
+const handleLogout = async () => {
+  if (loggingOut.value) return
+  if (!window.confirm('确定退出当前登录账号吗？')) return
+  loggingOut.value = true
+  closeSettingsMenu()
+  try {
+    await auth.logout()
+  } catch (error) {
+    console.error('Logout failed:', error)
+  } finally {
+    loggingOut.value = false
+    await router.replace({ path: '/login' })
+  }
+}
+
 const handleDocumentPointerDown = (event) => {
   if (!settingsMenuOpen.value) return
   if (!settingsFooterRef.value?.contains(event.target)) closeSettingsMenu()
@@ -1288,6 +1324,31 @@ onUnmounted(() => {
   &.active {
     color: #1976d2;
     background: #e3f2fd;
+  }
+}
+
+.settings-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: #e0e7f0;
+}
+
+.settings-menu-item.danger {
+  color: #c62828;
+
+  .module-icon {
+    color: #c62828;
+  }
+
+  &:hover,
+  &:focus-visible {
+    color: #b71c1c;
+    background: #fdecea;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 }
 

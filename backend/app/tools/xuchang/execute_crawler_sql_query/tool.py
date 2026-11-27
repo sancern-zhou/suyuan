@@ -52,6 +52,9 @@ CRAWLER_SQL_TABLES = [
     "TownStationFiveMinute",
     "OfficeStationFiveMinute",
     "ShengkongStationHour",
+    "HenanPlatformAqYearStat",
+    "HenanPlatformAqMonthStat",
+    "HenanPlatformAqAccumulateStat",
 ]
 
 # 各表白名单对应的数据时间范围（实测），供 Agent 直接判断可查窗口、避免空查。
@@ -69,8 +72,10 @@ TABLE_TIME_RANGES: dict[str, str] = {
     "SsfbSiteHour": "2026-10-09 起，许昌县级站逐小时",
     "SsfbSiteDay": "2026-10-08 起，许昌县级站逐日",
     "SsfbCountyHour": "2026-10-10 起，河南区县逐小时（189 区县含济源+功能区，"
-                      "与省平台'区县'页签同源同口径；County/City 名称直接在行内；"
-                      "区县排名无物理表，可用窗口函数对基表现算）",
+                       "与省平台'区县'页签同源同口径；County/City 名称直接在行内；"
+                       "County 使用短名如示范区/开发区/东城区；区县过程/对比优先 "
+                       "xuchang_cube_metrics 的 SsfbCountyHour，避免误读基表重复行；"
+                       "区县排名无物理表，可用窗口函数对基表现算）",
     "SsfbCountyDay": "2026-10-09 起，河南区县逐日（次日白天陆续发布，个别区县偏晚靠回看补齐）",
     "SsfbCityRanking": "2026-10-09 起（每日 06:10 对官方发布日值排序，仅 daily）",
     "CountyMonthReport": "2020-01 ~ 2026-09，许昌 10 县市区官方月报统计（剔除沙尘；"
@@ -93,13 +98,24 @@ TABLE_TIME_RANGES: dict[str, str] = {
     "TownStationData": "2024-01 起，许昌 76 乡镇站逐小时/逐日（IsHour=1 小时、0 日；"
                        "IsAudit=1 审核/0 原始，同站同刻各一行，聚合前必须先过滤口径；"
                        "-99 为无效值；日值约 2024-08 起；禹州 22 站 2026-11-19 起通讯中断；"
-                       "数据现由许昌市空气质量管控平台替代抓取回写）",
+                       "数据现由许昌市空气质量管控平台替代抓取回写）；小时覆盖碎片化"
+                       "（旧云平台断供史：部分月份仅约 1/4 天数，2026-05~08 整段缺失，"
+                       "2026-09 起连续）——跨月历史对比勿假设连续覆盖，0 行多为真缺数",
     "TownStationFiveMinute": "2026-10-27 起，许昌乡镇站逐 5 分钟（滚动保留 30 天；"
                              "原始未审核口径，平台 5 分钟不发布 AQI 恒空；-99 为无效值）",
-    "OfficeStationFiveMinute": "2026-11-23 起，许昌 31 办事处站逐 5 分钟（仅 PM2.5/PM10 两因子；"
-                                "滚动保留 30 天；AQI 需按 HJ633 推算并注明）",
+    "OfficeStationFiveMinute": "2026-11-23 起，许昌 31 办事处站5分钟与官方小时（仅 PM2.5/PM10 两因子；"
+                                 "IsHour=0 五分钟、1 小时，必须过滤单一粒度与 IsAudit=0；"
+                                 "滚动保留 30 天；AQI 需按 HJ633 推算并注明）",
     "ShengkongStationHour": "2026-11-23 起，许昌 8 省控站逐小时六参数（平台省控仅小时粒度；"
-                             "2 个县'政府'站自 2026-04 起离线；滚动保留 30 天；AQI 需按 HJ633 推算并注明）",
+                              "2 个县'政府'站自 2026-04 起离线；滚动保留 30 天；AQI 需按 HJ633 推算并注明）",
+    "HenanPlatformAqYearStat": "2020-2025，许昌市及9县市区年度统计（河南省城市空气质量大数据综合应用系统，"
+                               "每日04:00同步；固定data_type='SK'、is_deduct=1，必须过滤单一standard；"
+                               "非考核定版，年度考核仍以Xuchang*YearTarget为准）",
+    "HenanPlatformAqMonthStat": "2020-01起，许昌市及9县市区自然月统计（省城市空气质量大数据综合应用系统本地副本；"
+                                "固定data_type='SK'、is_deduct=1，必须过滤单一standard；补充官方月报缺期，非考核定版）",
+    "HenanPlatformAqAccumulateStat": "许昌市及9县市区MTD/YTD累计（省城市空气质量大数据综合应用系统本地副本；"
+                                     "固定data_type='SK'、is_deduct=1，必须过滤单一standard及period_type='mtd'/'ytd'；"
+                                     "period_end为累计截止日，保留历史快照；非考核定版）",
 }
 
 MAX_LIMIT = 5000
@@ -159,7 +175,10 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "describe_table 查表结构（含数据时间范围），或 sql 执行 SELECT/CTE，二者二选一。"
             f"白名单表：{', '.join(CRAWLER_SQL_TABLES)}。只允许 SELECT（禁写/DDL/注释/多语句），"
             f"LIMIT 分页最大 {MAX_LIMIT} 条；不确定字段先 describe_table，禁查 information_schema。"
-            "\n【查询优先级】常规指标（排名/最新值/县级站/乡镇站）优先 xuchang_cube_metrics；"
+            "\n【查询优先级】常规指标、功能区区域过程/对比（示范区/开发区/东城区等"
+            "用 SsfbCountyHour/Day）优先 xuchang_cube_metrics，不要对 SsfbCountyHour "
+            "基表反复平均或自行去重；区县名用短名如示范区，非城乡一体化示范区；"
+            "排名/最新值/县级站/乡镇站同样优先语义层；"
             "国控站日值（含昨日）优先 query_airdata_platform；国控站最近小时与 5 分钟实时数据"
             "走 execute_sql_query（dat_zhongda_station_hour/dat_zhongda_station_minute，实时在流）；"
             "本工具用于长历史、同比、跨年趋势与语义层未覆盖的明细"
@@ -168,8 +187,11 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "仅用户明确要求标况或实况/标况对比时才查标况并分别标注。状态口径与原始/审核、实时/定版、考核口径不得混同；"
             "数据源未说明差异原因时不得自行解释。"
             "\n【统计口径硬规则】月度/季度/年度等统计禁止从 CityDay/StationDay/Ssfb* 等明细自算："
-            "许昌月度及以上唯一来源 airdata_calc_report_summary；河南官方月报 ProvinceMonthReport；"
-            "许昌县市区官方月报 CountyMonthReport；年均历史 CityYearPm25Avg；"
+            "许昌市及县市区当月MTD、当年截至某日YTD、完整月/年及官方报表缺期一律优先"
+            "xuchang_cube_metrics 的 HenanPlatformAqMonth/Year/Accumulate（也可用本工具查同名Stat表，"
+            "固定data_type='SK'、is_deduct=1、单一standard，累计另过滤period_type=mtd/ytd）；"
+            "中台报表airdata_calc_report_summary不支持区县市，禁止调用或改查站点替代；"
+            "河南官方月报 ProvinceMonthReport；许昌县市区已发布官方月报 CountyMonthReport；年均历史 CityYearPm25Avg；"
             "年度目标 XuchangCityYearTarget/XuchangCountyYearTarget/HenanCityYearTarget；"
             "168 城排名 Rank168CityMonthly。报表没有的口径如实说明，不得明细手算。"
             "\n【扣沙天】用 CitySandDay（仅城市+日期清单，无数值）过滤："
@@ -332,7 +354,17 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                 "summary": summary,
             }
 
-        return self._format_result(rows, normalized_sql, effective_limit, context, tables=referenced_tables)
+        result = self._format_result(
+            rows, normalized_sql, effective_limit, context, tables=referenced_tables
+        )
+        if not rows and referenced_tables and len(referenced_tables) == 1:
+            try:
+                verdict = await self._zero_row_verdict(referenced_tables[0])
+                if verdict:
+                    result["summary"] = "{} | 0 行判读：{}".format(result.get("summary", ""), verdict)
+            except Exception as exc:
+                logger.info("crawler_sql_zero_row_probe_failed", error=str(exc))
+        return result
 
     @staticmethod
     def _is_column_error(exc: Exception) -> bool:
@@ -404,6 +436,77 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
         async with _get_engine().connect() as connection:
             result = await connection.execute(text(sql), parameters or {})
             return [self._serialize_row(dict(row)) for row in result.mappings()]
+
+    async def _zero_row_verdict(self, table: str) -> str:
+        """0 行结果的数据可用性判读：区分“窗口内真缺数”与“参数/条件问题”。
+
+        仅对单表白名单查询触发；按契约 time_columns 的时间列做表级范围 +
+        近 12 个月逐月行数探针；探针失败一律放弃（fail-open），不影响原结果。
+        """
+        from app.utils.table_contracts import load_table_contracts
+
+        display = str(table)
+        canonical = ""
+        for candidate in CRAWLER_SQL_TABLES:
+            if candidate.lower() == display.lower():
+                canonical = candidate
+                break
+        if not canonical:
+            return ""
+        contracts = load_table_contracts() or {}
+        info = (contracts.get("tables") or {}).get(canonical) or {}
+        time_cols = info.get("time_columns") or []
+        if not time_cols:
+            try:
+                col_rows = await self._run_query(
+                    "SELECT column_name AS c FROM information_schema.columns "
+                    "WHERE table_schema = DATABASE() AND table_name = :tbl "
+                    "AND data_type IN ('datetime', 'date', 'timestamp') "
+                    "ORDER BY ordinal_position LIMIT 1",
+                    {"tbl": canonical},
+                    tables=[canonical],
+                )
+                time_cols = [r["c"] for r in col_rows if r.get("c")]
+            except Exception:
+                time_cols = []
+        if not time_cols:
+            return ""
+        time_col = time_cols[0]
+        time_col = time_cols[0]
+
+        range_rows = await self._run_query(
+            "SELECT MIN({col}) AS a, MAX({col}) AS b, COUNT(*) AS n FROM {tbl}".format(
+                col=time_col, tbl=canonical
+            ),
+            tables=[canonical],
+        )
+        if not range_rows:
+            return ""
+        a, b, n = range_rows[0].get("a"), range_rows[0].get("b"), range_rows[0].get("n") or 0
+        if not n:
+            return "表 {} 当前整表无数据：请核对表名与口径，或该数据源尚未入库。".format(canonical)
+
+        verdict = "表 {} 实际数据覆盖 {} ~ {}（共 {} 行）。".format(canonical, a, b, n)
+        try:
+            month_rows = await self._run_query(
+                "SELECT DATE_FORMAT({col}, '%Y-%m') AS m, COUNT(*) AS n FROM {tbl} "
+                "WHERE {col} >= DATE_SUB(:b, INTERVAL 11 MONTH) GROUP BY m ORDER BY m".format(
+                    col=time_col, tbl=canonical
+                ),
+                {"b": b},
+                tables=[canonical],
+            )
+        except Exception:
+            month_rows = []
+        if month_rows:
+            pairs = ", ".join("{}:{}".format(r["m"], r["n"]) for r in month_rows)
+            verdict += (
+                "近 12 个月逐月行数（全表全口径，未按你的 WHERE 过滤）：{}。"
+                "判读：某月 0 行=整月缺数（采集断供）；某月有行数但你的查询 0 行=该月缺你当前口径组合"
+                "（常见于 IsHour/IsAudit 过滤），可放宽口径试探数据边界，或改月份窗口/换口径表/语义层统计。"
+                .format(pairs)
+            )
+        return verdict
 
     def _format_result(
         self,

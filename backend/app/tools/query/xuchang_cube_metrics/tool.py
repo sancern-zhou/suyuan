@@ -144,27 +144,29 @@ class XuchangCubeMetricsTool(LLMTool):
         function_schema = {
             "name": self.tool_name,
             "description": (
-                "查询许昌本地空气质量指标(语义层,口径唯一,免SQL):河南18城市组(含济源)小时/日"
-                "六参数与AQI、城市/区县/站点排名、全省区县聚合(190个)与许昌县级站小时/日、"
-                "乡镇站(76个,2024起)、办事处站(31个,城区街道)、省控站(8个)、"
-                "官方月度统计(CountyMonth*/ProvinceMonth*)、"
-                "年度目标(XuchangCityYearTarget等3个)、168城市排名(历史官方定版=Rank168CityMonthly,"
+                "查询许昌空气质量(语义层,免SQL):河南18城市组(含济源)小时/日"
+                "六参数与AQI、区县聚合与县级站小时/日、"
+                "月度统计(CountyMonth*/ProvinceMonth*)与省平台补充(HenanPlatformAqMonth/Year/Accumulate)。"
+                "年度目标=XuchangCityYearTarget等3个;168排名:历史官方定版=Rank168CityMonthly,"
                 "最新/实时参考排名=airdata_calc_report_summary is_rank=true,仅作参考非定版)。"
                 "【路由】城市日排名=SsfbCityRanking(仅periodType=daily);"
                 "区县排名=SsfbCounty*Rank,站点排名=SsfbSite*Rank(排名规则:数值越低越靠前,并列);"
                 "区县级查询有五类口径:区县聚合=SsfbCountyHour/Day,区内县级站=SsfbSite*,"
-                "乡镇=Town*,办事处(城区街道,仅PM2.5/PM10,5分钟+小时)=OfficeFiveMinute,"
-                "省控(六参数,仅小时)=ShengkongHour(办事处/省控滚动保留30天,只做近期研判不做历史回看,"
-                "无AQI需按HJ633推算并注明);区内梯度与局地异常优先用乡镇/办事处站网,"
-                "县级站/省控站是单点参照;"
-                "月度及以上统计只用官方口径Cube(ProvinceMonth/Cum按level,CountyMonth/Cum),"
-                "禁止把日值自算成月度及以上(自算走airdata_calc_report_summary或官方值);"
+                "乡镇=Town*,办事处(城区街道)=OfficeFiveMinute/OfficeHour(仅PM2.5/PM10),"
+                "省控(六参数,仅小时)=ShengkongHour(办事处/省控滚动保留30天,不做历史回看;"
+                "无AQI按HJ633推算并注明);区内梯度与局地异常优先乡镇/办事处站网,"
+                "县级站/省控站是单点参照;示范区/开发区/东城区区域浓度/过程/对比首选"
+                "SsfbCountyHour/Day,单站不得替代区县聚合值;"
+                "月度及以上统计只用官方口径Cube:已发布历史优先ProvinceMonth/Cum与CountyMonth/Cum;"
+                "许昌市及县市区当月MTD、当年截至某日YTD、完整月/年及官方报表缺期一律用"
+                "HenanPlatformAqMonth/Year/Accumulate(来源=河南省城市空气质量大数据综合应用系统),"
+                "累计过滤periodType=mtd/ytd,均须单一standard;年度考核仍以Xuchang*YearTarget定版,省平台仅补充;"
+                "中台airdata_calc_report_summary不支持区县市统计,禁止调用或改查城市/站点结果替代;"
+                "禁止把日值自算成月度及以上;"
                 "乡镇站小时/日用TownHour/TownDay且必须过滤caliber(官方结论用app,"
                 "app断档时回退src并注明未审核);5分钟实时用TownFiveMinute(原始口径,AQI按HJ633推算)。"
                 "【数据窗口】2026-10-03起(源仅保留约8天滚动+每日累积);月报/年度Cube窗口见describe。"
-                "【成员目录】先用 describe_cube='cubes' 列全部Cube索引,"
-                "再 describe_cube='<Cube名>' 取成员(measures/dimensions中文名)与口径/窗口/限制;"
-                "成员名=Cube.成员,须同一Cube。"
+                "【成员目录】describe_cube='cubes' 列索引,传Cube名取成员与限制;目录与查询分次调用。"
             ),
             "parameters": {
                 "type": "object",
@@ -248,7 +250,31 @@ class XuchangCubeMetricsTool(LLMTool):
             f"{cube}.{d['name']}" for d in part.get("dimensions", [])
         ]
         close = difflib.get_close_matches(member, candidates, n=3, cutoff=0.6)
-        return f";相近成员: {', '.join(close)}" if close else ";用 describe_cube='<Cube名>' 查该Cube成员目录"
+        suffix = f";相近成员: {', '.join(close)}" if close else ";用 describe_cube='<Cube名>' 查该Cube成员目录"
+        return suffix + self._member_digest(cube)
+
+    def _member_digest(self, cube: Optional[str]) -> str:
+        """错误即目录：附该 Cube 紧凑成员清单，模型下一轮即可修对，无需再 describe。"""
+        if not cube or cube not in CATALOG:
+            return ""
+        part = CATALOG[cube]
+        measures = ",".join(m["name"] for m in part.get("measures", []))
+        dimensions = ",".join(d["name"] for d in part.get("dimensions", []))
+        return f"；{cube} 成员速查: measures=[{measures}] dimensions=[{dimensions}]"
+
+    def _related_member_hint(self, cube: str, queried_measures: Optional[List[str]]) -> str:
+        """成功结果的相关成员提示：Cube 含同比成员而本次完全未查时提示直接查询（目录在需要的时刻送达）。"""
+        part = CATALOG.get(cube) or {}
+        queried_short = {
+            str(m).split(".", 1)[-1] for m in (queried_measures or [])
+        }
+        if any("yoy" in name.lower() for name in queried_short):
+            return ""
+        related = [m for m in part.get("measures", []) if "yoy" in m["name"].lower()]
+        if not related:
+            return ""
+        detail = "、".join(f"{m['name']}={m.get('title', '')}" for m in related[:3])
+        return f"；本 Cube 含官方同比成员可直接查询勿手算: {detail}"
 
     def _validate(self, measures, dimensions, time_dimension, filters):
         if not measures:
@@ -275,11 +301,33 @@ class XuchangCubeMetricsTool(LLMTool):
             if c is None:
                 return None, f"过滤条件成员未知或不是维度: {member}{self._suggest(member)}"
             if f.get("operator") not in ALLOWED_FILTER_OPERATORS:
-                return None, f"不支持的过滤操作符: {f.get('operator')}"
+                if member == time_dimension:
+                    return None, (
+                        f"时间范围不要用 filters: 请传 date_range=['YYYY-MM-DD','YYYY-MM-DD'] "
+                        f"并给 granularity='hour'；time_dimension={time_dimension}"
+                    )
+                allowed = ",".join(sorted(ALLOWED_FILTER_OPERATORS))
+                return None, f"不支持的过滤操作符: {f.get('operator')}；可用: {allowed}"
             cubes.add(c)
         if len(cubes) > 1:
             return None, f"一次查询只能用一个 Cube 的成员,当前跨了: {sorted(cubes)}"
         cube = cubes.pop()
+        if cube.startswith("HenanPlatformAq"):
+            standard_values = {
+                str(value) for item in filters or []
+                if item.get("member") == f"{cube}.standard"
+                for value in (item.get("values") or [])
+            }
+            if not standard_values.intersection({"new", "old"}):
+                return None, f"{cube} 必须明确过滤 standard=new 或 standard=old；2026年起仅有 new"
+            if cube == "HenanPlatformAqAccumulate":
+                period_values = {
+                    str(value) for item in filters or []
+                    if item.get("member") == f"{cube}.periodType"
+                    for value in (item.get("values") or [])
+                }
+                if not period_values.intersection({"mtd", "ytd"}):
+                    return None, "HenanPlatformAqAccumulate 必须明确过滤 periodType=mtd(当月累计) 或 ytd(当年累计)"
         if cube in {"TownHour", "TownDay"}:
             caliber_filters = [
                 f for f in filters or []
@@ -309,7 +357,13 @@ class XuchangCubeMetricsTool(LLMTool):
         describe_cube: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        if describe_cube:
+        # 混合调用（describe_cube+查询参数）按查询执行：意图明确时服务意图，
+        # 参数问题交给校验器纠错；describe_cube 仅在无查询参数时才走目录分支。
+        has_query_params = any((
+            measures, dimensions, time_dimension, date_range, filters, granularity, order,
+        ))
+        mixed_describe = bool(describe_cube) and has_query_params
+        if describe_cube and not mixed_describe:
             if describe_cube in {"cubes", "all", "index", "目录", "全部"}:
                 items = []
                 for name in sorted(CATALOG):
@@ -452,7 +506,11 @@ class XuchangCubeMetricsTool(LLMTool):
                 },
                 "quality_guidance": quality_guidance(quality_status),
             },
-            "summary": f"查询 {cube} 返回 {row_count} 行({elapsed}s，数据截至 {data_as_of or '未能从结果推断'})",
+            "summary": (
+                f"查询 {cube} 返回 {row_count} 行({elapsed}s，数据截至 {data_as_of or '未能从结果推断'})"
+                + ("；已忽略同时传入的 describe_cube，目录与查询分两次调用" if mixed_describe else "")
+                + self._related_member_hint(cube, measures)
+            ),
         }
         contract_errors = validate_result("metric_query", payload)
         if contract_errors:

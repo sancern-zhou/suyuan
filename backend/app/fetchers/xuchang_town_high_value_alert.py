@@ -38,7 +38,7 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
     ) -> None:
         super().__init__(
             name="xuchang_town_high_value_alert_fetcher",
-            description="乡镇站PM2.5/PM10相对所在区县中位数的小时空间高值提醒，极端离群按设备异常过滤",
+            description="乡镇站PM2.5/PM10达到新标准轻度门槛且连续高值、相对区县离群时提醒，极端离群按设备异常过滤",
             # 小时数据入库：办事处 :3、乡镇 :5、省控 :17（平台发布 ~:1/~:2/~:15，
             # 2026-11-25 实测）；大屏 :16 物化小时地图；告警 :19 判定、:44 补判
             # （同小时 group_id 幂等，补判只覆盖 :19 漏判/数据迟到的情形）。
@@ -139,7 +139,8 @@ class XuchangTownHighValueAlertFetcher(DataFetcher):
                     logger.warning("town_high_value_equipment_county_missing", station=item["station_name"])
                     continue
                 message = (
-                    f"【乡镇高值提醒】{item['station_name']}站点{group['pollutant']}浓度显示异常，"
+                    f"【乡镇高值提醒】{item['station_name']}站点{group['pollutant']}实时小时浓度为"
+                    f"{item['value']:g}微克/立方米，浓度显示异常，"
                     f"请{county}核实数据异常原因，并及时反馈。"
                 )
                 record = self.enqueue(

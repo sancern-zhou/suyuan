@@ -450,8 +450,9 @@ def test_query_tool_schema_forbids_aggregating_hourly_daily_into_monthly_annual(
     description = QueryAirDataPlatformTool().function_schema["description"]
 
     assert "月度及以上统计禁止从小时/日明细自算" in description
-    assert "airdata_calc_report_summary" in description
-    assert "必须改用该接口" in description
+    assert "HenanPlatformAqMonth/Year/Accumulate" in description
+    assert "中台报表不支持区县市统计" in description
+    assert "必须改用该接口" not in description
 
 
 def test_report_tool_schema_states_official_caliber_no_cross_check():
@@ -467,9 +468,13 @@ def test_report_tool_schema_forbids_aggregating_hourly_daily_into_monthly_annual
     tool = AirDataCalcReportSummaryTool()
     description = tool.function_schema["description"]
 
-    assert "本接口是许昌月度及以上统计的唯一来源" in description
-    assert "禁止用小时/日明细自算或修正平台报表" in description
+    assert "本接口不支持区县、县级市统计" in description
+    assert "HenanPlatformAqMonth/Year/Accumulate" in description
+    assert "不得改查城市或站点结果替代" in description
+    assert "本接口是许昌月度及以上统计的唯一来源" not in description
+    assert "禁止用小时/日明细自算或修正统计结果" in description
     assert "不得明细手算" in description
+    assert "1区县市不受支持，禁止传1" in tool.function_schema["parameters"]["properties"]["area_type"]["description"]
     assert (
         "月报用 4、年报用 7"
         in tool.function_schema["parameters"]["properties"]["report_time_type"]["description"]

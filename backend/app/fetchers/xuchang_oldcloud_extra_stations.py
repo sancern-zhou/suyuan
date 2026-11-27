@@ -8,8 +8,9 @@
 - 站点类型 tstype：3=省控站（8 站）、4=乡镇站（76 站）、9=办事处站（31 站）。
 
 落库：
-- OfficeStationFiveMinute：办事处站逐 5 分钟（PM25/PM10 两因子），滚动
-  保留 30 天（过期行每轮删除），uk: Tsno+CollectionTime+IsAudit 幂等；
+- OfficeStationFiveMinute：办事处站 5 分钟与官方小时（PM25/PM10 两因子，
+  IsHour=0/1 严格区分），滚动保留 30 天（过期行每轮删除），
+  uk: Tsno+CollectionTime+IsHour+IsAudit 幂等；
 - ShengkongStationHour：省控站逐小时（六参数），同保留策略。
 
 调度与既有 Crawler MySQL 抓取器错峰（严禁同分钟并发连 Crawler MySQL，
@@ -28,6 +29,7 @@ import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.integrations.xuchang.town_cloud_client import TownCloudClient
+from app.tools.xuchang.station_catalog.catalog import normalize_oldcloud_extra_stations
 from config.settings import settings
 
 logger = structlog.get_logger()
@@ -275,13 +277,22 @@ class _PerStationOldCloudFetcher(DataFetcher):
     async def fetch_and_store(self) -> dict[str, Any]:
         start, end = self._window(self.now_factory().replace(second=0, microsecond=0))
         stations = await asyncio.to_thread(self.client.fetch_station_directory, self.platform_tstype)
+        # 平台办事处目录 countyIdStr 可能为空；与站点目录共用同一份已核实归属表，
+        # 不在各抓取器另建区县映射。
+        catalog_stations = normalize_oldcloud_extra_stations(
+            stations, "office" if self.platform_tstype == "9" else "shengkong"
+        )
+        county_by_code = {
+            str(item["station_code"]): str(item.get("district") or "").strip() or None
+            for item in catalog_stations
+        }
         records: list[dict[str, Any]] = []
         station_errors: dict[str, str] = {}
         empty_stations: list[str] = []
         for station in stations:
             tsno = str(station.get("tsno") or "").strip()
             name = str(station.get("name") or "").strip()
-            county = str(station.get("countyIdStr") or "").strip() or None
+            county = str(station.get("countyIdStr") or "").strip() or county_by_code.get(tsno)
             if not tsno:
                 continue
             try:

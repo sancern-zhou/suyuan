@@ -143,6 +143,36 @@ def test_slice_image_produces_requested_count():
         assert 200 <= im.height <= 400
 
 
+def test_recognize_article_retries_empty_or_invalid_vision_output(monkeypatch):
+    fetcher = MeeRank168MonthlyFetcher(storage=AsyncMock(), vision_func=AsyncMock())
+    monkeypatch.setattr(
+        "app.fetchers.mee_rank168_monthly.slice_image",
+        lambda image_bytes: [b"slice-1", b"slice-2"],
+    )
+    fetcher._vision = AsyncMock(side_effect=[
+        "", json.dumps(_rows(168)[:84], ensure_ascii=False),
+        "not-json", json.dumps(_rows(168)[84:], ensure_ascii=False),
+    ])
+
+    rows = asyncio.run(fetcher._recognize_article(_article(), b"image"))
+
+    assert len(rows) == 168
+    assert fetcher._vision.await_count == 4
+
+
+def test_recognize_article_fails_after_three_invalid_responses(monkeypatch):
+    fetcher = MeeRank168MonthlyFetcher(storage=AsyncMock(), vision_func=AsyncMock())
+    monkeypatch.setattr(
+        "app.fetchers.mee_rank168_monthly.slice_image",
+        lambda image_bytes: [b"slice-1"],
+    )
+    fetcher._vision = AsyncMock(return_value="not-json")
+
+    with pytest.raises(ValueError, match="连续 3 次识别失败"):
+        asyncio.run(fetcher._recognize_article(_article(), b"image"))
+    assert fetcher._vision.await_count == 3
+
+
 def test_fetch_and_store_skips_existing_months(tmp_path: Path, monkeypatch):
     fetcher = MeeRank168MonthlyFetcher(
         archive_dir=tmp_path,

@@ -16,7 +16,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.tools.query.execute_crawler_sql_query.table_contracts import (  # noqa: E402
+from app.utils.table_contracts import (  # noqa: E402
     CONTRACT_FILENAME,
     load_table_contracts,
 )

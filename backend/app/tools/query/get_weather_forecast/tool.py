@@ -74,11 +74,12 @@ class GetWeatherForecastTool(LLMTool):
             "description": """获取指定位置的Open-Meteo模式预报，包含边界层高度(m)、短波辐射(W/m²)、温度、降水、风速(m/s)。
 
 【工具选择与调用】
-1. 今天（含00:00至当前已过小时）和未来的边界层高度、短波辐射：直接使用本工具，不要先用get_weather_data试查未来，也不要用站点温湿度估算边界层高度。
-2. 仅查今天：forecast_days=1,past_days=0；昨天到今天：forecast_days=1,past_days=1；过去5天缺口：past_days=5。forecast_days从今天开始计数且包含今天（1=今天，4=今天及后三个日历日）。
-3. 今天之前超过5天的历史网格：使用get_weather_data；跨时段分别查询，根据实际覆盖范围合并并按timestamp去重，保留每段来源。纯ERA5发布有延迟，不能用ERA5接口补当天。
-4. 本工具必须提供lat/lon；location_name仅是显示名，不做地理解析。坐标取自项目城市代表点、用户指定位置或历史工具返回的网格坐标，不猜测坐标。
-5. 查询“截至此刻”时只保留timestamp<=用户截止时刻的记录；不得将今天尚未到来的小时计入已发生时段。字段为空就报告缺失，不用0或估算值补齐。
+1. 许昌基础天气预报（温度/湿度/风向风力/降水/天气现象，官方口径）：优先用 execute_sql_query 查 XcAiDb 的 XuchangNmcHourlyWeatherForecast（NMC官方逐3小时，7天）；城区1-15日日预报查 XuchangWeatherComDailyForecast，勿用本工具重复取数。
+2. 本工具用于边界层高度、短波辐射、云量、能见度、逐小时粒度、非许昌城市或 past_days 补数场景；今天（含00:00至当前已过小时）和未来的边界层高度、短波辐射：直接使用本工具，不要先用get_weather_data试查未来，也不要用站点温湿度估算边界层高度。
+3. 仅查今天：forecast_days=1,past_days=0；昨天到今天：forecast_days=1,past_days=1；过去5天缺口：past_days=5。forecast_days从今天开始计数且包含今天（1=今天，4=今天及后三个日历日）。
+4. 今天之前超过5天的历史网格：使用get_weather_data；跨时段分别查询，根据实际覆盖范围合并并按timestamp去重，保留每段来源。纯ERA5发布有延迟，不能用ERA5接口补当天。
+5. 本工具必须提供lat/lon；location_name仅是显示名，不做地理解析。坐标取自项目城市代表点、用户指定位置或历史工具返回的网格坐标，不猜测坐标。
+6. 查询“截至此刻”时只保留timestamp<=用户截止时刻的记录；不得将今天尚未到来的小时计入已发生时段。字段为空就报告缺失，不用0或估算值补齐。
 
 【时间、单位与来源】
 past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天，最多可补过去5天。

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import median
 from typing import Any
 
-from app.fetchers.xuchang_town_hour_day import iaqi_legacy
+from app.scenarios.xuchang_city_exceedance.aqi import iaqi
 
 from .config import HighValueConfig
 
@@ -29,11 +29,32 @@ def number(value: Any) -> float | None:
 
 
 def pollution_level(pollutant: str, concentration: float) -> int:
-    """统一按 TownStationData 历史 IAQI 折点换算六级污染等级（0~5）。"""
-    score = iaqi_legacy("pm25" if pollutant == "PM2.5" else "pm10", concentration, daily=False)
+    """按 GB 3095—2026 过渡限值换算六级污染等级（0~5）。"""
+    score = iaqi("pm25" if pollutant == "PM2.5" else "pm10", concentration)
     if score is None:
         raise ValueError("有效浓度必须可计算 IAQI")
-    return min(5, max(0, (score - 1) // 50)) if score > 0 else 0
+    return min(5, max(0, int((score - 1) // 50))) if score > 0 else 0
+
+
+def _minimum_concentration(pollutant: str, config: HighValueConfig) -> float:
+    return config.min_pm25_concentration if pollutant == "PM2.5" else config.min_pm10_concentration
+
+
+def _is_persistent(
+    rows: list[dict[str, Any]], *, station_id: str, column: str,
+    hour: datetime, hours: int, minimum: float,
+) -> bool:
+    """候选站须连续达到绝对门槛，避免单小时突峰触发排查提醒。"""
+    for offset in range(hours):
+        expected = hour.replace(minute=0, second=0, microsecond=0) - timedelta(hours=offset)
+        values = [
+            number(row.get(column, row.get(column.lower())))
+            for row in rows
+            if _station_id(row) == station_id and _time(row) == expected
+        ]
+        if not values or values[0] is None or values[0] < minimum:
+            return False
+    return True
 
 
 def _station_id(row: dict[str, Any]) -> str:
@@ -67,12 +88,12 @@ def detect_high_value_groups(
     """返回最新完整小时及高值组；候选设备异常记录保留在组内供流水留痕。
 
     以站点所在区县为参照群体（魏都/建安/东城/开发区/示范区合并为中心城区）：
-    浓度差与相对差相对区县内其他站点中位数须同时达到阈值，
-    避免低浓度小绝对差、高浓度小比例差误报，也避免区域整体偏高被误报为单站离群。
-    区县有效站点不足 minimum_peer_stations + 1 时该区县不判定；无辖区归属的站点不参与。
-    modified z 对良/轻度污染仅作空间孤立证据，避免误删真实单站污染；
-    设备异常仅保留中度及以上、与周边至少相差 2 个污染等级且 modified z 极高的极端离群。
-    大范围候选中若只有一站达到轻度及以上，该站优先单独提醒，普通良站作区域背景。
+    先达到 GB 3095—2026 过渡限值的轻度污染门槛且连续高值，再要求浓度差、
+    相对差和污染等级差相对区县内其他站点中位数同时达到阈值，避免低浓度相对离群误报。
+    区县有效站点不足 minimum_peer_stations + 1 时该区县不判定；参照站较少时提高相对差门槛。
+    modified z 仅作设备异常证据；设备异常保留中度及以上、与周边至少相差 2 个污染等级
+    且 modified z 极高的极端离群，单小时即可识别，不受连续高值条件限制。
+    大范围候选中若只有一站达到轻度及以上，该站优先单独提醒。
     """
     config = config or HighValueConfig()
     valid_hours = [value for row in rows if (value := _time(row)) is not None]
@@ -91,9 +112,15 @@ def detect_high_value_groups(
                     county = CENTRAL_URBAN_BASELINE
                 county_candidates.setdefault(county, []).append({"row": row, "value": value})
         alerts: list[dict[str, Any]] = []
+        minimum_concentration = _minimum_concentration(pollutant, config)
         for peers in county_candidates.values():
             if len(peers) < config.minimum_peer_stations + 1:
                 continue
+            relative_threshold = (
+                config.sparse_peer_relative_difference
+                if len(peers) < config.sparse_peer_threshold
+                else config.min_relative_difference
+            )
             for candidate in peers:
                 value = candidate["value"]
                 peer_values = [item["value"] for item in peers if item is not candidate]
@@ -116,10 +143,16 @@ def detect_high_value_groups(
                     and modified_z >= config.equipment_modified_z
                 ):
                     equipment_reason = "moderate_or_worse_extreme_outlier"
-                if (
-                    level_difference < config.min_level_difference
+                if equipment_reason is None and (
+                    value < minimum_concentration
+                    or level < 2
+                    or level_difference < config.min_level_difference
                     or absolute < config.min_absolute_difference
-                    or relative < config.min_relative_difference
+                    or relative < relative_threshold
+                    or not _is_persistent(
+                        rows, station_id=_station_id(candidate["row"]), column=column,
+                        hour=latest, hours=config.consecutive_hours, minimum=minimum_concentration,
+                    )
                 ):
                     continue
                 row = candidate["row"]
@@ -132,6 +165,9 @@ def detect_high_value_groups(
                     "baseline": baseline,
                     "absolute_difference": absolute,
                     "relative_difference": relative,
+                    "relative_threshold": relative_threshold,
+                    "minimum_concentration": minimum_concentration,
+                    "consecutive_hours": config.consecutive_hours,
                     "level": level,
                     "level_name": LEVEL_NAMES[level],
                     "peer_level": peer_level,
