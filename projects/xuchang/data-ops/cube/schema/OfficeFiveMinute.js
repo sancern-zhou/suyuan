@@ -10,7 +10,7 @@
 // - 数据窗口 2026-11-23 起滚动 30 天。
 cube(`OfficeFiveMinute`, {
   sql: `
-    SELECT * FROM OfficeStationFiveMinute WHERE IsAudit = 0
+    SELECT * FROM OfficeStationFiveMinute WHERE IsAudit = 0 AND IsHour = 0
   `,
 
   measures: {

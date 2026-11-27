@@ -149,9 +149,12 @@ SQL Server：`180.184.30.94:1433`，库 `XcAiDb`。
 - `HenanCityAccumulateRanking`：河南空气质量 APP 的月/年累计排名，该数据源已于 2026-09 停服。
 - `projects/xuchang/data-ops/` 下另有官方月报链路（`ProvinceMonthReport`，DataCrawler MySQL），口径对照时留意。
 
-### 7.3 问数接入
+### 7.3 问数接入（2026-11-26 已接入）
 
-三张表目前**未加入** `backend/app/utils/sql_validator.py` 的白名单，Agent 暂时查不到。需要让 Agent 查询时，把三个表名加入白名单即可。
+- Cube：`HenanPlatformAqYear` / `HenanPlatformAqMonth` / `HenanPlatformAqAccumulate`，独立 SQL Server 数据源 `xcai`；语义说明统一登记 `projects/xuchang/data-ops/semantic/registry.yaml`。
+- 路由：官方月报已发布的历史月份继续优先 `ProvinceMonth(Cum)` / `CountyMonth(Cum)`；最近完整月官方月报缺期使用 `HenanPlatformAqMonth`，当月累计、当年累计使用 `HenanPlatformAqAccumulate`（必须过滤 `periodType=mtd/ytd`）。年度考核仍以 `Xuchang*YearTarget` 定版为准。
+- 三个 Cube 均固定 `SK` 实况、扣沙，查询必须过滤单一 `standard=new/old`；2026 年起只有 `new`。所有答复须注明来源为**河南省城市空气质量大数据综合应用系统**，不得称为考核定版。
+- SQL 兜底走 XcAiDb 的 `execute_sql_query`，三表已加入其只读白名单；**不要加入 MySQL 的 `execute_crawler_sql_query` 白名单**，三表不在 DataCrawler。
 
 ## 8. 数据量与校验
 
