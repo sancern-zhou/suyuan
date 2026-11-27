@@ -23,6 +23,7 @@ from app.fetchers.consultation.annual_ytd import (
 )
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
+from app.fetchers.mee_rank168_monthly import MeeRank168MonthlyFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
@@ -43,6 +44,7 @@ from app.fetchers.xuchang_city_exceedance import XuchangCityExceedanceFetcher
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
 from app.fetchers.xuchang_henan_county_publish import XuchangHenanCountyPublishFetcher
 from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
+from app.fetchers.xuchang_henan_platform_aq_sync import XuchangHenanPlatformAqSyncFetcher
 from app.fetchers.xuchang_henan_ranking_recalc import XuchangHenanRankingRecalcFetcher
 from app.fetchers.xuchang_henan_ssfb_publish import (
     XuchangHenanSsfbCityPublishFetcher,
@@ -159,10 +161,12 @@ def _configured_fetchers(project_context):
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
         "fault_diagnosis": FaultDiagnosisFetcher,
+        "mee_rank168_monthly_fetcher": MeeRank168MonthlyFetcher,
         "xuchang_daily_attainment_forecast_fetcher": XuchangDailyAttainmentForecastFetcher,
         "xuchang_annual_attainment_forecast_fetcher": XuchangAnnualAttainmentForecastFetcher,
         "xuchang_city_exceedance_fetcher": XuchangCityExceedanceFetcher,
         "xuchang_henan_month_year_accumulate_fetcher": XuchangHenanMonthYearAccumulateFetcher,
+        "xuchang_henan_platform_aq_sync_fetcher": XuchangHenanPlatformAqSyncFetcher,
         "xuchang_henan_ranking_recalc_fetcher": XuchangHenanRankingRecalcFetcher,
         "xuchang_henan_ssfb_city_publish_fetcher": XuchangHenanSsfbCityPublishFetcher,
         "xuchang_henan_ssfb_site_publish_fetcher": XuchangHenanSsfbSitePublishFetcher,

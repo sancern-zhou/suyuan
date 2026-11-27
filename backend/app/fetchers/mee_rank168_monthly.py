@@ -364,15 +364,29 @@ class MeeRank168MonthlyFetcher(DataFetcher):
         results: list[list[dict[str, Any]]] = []
         for idx, chunk in enumerate(slices):
             b64 = base64.b64encode(chunk).decode()
-            text = await self._vision(
-                image_url=f"data:image/jpeg;base64,{b64}",
-                prompt=build_prompt(article, idx, len(slices)),
-                timeout=300.0,
-                max_tokens=8192,
-            )
-            results.append(parse_vision_rows(text))
-            logger.info("mee_rank168_slice_recognized", month=str(article.data_month),
-                        slice=idx + 1, rows=len(results[-1]))
+            last_error: Exception | None = None
+            for attempt in range(1, 4):
+                try:
+                    text = await self._vision(
+                        image_url=f"data:image/jpeg;base64,{b64}",
+                        prompt=build_prompt(article, idx, len(slices)),
+                        timeout=300.0,
+                        max_tokens=8192,
+                    )
+                    parsed = parse_vision_rows(text)
+                    if not parsed:
+                        raise ValueError("视觉识别结果为空数组")
+                    results.append(parsed)
+                    logger.info("mee_rank168_slice_recognized", month=str(article.data_month),
+                                slice=idx + 1, attempt=attempt, rows=len(parsed))
+                    break
+                except (ValueError, json.JSONDecodeError) as exc:
+                    last_error = exc
+                    logger.warning("mee_rank168_slice_recognition_retry",
+                                   month=str(article.data_month), slice=idx + 1,
+                                   attempt=attempt, error=str(exc)[:300])
+            else:
+                raise ValueError(f"第 {idx + 1} 段连续 3 次识别失败: {last_error}")
         merged = merge_slices(results)
         validate_rows(merged)
         return merged
