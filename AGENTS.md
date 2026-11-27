@@ -125,3 +125,27 @@ web/worker 进程的事件循环同时承载前端 API：worker 还承载 web �
 - 工作流程：先在 main 提交共享改动 → 项目分支 `git merge main` → 再提交项目改动。禁止在项目分支直接修改共享层文件而不回合 main（带项目名的路径与上条存量备注所列文件除外）。
 - 项目分支每天开工先 `git merge main`；共享层文件的改动永远以 main 为准。
 - 禁止提交：`backend/.env.*`（模板除外）、`frontend/dist-*`、`backend/backend_data_registry*`、`suncere*/`（见 .gitignore）。
+
+## 2026-11-27 统一鉴权平台第三方单点登录接入（已提交推送，5b28ad7f xuchang / 03251af0 main / e1662feb merge）
+
+- **方案**：统一门户  以第三方系统单点打开 ，复用江苏分支已验证代码移植到 SUYUAN 语境。三种入口形态全支持：①getThirdUrl （主路径）②directAuthorize 授权码回跳  ③dockingThirdUrl （菜单需单点登录）
+- **后端**（backend/app/auth/）：oauth_client.py（directAuthorize 提码+/auth/oauth/token 换令牌）、third_party_entry.py（JWT 验签+des 解密）、routes.py 5 端点、middleware 白名单 4 路径、core/middleware.py 注册 oauth_client、settings.py 7 项（AUTH_OAUTH_*、AUTH_THIRD_*）
+- **前端**（frontend/src/auth/）：entryToken.js（三形态凭证提取，hash 内 query 兼容）、oauthApi.js、authStore/routerGuard/http 接线（401 跳登录、入口凭证地址栏清洗）
+- **平台 DB 配置**（mysql8 容器 XuChangAuth）：sys_business_system id=4 溯源智能体/SUYUAN；sys_dictionary_item id=76 JWT_SECRET_KEY.SECRET_KEY（is_sensitive 0）、id=86 SJZX_THIRD_SYSTEM/SUYUAN=**JSON 格式** （getThirdUrl 把该 value 当 JSON parse，纯 URL 串会失败——与旧 THIDEMO 纯串条目不同）、id=87 THIRD_CALL_BACK_URL/SUYUAN=jwt-login URL（directAuthorize 回调白名单 equals 校验）；nacos 网关白名单加 （CFG_PLATFORM_GATEWAY_WHITELIST，nacos 凭据 nacos/suncere*0915）
+- **backend/.env**（未提交，备份 .env.bak-oauth-*）：AUTH_SYS_CODE=SUYUAN、AUTH_OAUTH_CLIENT_ID/SECRET=SUYUAN/suyuan2026secret、AUTH_THIRD_JWT_SECRET=2A3D1678-64D2-4527-B3C3-621BB622C0DD、AUTH_THIRD_MINT_REDIRECT_URI=jwt-login URL
+- **关键踩坑**：①directAuthorize 回 **303**（非 302），oauth_client 只认 302 导致静默拒绝——已兼容 301/302/303/307；②web 重启后 uvicorn 3 workers 启动慢（~30s），health 检查别太早；③directAuthorize 参数语义（反汇编 OauthController）：secretName 必须是 sys_user.user_name（登录名如 ScGuanLy），userMark 任意非空、timestamp 仅 SYS_AUTH_TYPE=1 时校验；④getThirdPathJwt/JwtUtils.createToken（反汇编 SysDockingThirdUrlController）：JWT claims jti=平台用户ID、sub=user_name、custom=字典 param（#{userName} 替换姓名）、HS256 key=Base64(SECRET_KEY 字节)、exp=120s；⑤getThirdUrl 入口分支：type=1 走 getThirdPathToLogin（需登录）、其余走 getThirdPathJwt 拼回调 URL
+- **端到端已验证**：模拟平台签 JWT → 公网入口 （前端 standalone base=/suyuan/api/suyuan，网关 rewrite ）→ 200 accessToken →  返回超级管理员（authSource=company）。前端已 build + nginx 重启（容器 aef07405863d）
+- **部署状态**：web 已重启生效；平台菜单挂 SUYUAN 入口（urlType=2 window.open）待管理员在门户配置；测试 auth 130/130 过（1 存量失败 ml_predictor StandardScaler NameError 为并行会话区域）；测试债：tests/test_visual_id_protocol.py 收集错误（StandardScaler，非本次）
+- **遗留**：菜单点击的门户端 getThirdUrl 全链路需平台管理员配菜单后实测（JWT 签发/验签/换令牌各环节均已单测+实测覆盖）；des 入口未实测（密钥反汇编确认，3DES 实现有单测）
+
+## 2026-11-27 统一鉴权平台第三方单点登录接入（已提交推送，5b28ad7f xuchang / 03251af0 main / e1662feb merge）
+
+- **方案**：统一门户 `http://117.159.53.11:60787` 以第三方系统单点打开 `/suyuan/`，复用江苏分支已验证代码移植到 SUYUAN 语境。三种入口形态全支持：①getThirdUrl 带 token 参数（HS256 JWT，主路径）②directAuthorize 授权码回跳带 code ③dockingThirdUrl des 加密串（菜单"需单点登录"）
+- **后端**（backend/app/auth/）：oauth_client.py（directAuthorize 提码+/auth/oauth/token 换令牌）、third_party_entry.py（JWT 验签+des 解密）、routes.py 5 端点、middleware 白名单 4 路径、core/middleware.py 注册 oauth_client、settings.py 7 项（AUTH_OAUTH_*、AUTH_THIRD_*）
+- **前端**（frontend/src/auth/）：entryToken.js（三形态凭证提取，hash 内 query 兼容）、oauthApi.js、authStore/routerGuard/http 接线（401 跳登录、入口凭证地址栏清洗）
+- **平台 DB 配置**（mysql8 容器 XuChangAuth）：sys_business_system id=4 溯源智能体/SUYUAN；sys_dictionary_item id=76 JWT_SECRET_KEY.SECRET_KEY（is_sensitive 0）、id=86 SJZX_THIRD_SYSTEM/SUYUAN=JSON 格式 {"url":".../suyuan/api/auth/oauth/jwt-login","paramKey":"token"}（getThirdUrl 把该 value 当 JSON parse，纯 URL 串会失败——与旧 THIDEMO 纯串条目不同）、id=87 THIRD_CALL_BACK_URL/SUYUAN=jwt-login URL（directAuthorize 回调白名单 equals 校验）；nacos 网关白名单加 /api/auth/oauth/**（CFG_PLATFORM_GATEWAY_WHITELIST，nacos 凭据 nacos/suncere*0915）
+- **backend/.env**（未提交，备份 .env.bak-oauth-*）：AUTH_SYS_CODE=SUYUAN、AUTH_OAUTH_CLIENT_ID/SECRET=SUYUAN/suyuan2026secret、AUTH_THIRD_JWT_SECRET=2A3D1678-64D2-4527-B3C3-621BB622C0DD、AUTH_THIRD_MINT_REDIRECT_URI=jwt-login URL
+- **关键踩坑**：①directAuthorize 回 303（非 302），oauth_client 只认 302 导致静默拒绝——已兼容 301/302/303/307；②web 重启后 uvicorn 3 workers 启动慢（约 30s），health 检查别太早；③directAuthorize 参数语义（反汇编 OauthController）：secretName 必须是 sys_user.user_name（登录名如 ScGuanLy），userMark 任意非空、timestamp 仅 SYS_AUTH_TYPE=1 时校验；④getThirdPathJwt/JwtUtils.createToken（反汇编 SysDockingThirdUrlController）：JWT claims jti=平台用户ID、sub=user_name、custom=字典 param（#{userName} 替换姓名）、HS256 key=Base64(SECRET_KEY 字节)、exp=120s；⑤getThirdUrl 入口分支：type=1 走 getThirdPathToLogin（需登录）、其余走 getThirdPathJwt 拼回调 URL
+- **端到端已验证**：模拟平台签 JWT → 公网入口 /suyuan/api/suyuan/auth/oauth/jwt-login（前端 standalone base=/suyuan/api/suyuan，网关 rewrite /suyuan/api/(.*) → /api/$1）→ 200 accessToken → /auth/me 返回超级管理员（authSource=company）。前端已 build + nginx 重启（容器 aef07405863d）
+- **部署状态**：web 已重启生效；平台菜单挂 SUYUAN 入口（urlType=2 window.open）待管理员在门户配置；测试 auth 130/130 过（1 存量失败 ml_predictor StandardScaler NameError 为并行会话区域）；测试债：tests/test_visual_id_protocol.py 收集错误（StandardScaler，非本次）
+- **遗留**：菜单点击的门户端 getThirdUrl 全链路需平台管理员配菜单后实测（JWT 签发/验签/换令牌各环节均已单测+实测覆盖）；des 入口未实测（密钥反汇编确认，3DES 实现有单测）
