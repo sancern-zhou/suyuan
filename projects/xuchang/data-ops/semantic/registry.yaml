@@ -127,9 +127,10 @@ cubes:
   SsfbCountyHour:
     dataset: DataCrawler.SsfbCountyHour
     grain: 一行 = 区县 × 小时
-    applicability: 河南区县小时数据，含济源和功能区
+    applicability: 河南区县小时六参数，含济源和许昌示范区、开发区、东城区等功能区；查询区域浓度、过程变化或区域对比的首选口径，勿用乡镇/办事处/国控站替代区县聚合值
     source_window: 采集源滚动窗口
-    limitations: []
+    limitations:
+      - 区县聚合与区内单个站点是不同口径；乡镇、办事处、国控、省控站仅用于空间细化与来源佐证
     measures:
       count:
         name: 小时记录数
@@ -443,17 +444,36 @@ cubes:
         name: 有数据站点数(去重)
   OfficeFiveMinute:
     dataset: DataCrawler.OfficeStationFiveMinute
-    grain: 一行 = 办事处站 × 5分钟
-    applicability: 许昌31个街道办事处站的5分钟实时数据（仅城区街道办事处，与乡镇站互补）
+    grain: 一行 = 办事处站 × 5分钟（IsHour=0）
+    applicability: 许昌31个街道办事处站的5分钟实时数据（仅城区街道办事处，与乡镇站互补）；查询时固定IsAudit=0、IsHour=0
     source_window: 2026-11-23起，滚动保留最近30天
     limitations:
       - 平台办事处站仅发布PM2.5/PM10两因子（SO2/NO2/CO/O3恒无），本表不包含这些因子
       - 平台不发布AQI/等级，AQI需按HJ633由PM2.5/PM10两因子推算并在结论中注明
       - 建安区昌盛街道办事处自2026-11-21起通讯中断；韩城目录标离线但数据在流
       - -99为无效值，不参与数值聚合
+      - CountyName由平台目录区县或站名前缀补全；不要与IsHour=1的官方小时值混合统计
     measures:
       count:
         name: 5分钟记录数
+      avgPm25:
+        name: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+      onlineSites:
+        name: 有数据站点数(去重)
+  OfficeHour:
+    dataset: DataCrawler.OfficeStationFiveMinute
+    grain: 一行 = 办事处站 × 小时（IsHour=1）
+    applicability: 许昌31个街道办事处站的官方小时PM2.5/PM10；查询时固定IsAudit=0、IsHour=1，适合小时过程与周边区县对照
+    source_window: 2026-11-25起，滚动保留最近30天
+    limitations:
+      - 仅PM2.5/PM10，不能据此判断SO2/NO2/CO/O3协同变化
+      - 与OfficeFiveMinute共用物理表但粒度不同，禁止混合聚合
+      - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 小时记录数
       avgPm25:
         name: PM2.5(μg/m³)
       avgPm10:
@@ -487,6 +507,112 @@ cubes:
         name: O3(μg/m³)
       onlineSites:
         name: 有数据站点数(去重)
+  HenanPlatformAqYear:
+    dataset: DataCrawler.HenanPlatformAqYearStat
+    grain: 一行 = 区域 × 完整年度 × 评价标准（实况、扣沙）
+    applicability: 河南省城市空气质量大数据综合应用系统年度对比官方补充口径；2020-2025年完整年度，官方考核定版缺失时补充，不替代既有考核定版
+    source_window: 2020-2025年，新老标准各一套；历史一次性回补并每日顺带回补上一年
+    limitations:
+      - 来源为河南省城市空气质量大数据综合应用系统「报表报告→年度对比」，非官方考核定版表单
+      - 必须按standard=new或old过滤且同次查询只用一个标准；2020年无同比
+      - 部分城区历史值及年度优良天与官方定版表单存在差异，不得覆盖考核结论
+      - 浓度及综合指数同比为变化率%；比例同比为百分点；天数同比为天数差
+    measures:
+      pm25: { name: PM2.5年均(μg/m³,省平台精确值) }
+      pm10: { name: PM10年均(μg/m³,省平台精确值) }
+      so2: { name: SO2年均(μg/m³,省平台精确值) }
+      no2: { name: NO2年均(μg/m³,省平台精确值) }
+      co95: { name: CO-95(mg/m³,省平台精确值) }
+      o3_8h_90: { name: O3-8H-90(μg/m³,省平台精确值) }
+      compositeIndex: { name: 综合指数(按standard区分新老标准) }
+      goodDays: { name: 优良天数(扣沙,省平台) }
+      goodRate: { name: 优良率(百分比,有效天数为分母) }
+      heavyDays: { name: 重度及以上污染天数(扣沙) }
+      heavyRate: { name: 重度及以上污染比例(百分比) }
+      o3OverDays: { name: 臭氧超标天数 }
+      lostFineDays: { name: 因沙尘损失优良天数 }
+      dustDays: { name: 沙尘天数 }
+      pm25YoY: { name: PM2.5同比变化率(%,平台直接返回) }
+      compositeIndexYoY: { name: 综合指数同比变化率(%,平台直接返回) }
+      goodDaysChange: { name: 优良天数同比变化(天,平台直接返回) }
+  HenanPlatformAqMonth:
+    dataset: DataCrawler.HenanPlatformAqMonthStat
+    grain: 一行 = 区域 × 完整自然月 × 评价标准（实况、扣沙）
+    applicability: 河南省城市空气质量大数据综合应用系统月度官方补充口径；官方月报未发布的最近完整月使用本Cube，已发布历史优先CountyMonth/ProvinceMonth官方定版
+    source_window: 2020-01至2026-10；2020-2025年新老标准各一套，2026年起仅新标准；每日回补上一完整月
+    limitations:
+      - 来源为河南省城市空气质量大数据综合应用系统「报表报告→年度对比」，作为官方表单缺期补充而非替换
+      - 必须按standard=new或old过滤且同次查询只用一个标准；2020年无同比
+      - 与官方月报多数差异为精确值与取整差，但部分城区历史月份有实质差异，不得隐瞒或自动择值
+      - 浓度及综合指数同比为变化率%；比例同比为百分点；天数同比为天数差
+    measures:
+      pm25: { name: PM2.5月均(μg/m³,省平台精确值) }
+      pm10: { name: PM10月均(μg/m³,省平台精确值) }
+      so2: { name: SO2月均(μg/m³,省平台精确值) }
+      no2: { name: NO2月均(μg/m³,省平台精确值) }
+      co95: { name: CO-95月值(mg/m³,省平台精确值) }
+      o3_8h_90: { name: O3-8H-90月值(μg/m³,省平台精确值) }
+      compositeIndex: { name: 综合指数(当月,按standard区分新老标准) }
+      goodDays: { name: 优良天数(当月,扣沙) }
+      goodRate: { name: 优良率(当月,百分比,有效天数为分母) }
+      heavyDays: { name: 重度及以上污染天数(当月,扣沙) }
+      heavyRate: { name: 重度及以上污染比例(当月,百分比) }
+      o3OverDays: { name: 臭氧超标天数(当月) }
+      lostFineDays: { name: 因沙尘损失优良天数(当月) }
+      dustDays: { name: 沙尘天数(当月) }
+      pm25YoY: { name: PM2.5同比变化率(%,平台直接返回) }
+      pm10YoY: { name: PM10同比变化率(%,平台直接返回) }
+      so2YoY: { name: SO2同比变化率(%,平台直接返回) }
+      no2YoY: { name: NO2同比变化率(%,平台直接返回) }
+      co95YoY: { name: CO同比变化率(%,平台直接返回) }
+      o3_8h_90YoY: { name: O3同比变化率(%,平台直接返回) }
+      compositeIndexYoY: { name: 综合指数同比变化率(%,平台直接返回) }
+      goodRateYoY: { name: 优良率同比变化(百分点,平台直接返回) }
+      goodDaysChange: { name: 优良天数同比变化(天,平台直接返回) }
+      heavyDaysChange: { name: 重度及以上污染天数同比变化(天) }
+      heavyRateYoY: { name: 重度及以上污染比例同比变化(百分点) }
+      o3OverDaysChange: { name: 臭氧超标天数同比变化(天) }
+      lostFineDaysChange: { name: 因沙尘损失优良天数同比变化(天) }
+      dustDaysChange: { name: 沙尘天数同比变化(天) }
+  HenanPlatformAqAccumulate:
+    dataset: DataCrawler.HenanPlatformAqAccumulateStat
+    grain: 一行 = 区域 × 累计区间 × 评价标准（实况、扣沙）
+    applicability: 河南省城市空气质量大数据综合应用系统当月累计(mtd)/当年累计(ytd)官方补充口径；当月累计或当前累计优先使用本Cube，periodType必须选mtd或ytd
+    source_window: 每日截至昨天的快照，当前保留当日mtd/ytd各10区域；2026年起仅新标准
+    limitations:
+      - 来源为河南省城市空气质量大数据综合应用系统「报表报告→年度对比」时间段模式，非日报逐日明细自算
+      - 必须过滤standard及periodType=mtd当月累计或ytd当年累计，不得混合；本地保留各period_end历史快照，历史值须同时指定periodEnd
+      - periodEnd为数据截至日（截至昨天）；优良率分母为有效天数，禁止按日历天重算
+      - 浓度及综合指数同比为变化率%；比例同比为百分点；天数同比为天数差
+    measures:
+      pm25: { name: PM2.5累计均值(μg/m³,省平台精确值) }
+      pm10: { name: PM10累计均值(μg/m³,省平台精确值) }
+      so2: { name: SO2累计均值(μg/m³,省平台精确值) }
+      no2: { name: NO2累计均值(μg/m³,省平台精确值) }
+      co95: { name: CO-95累计值(mg/m³,省平台精确值) }
+      o3_8h_90: { name: O3-8H-90累计值(μg/m³,省平台精确值) }
+      compositeIndex: { name: 综合指数(累计,新标准) }
+      goodDays: { name: 优良天数(累计,扣沙) }
+      goodRate: { name: 优良率(累计,百分比,有效天数为分母) }
+      heavyDays: { name: 重度及以上污染天数(累计,扣沙) }
+      heavyRate: { name: 重度及以上污染比例(累计,百分比) }
+      o3OverDays: { name: 臭氧超标天数(累计) }
+      lostFineDays: { name: 因沙尘损失优良天数(累计) }
+      dustDays: { name: 沙尘天数(累计) }
+      pm25YoY: { name: PM2.5累计同比变化率(%,平台直接返回) }
+      pm10YoY: { name: PM10累计同比变化率(%,平台直接返回) }
+      so2YoY: { name: SO2累计同比变化率(%,平台直接返回) }
+      no2YoY: { name: NO2累计同比变化率(%,平台直接返回) }
+      co95YoY: { name: CO累计同比变化率(%,平台直接返回) }
+      o3_8h_90YoY: { name: O3累计同比变化率(%,平台直接返回) }
+      compositeIndexYoY: { name: 综合指数累计同比变化率(%,平台直接返回) }
+      goodRateYoY: { name: 优良率累计同比变化(百分点) }
+      goodDaysChange: { name: 优良天数累计同比变化(天) }
+      heavyDaysChange: { name: 重度及以上污染天数累计同比变化(天) }
+      heavyRateYoY: { name: 重度及以上污染比例累计同比变化(百分点) }
+      o3OverDaysChange: { name: 臭氧超标天数累计同比变化(天) }
+      lostFineDaysChange: { name: 因沙尘损失优良天数累计同比变化(天) }
+      dustDaysChange: { name: 沙尘天数累计同比变化(天) }
   ProvinceMonth:
     dataset: DataCrawler.ProvinceMonthReport
     grain: 一行 = 期次(Scope=month) × 层级(Level) × 区域

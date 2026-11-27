@@ -120,8 +120,8 @@ frontend:
         desc: 全省 18 个地市（含济源）的省考核口径目标完成情况：PM10、PM2.5、优良天、重污染天目标与实际、完成判定，2022—2023 年含 5—9 月臭氧超标天数；适合许昌在全省的年度考核横向比较；2025 年省表未定稿，仅目标与判定可用
       - name: 168 城市全国排名（生态环境部）
         granularity: 月、累计
-        range: 2026-01 ~ 2026-07
-        desc: 全国 168 个重点城市的综合指数与 PM2.5 浓度及排名（倒序，1=最差），当月与 1-N 月累计；仅用于全国排名与城市横向对比，浓度绝对值以本地口径为准
+        range: 2026-01 起（逐月发布，当前至 2026-10）
+        desc: 全国 168 个重点城市的综合指数与 PM2.5 浓度及排名（倒序，1=最差），当月与 1-N 月累计；01—07 月人工回补，08 月起从生态环境部官网自动采集；仅用于全国排名与城市横向对比，浓度绝对值以本地口径为准
     - title: 气象与空气质量预报数据
       rows:
       - name: 许昌气象实况
@@ -427,6 +427,10 @@ backend:
     - xuchang_henan_county_publish_fetcher
     # 省APP已停服：仅对SsfbCityDay官方日值排序(日排名);月/年累计改走官方月报(ProvinceMonthReport)
     - xuchang_henan_ranking_recalc_fetcher
+    # 省城市空气质量大数据综合应用系统：年度/月度/MTD/YTD三表每日04:00同步DataCrawler
+    - xuchang_henan_platform_aq_sync_fetcher
+    # 生态环境部 168 城月度官方排名：每月 22/25/28 日扫描新发布附表并识别入库
+    - mee_rank168_monthly_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_air_quality_forecast_fetcher
