@@ -47,6 +47,11 @@ def _title_matches(title: str) -> bool:
     return any(keyword in lowered for keyword in MAIN_TITLE_KEYWORDS)
 
 
+def _is_minimized_main(window: WindowInfo) -> bool:
+    # 最小化时 Windows 返回 157x25 左右的占位矩形，不能据此排除主窗。
+    return window.iconic and window.class_name.startswith(MAIN_CLASS_PREFIX)
+
+
 def is_personal_wechat_main(window: WindowInfo) -> bool:
     """只接受个人微信主窗；可见性由调用方按查找/恢复阶段另行判断。"""
     process = window.process_name.strip().lower()
@@ -58,6 +63,8 @@ def is_personal_wechat_main(window: WindowInfo) -> bool:
         return False
     if not _title_matches(title):
         return False
+    if _is_minimized_main(window):
+        return True
     width, height = window.width, window.height
     if width <= 0 or height <= 0:
         return False
@@ -74,12 +81,15 @@ def select_personal_wechat_main(
     visible_only: bool = True,
     preferred_hwnd: int | None = None,
 ) -> WindowInfo | None:
-    """从候选中选主窗，优先沿用当前句柄，避免可见候选间无谓切换。"""
+    """从候选中选主窗，优先沿用当前句柄，避免可见候选间无谓切换。
+
+    可见候选不含最小化窗口；最小化窗口仅供恢复分支选取，不能直接用于发送。
+    """
     candidates = [
         window
         for window in windows
         if is_personal_wechat_main(window)
-        and (window.visible or not visible_only)
+        and (not visible_only or (window.visible and not window.iconic))
     ]
     if not candidates:
         return None
@@ -192,14 +202,15 @@ def describe_window_for_diagnostics(window: WindowInfo) -> str:
     elif not _title_matches(title):
         reasons.append(f"title={title!r}")
     width, height = window.width, window.height
-    if width <= 0 or height <= 0:
-        reasons.append(f"size={width}x{height}非正")
-    elif not (
-        width >= MIN_WINDOW_SIZE
-        or height >= MIN_WINDOW_SIZE
-        or (width < height and height >= MIN_WINDOW_PORTRAIT)
-    ):
-        reasons.append(f"size={width}x{height}低于阈值")
+    if not _is_minimized_main(window):
+        if width <= 0 or height <= 0:
+            reasons.append(f"size={width}x{height}非正")
+        elif not (
+            width >= MIN_WINDOW_SIZE
+            or height >= MIN_WINDOW_SIZE
+            or (width < height and height >= MIN_WINDOW_PORTRAIT)
+        ):
+            reasons.append(f"size={width}x{height}低于阈值")
     verdict = "ACCEPT" if is_personal_wechat_main(window) else "reject:" + ";".join(reasons)
     return (
         f"hwnd=0x{window.hwnd:x} pid={window.pid} class={window.class_name!r} "
@@ -245,7 +256,7 @@ def find_and_restore_personal_wechat_main(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
-    """返回可见个人微信主窗；可见查找失败时恢复隐藏主窗并复查。
+    """返回可见个人微信主窗；可见查找失败时恢复隐藏或最小化主窗并复查。
 
     恢复只发生在实际发送前。没有个人微信主窗、恢复失败或桌面锁定时返回 0，
     由上层保留队列稍后重试；绝不拿企业微信窗口充当兜底。
@@ -267,7 +278,8 @@ def find_and_restore_personal_wechat_main(
         _emit_window_diagnostics(windows, emit)
         return 0
 
-    emit(f"[info] 发现隐藏的个人微信主窗口 hwnd=0x{hidden.hwnd:x}，尝试恢复")
+    state = "最小化" if hidden.iconic else "隐藏"
+    emit(f"[info] 发现{state}的个人微信主窗口 hwnd=0x{hidden.hwnd:x}，尝试恢复")
     try:
         api.restore_window(hidden.hwnd)
     except OSError as exc:

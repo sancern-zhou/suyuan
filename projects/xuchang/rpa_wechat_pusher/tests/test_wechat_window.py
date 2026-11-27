@@ -54,7 +54,7 @@ class FakeWindowApi:
             class_name=old.class_name,
             visible=True,
             iconic=False,
-            rect=old.rect,
+            rect=(0, 0, 1100, 700) if old.iconic else old.rect,
         )
 
 
@@ -76,6 +76,17 @@ class WindowIdentityTests(unittest.TestCase):
         unrelated = make_window(5, title="图片查看器")
         self.assertFalse(is_personal_wechat_main(small))
         self.assertFalse(is_personal_wechat_main(unrelated))
+
+    def test_minimized_main_is_restorable_but_not_usable_before_restore(self):
+        minimized = make_window(
+            6, iconic=True, rect=(-16000, -16000, -15843, -15975)
+        )
+        self.assertTrue(is_personal_wechat_main(minimized))
+        self.assertIsNone(select_personal_wechat_main([minimized]))
+        self.assertEqual(
+            select_personal_wechat_main([minimized], visible_only=False).hwnd,
+            minimized.hwnd,
+        )
 
     def test_preferred_visible_window_is_retained(self):
         current = make_window(10, rect=(0, 0, 1000, 700))
@@ -124,6 +135,39 @@ class WindowRecoveryTests(unittest.TestCase):
         self.assertEqual(api.restored, [personal.hwnd])
         self.assertFalse(api.windows[enterprise.hwnd].visible is False)
         self.assertTrue(any("已恢复" in line for line in logs))
+
+    def test_minimized_main_with_tiny_rect_is_restored_before_size_check(self):
+        minimized = make_window(
+            32, iconic=True, rect=(-16000, -16000, -15843, -15975)
+        )
+        api = FakeWindowApi([minimized])
+        logs = []
+        self.assertEqual(self.recover(api, logs), minimized.hwnd)
+        self.assertEqual(api.restored, [minimized.hwnd])
+        self.assertFalse(api.windows[minimized.hwnd].iconic)
+        self.assertTrue(any("最小化" in line for line in logs))
+
+    def test_failed_minimized_restore_does_not_return_minimized_window(self):
+        minimized = make_window(
+            33, iconic=True, rect=(-16000, -16000, -15843, -15975)
+        )
+        api = FakeWindowApi([minimized], restore_works=False)
+        logs = []
+        self.assertEqual(self.recover(api, logs), 0)
+        self.assertEqual(api.restored, [minimized.hwnd])
+
+    def test_minimized_tool_window_is_not_restored(self):
+        tool = make_window(
+            34,
+            title="Weixin",
+            class_name="Qt51514QWindowToolSaveBits",
+            iconic=True,
+            rect=(0, 0, 231, 70),
+        )
+        api = FakeWindowApi([tool])
+        logs = []
+        self.assertEqual(self.recover(api, logs), 0)
+        self.assertEqual(api.restored, [])
 
     def test_wecom_alone_is_not_restored(self):
         enterprise = make_window(40, process="WXWork.exe", title="企业微信")
