@@ -31,6 +31,9 @@ class Finalizer:
         stream_answer: bool = True,
     ) -> AsyncGenerator[dict, None]:
         answer = await normalize_chart_placeholders(answer or "", state.session_id)
+        # 会话级短别名 [[chart:chart_N]] 还原为全局唯一 visual_id，
+        # 必须在流式下发与落库之前完成（SSE 与持久化共用 state.response_text）。
+        answer = await resolve_chart_alias_markers(answer or "", state.session_id)
         sanitized, had_dsml = strip_dsml_tool_call_markup(answer or "")
         if had_dsml:
             sanitized = sanitized or DSML_TOOL_CALL_BLOCKED_NOTICE

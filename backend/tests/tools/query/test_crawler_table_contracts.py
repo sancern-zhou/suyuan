@@ -5,14 +5,14 @@ import json
 import pytest
 
 from app.agent.context.data_shape import build_data_shape
-from app.tools.query.execute_crawler_sql_query import table_contracts
-from app.tools.query.execute_crawler_sql_query.table_contracts import table_column_types
-from app.tools.query.execute_crawler_sql_query.table_contracts import (
+from app.utils import table_contracts
+from app.utils.table_contracts import table_column_types
+from app.utils.table_contracts import (
     load_table_contracts,
     render_table_contracts,
     reset_cache,
 )
-from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+from app.tools.xuchang.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
 
 
 @pytest.fixture(autouse=True)
@@ -166,7 +166,7 @@ def test_deployment_contract_matches_crawler_whitelist():
     其他部署查询得到"未找到白名单表"明确提示），因此方向为
     contracts ⊆ whitelist；契约文件按部署生成，天然只含本库真实存在的表。
     """
-    from app.tools.query.execute_crawler_sql_query.tool import CRAWLER_SQL_TABLES
+    from app.tools.xuchang.execute_crawler_sql_query.tool import CRAWLER_SQL_TABLES
 
     contracts = load_table_contracts(refresh=True)
     if contracts is None:
@@ -219,4 +219,53 @@ def test_externalized_result_includes_exact_data_shape(monkeypatch):
 def test_data_shape_builder_marks_inferred_source():
     shape = build_data_shape({"ratio": "float"}, 2, "inferred")
     assert shape["source"] == "inferred"
+
+
+def test_rank_columns_result_appends_descending_caliber_note():
+    """168 城排序列命中时，summary 必须带倒序口径标注（防误读为"第N好"）。"""
+    tool = ExecuteCrawlerSQLQueryTool()
+    rows = [
+        {"City": "许昌市", "PeriodLabel": "1-9月", "CompositeIndexRankDesc": 21, "Pm25RankDesc": 5},
+    ]
+    result = tool._format_result(rows, "SELECT City, CompositeIndexRankDesc, Pm25RankDesc FROM Rank168CityMonthly", 50, None)
+    assert "口径标注" in result["summary"]
+    assert "倒序" in result["summary"]
+    assert "1=污染最重" in result["summary"] and "禁止换算" in result["summary"]
+
+
+def test_plain_columns_result_has_no_caliber_note():
+    """普通列不追加口径标注。"""
+    tool = ExecuteCrawlerSQLQueryTool()
+    rows = [{"City": "许昌市", "Pm25": 40.6}]
+    result = tool._format_result(rows, "SELECT City, Pm25 FROM Rank168CityMonthly", 50, None)
+    assert "口径标注" not in result["summary"]
+
+
+def test_caliber_notes_deduplicated_when_both_rank_columns_present():
+    from app.tools.xuchang.execute_crawler_sql_query.tool import _append_caliber_notes
+
+    summary = _append_caliber_notes("查询到 18 条记录。", ["CompositeIndexRankDesc", "Pm25RankDesc", "City"])
+    assert summary.count("倒序排名") == 1
+
+
+@pytest.mark.asyncio
+async def test_describe_rank_table_appends_caliber_note(tmp_path, monkeypatch):
+    """describe_table 命中排序列时同样追加倒序口径标注。"""
+    _use_tmp_contracts(tmp_path, monkeypatch)
+    tool = ExecuteCrawlerSQLQueryTool()
+
+    async def _fake_run_query(sql, parameters=None, tables=None):
+        if "information_schema" in sql:
+            return [
+                {"column_name": "City", "data_type": "varchar", "is_nullable": "NO", "column_default": None},
+                {"column_name": "Pm25RankDesc", "data_type": "int", "is_nullable": "YES", "column_default": None},
+            ]
+        return [{"City": "许昌市", "Pm25RankDesc": 5}]
+
+    monkeypatch.setattr(tool, "_run_query", _fake_run_query)
+    result = await tool.execute(describe_table="Rank168CityMonthly")
+
+    assert result["success"] is True
+    assert "口径标注" in result["summary"]
+    assert "倒序" in result["summary"]
 

@@ -1,0 +1,242 @@
+<template>
+  <main ref="viewportEl" class="bigscreen-viewport" :class="{ 'is-embedded': embedded, 'is-capture': capture }" data-testid="bigscreen-capture-root">
+    <StationMapPanel
+      class="map-layer"
+      :stations="store.stations"
+      :alerts="store.alerts"
+      :capture="capture"
+      :township-granularity="townshipGranularity"
+      :metric="metric"
+      :layers="layers"
+      :highlight="highlight"
+      @ready="onMapReady"
+      @tilt-change="onTiltChange"
+    />
+
+    <ScreenHeader v-if="!capture"
+      :header="store.header"
+      :data-cutoff-hour="store.snapshot?.latest_station_time || store.snapshot?.data_cutoff_hour || ''"
+      :generated-at="store.snapshot?.generated_at || ''"
+      :loading="store.loading"
+      :error="store.error"
+      :fullscreen="isFullscreen"
+      @toggle-fullscreen="toggleFullscreen"
+    />
+
+    <template v-if="!capture">
+    <button
+      class="panel-handle handle-left"
+      :class="{ open: leftOpen }"
+      type="button"
+      :title="leftOpen ? '收起数据面板' : '展开数据面板'"
+      @click="leftOpen = !leftOpen"
+    >{{ leftOpen ? '‹' : '›' }}</button>
+
+    <aside v-show="leftOpen" class="side-panel panel-left">
+      <CityStatsRankPanel
+        :city-hour-rank="store.cityHourRank"
+        :daily-ranking="store.ssfbDailyRanking"
+      />
+      <Rank168Panel :series="store.rank168Series" />
+      <CountyRankPanel
+        :county-hour-rank="store.countyHourRank"
+        :county-day-rank="store.countyDayRank"
+      />
+    </aside>
+
+    <button
+      class="panel-handle handle-right"
+      :class="{ open: rightOpen }"
+      type="button"
+      :title="rightOpen ? '收起数据面板' : '展开数据面板'"
+      @click="rightOpen = !rightOpen"
+    >{{ rightOpen ? '›' : '‹' }}</button>
+
+    <aside v-show="rightOpen" class="side-panel panel-right">
+      <DataQualityBar :quality="store.quality" />
+      <AlertListPanel :alerts="store.alerts" />
+      <AirForecastPanel :forecast="store.forecast" />
+      <NmcForecastPanel :forecast="store.nmcForecast" />
+    </aside>
+
+    <BroadcastTicker :items="store.broadcast" />
+    </template>
+  </main>
+</template>
+
+<script setup>
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import ScreenHeader from '@/components/xuchang/bigscreen/ScreenHeader.vue'
+import CityStatsRankPanel from '@/components/xuchang/bigscreen/CityStatsRankPanel.vue'
+import Rank168Panel from '@/components/xuchang/bigscreen/Rank168Panel.vue'
+import CountyRankPanel from '@/components/xuchang/bigscreen/CountyRankPanel.vue'
+import AlertListPanel from '@/components/xuchang/bigscreen/AlertListPanel.vue'
+import AirForecastPanel from '@/components/xuchang/bigscreen/AirForecastPanel.vue'
+import NmcForecastPanel from '@/components/xuchang/bigscreen/NmcForecastPanel.vue'
+import StationMapPanel from '@/components/xuchang/bigscreen/StationMapPanel.vue'
+import DataQualityBar from '@/components/xuchang/bigscreen/DataQualityBar.vue'
+import BroadcastTicker from '@/components/xuchang/bigscreen/BroadcastTicker.vue'
+import { useBigScreenStore } from '@/stores/xuchang/bigScreen.js'
+import { initDashboardAccessToken } from '@/api/xuchang/bigScreen.js'
+
+const props = defineProps({
+  embedded: { type: Boolean, default: false }
+})
+
+const store = useBigScreenStore()
+const viewportEl = ref(null)
+const leftOpen = ref(true)
+const rightOpen = ref(true)
+const isFullscreen = ref(false)
+const captureParams = new URLSearchParams(window.location.search)
+const capture = captureParams.get('capture') === '1'
+const townshipGranularity = captureParams.get('township_granularity') === 'hour' ? 'hour' : '5min'
+const metric = captureParams.get('metric') || 'pm25'
+const layers = captureParams.get('layers') || ''
+const highlight = captureParams.get('highlight') || ''
+const onMapReady = detail => {
+  window.__XUCHANG_BIGSCREEN_CAPTURE__ = { ready: true, page: 'bigscreen', ...detail }
+}
+
+const syncFullscreenState = () => {
+  isFullscreen.value = document.fullscreenElement === viewportEl.value
+}
+
+const toggleFullscreen = async () => {
+  try {
+    if (isFullscreen.value) {
+      await document.exitFullscreen()
+    } else if (viewportEl.value?.requestFullscreen) {
+      await viewportEl.value.requestFullscreen()
+    } else {
+      store.error = '当前浏览器不支持全屏，请使用浏览器全屏模式'
+    }
+  } catch (error) {
+    console.warn('[BigScreenView] 全屏切换失败', error)
+    store.error = '全屏切换失败，请使用浏览器全屏模式'
+  }
+}
+// 2.5D 视角切换：切入时收起两侧数据面板（视野更干净、便于截图），切回时恢复原状态
+const panelsBeforeTilt = ref(null)
+const onTiltChange = tilted => {
+  if (tilted) {
+    panelsBeforeTilt.value = { left: leftOpen.value, right: rightOpen.value }
+    leftOpen.value = false
+    rightOpen.value = false
+  } else {
+    if (panelsBeforeTilt.value) {
+      leftOpen.value = panelsBeforeTilt.value.left
+      rightOpen.value = panelsBeforeTilt.value.right
+      panelsBeforeTilt.value = null
+    }
+  }
+}
+
+// 左侧五类统计/考核/排名卡片的数据均由 store 新数据段驱动（见各面板组件）
+
+onMounted(() => {
+  initDashboardAccessToken()
+  store.startPolling()
+  document.addEventListener('fullscreenchange', syncFullscreenState)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', syncFullscreenState)
+  store.stopPolling()
+  delete window.__XUCHANG_BIGSCREEN_CAPTURE__
+})
+</script>
+
+<style lang="scss" scoped>
+.bigscreen-viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  background: #04141f;
+}
+
+.bigscreen-viewport.is-embedded {
+  position: absolute;
+}
+
+.bigscreen-viewport:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #04141f;
+}
+
+.map-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.side-panel {
+  position: absolute;
+  top: 64px;
+  bottom: 44px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 430px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(63, 200, 212, 0.35) transparent;
+  padding-bottom: 4px;
+}
+
+.panel-left { left: 12px; }
+.panel-right { right: 12px; width: 400px; }
+
+/* 自由高度滚动容器内，ECharts 面板需固定高度防止塌陷 */
+.side-panel {
+  :deep(.alert-panel) {
+    max-height: 320px;
+    flex-shrink: 0;
+  }
+
+  /* 卫星底图上提升面板遮蔽度，保证文字可读 */
+  :deep(section) {
+    background: rgba(6, 30, 44, 0.85);
+    backdrop-filter: blur(8px);
+  }
+}
+
+.panel-handle {
+  position: absolute;
+  top: 50%;
+  z-index: 210;
+  width: 20px;
+  height: 64px;
+  border: 1px solid rgba(63, 200, 212, 0.4);
+  background: rgba(7, 41, 59, 0.85);
+  color: #3fc8d4;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
+
+  &:hover { background: rgba(63, 200, 212, 0.25); }
+}
+
+.handle-left {
+  left: 0;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  transition: left 0.25s ease;
+
+  &.open { left: 442px; }
+}
+
+.handle-right {
+  right: 0;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  transition: right 0.25s ease;
+
+  &.open { right: 412px; }
+}
+</style>

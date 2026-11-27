@@ -28,6 +28,9 @@
         class="forecast-workspace"
         embedded
       />
+      <div v-else-if="workspace === 'bigscreen' && BigScreenView" class="bigscreen-workspace">
+        <component :is="BigScreenView" embedded />
+      </div>
       <template v-else>
         <div class="conversation-workspace">
           <ChatArea
@@ -281,6 +284,10 @@ import { browserResourceUrl } from '@/services/resourceUrls.js'
 
 const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   ? defineAsyncComponent(() => import('@/views/AirQualityForecastView.vue'))
+  : null
+
+const BigScreenView = projectConfig.hasModule('xuchang-air-quality')
+  ? defineAsyncComponent(() => import('@/views/xuchang/BigScreenView.vue'))
   : null
 
 const auth = useAuthStore()
@@ -789,6 +796,14 @@ defineExpose({ layoutRef })
 .forecast-workspace {
   flex: 1 1 0%;
   min-width: 0;
+}
+
+.bigscreen-workspace {
+  flex: 1 1 0%;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background: #04141f;
 }
 
 .conversation-workspace {

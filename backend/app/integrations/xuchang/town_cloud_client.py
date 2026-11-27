@@ -1,0 +1,384 @@
+"""空气质量信息联网系统（许昌市空气质量管控平台）客户端。
+
+http://117.159.53.11:60601（政府侧部署）。许昌 76 个区县乡镇站的
+5 分钟/小时/日数据仍由该平台实时发布，是 Crawler MySQL TownStationData
+2026-10-21 起停更后的替代采集源。
+
+登录协议（2026-10-27 实测）：
+- GET  /prod-api/auth/key 返回 RSA 公钥（X.509 DER，Base64 单行）；
+- GET  /prod-api/code 返回 {uuid, img}，img 为算术验证码 JPEG，形如
+  "5+1=?"，运算符含 + - * /（除法保证整除），一次性消费、答错作废；
+- 密码字段为 RSA(PKCS#1 v1.5) 加密的 {"username","password"} JSON 整体
+  （前端 encryptedData 实现），不是明文也不是密码本身的加密；
+- POST /prod-api/auth/login {username, code, uuid, password} →
+  {code:200, data:{access_token, expires_in}}，token 有效期 12 小时。
+
+验证码识别：图片扭曲严重，ddddocr 实测几乎不可用（2/12 且答案错误）；
+改用视觉模型候选链（thinking 关闭），按序尝试、单个候选失败自动切换：
+SCNET Qwen3.8-Flash（2026-11-09 实测 4/4）→ SCNET GLM-5.3-Flash（3/4）
+→ GLM glm-4.6v（原通道，key 失效期间自动跳过，续费后自动恢复）。
+
+业务接口前缀 /prod-api/subsystem/ssair：
+- /airNetwork/page?tstype=4 站点目录（76 站，含在线状态与最新值）；
+- /airData/page 三粒度统一查询（tstype=4&timeStep=1|2|3&type=1），
+  5 分钟数据（timeStep=1）限查 3 天以内窗口。
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import re
+import threading
+import time
+from datetime import datetime
+from typing import Any
+
+import requests
+import structlog
+from Crypto.Cipher import PKCS1_v1_5
+from Crypto.PublicKey import RSA
+
+from config.settings import settings
+
+logger = structlog.get_logger()
+
+TOKEN_REFRESH_MARGIN_SECONDS = 600  # 提前 10 分钟刷新，避免临界过期
+MAX_PAGES = 50  # 分页保险丝：2000/页 × 50 足够 3 天 × 76 站
+
+# 算式识别：数字 运算符 数字（容忍 OCR 把等号/问号读丢）
+_ARITHMETIC = re.compile(r"(\d+)\s*([+\-x×*/])\s*(\d+)")
+
+# 验证码视觉识别候选链 (provider, model)：按序尝试，某候选未配置/报错/识
+# 别失败自动切下一个。scnet 走 settings.scnet_*，glm 走 settings.glm_*。
+# 2026-11-09：GLM coding 网关 key 失效（401）导致抓取断流 34h，临时补
+# SCNET 双候选；GLM 保留在链尾，key 恢复后自动并入。
+CAPTCHA_VISION_CANDIDATES: tuple[tuple[str, str], ...] = (
+    ("scnet", "Qwen3.8-Flash"),
+    ("scnet", "GLM-5.3-Flash"),
+    ("glm", "glm-4.6v"),
+)
+
+_CAPTCHA_PROMPT = (
+    "识别图中的算术验证码，只输出完整算式本身（例如 5+1=?），"
+    "不要思考过程，不要其他文字。"
+)
+
+
+def _vision_endpoint(provider: str) -> tuple[str, str] | None:
+    """按 provider 返回 (base_url, api_key)；未配置返回 None。"""
+    if provider == "scnet":
+        base_url = (settings.scnet_base_url or "").rstrip("/")
+        api_key = settings.scnet_api_key
+    elif provider == "glm":
+        base_url = (settings.glm_base_url or "").rstrip("/")
+        api_key = settings.glm_api_key
+    else:
+        return None
+    if not base_url or not api_key:
+        return None
+    return base_url, api_key
+
+
+def eval_captcha_expression(text: str | None) -> str | None:
+    """从 OCR 文本中解析算式并求值；解析失败返回 None。"""
+    match = _ARITHMETIC.search(text or "")
+    if not match:
+        return None
+    left, operator, right = int(match.group(1)), match.group(2), int(match.group(3))
+    try:
+        if operator == "+":
+            return str(left + right)
+        if operator == "-":
+            return str(left - right)
+        if operator in ("x", "×", "*"):
+            return str(left * right)
+        if operator == "/":
+            return str(left // right) if right else None
+    except Exception:  # noqa: BLE001 - 除零等异常按解析失败处理
+        return None
+    return None
+
+
+class TownCloudLoginError(RuntimeError):
+    """登录失败（验证码多次识别失败或凭据被拒）。"""
+
+
+class TownCloudClient:
+    """空气质量信息联网系统会话与数据查询。"""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        timeout: float | None = None,
+        login_retries: int | None = None,
+    ) -> None:
+        self.base_url = (base_url or settings.town_cloud_api_base_url).rstrip("/")
+        self.username = username or settings.town_cloud_username
+        self.password = password or settings.town_cloud_password
+        self.timeout = timeout or settings.town_cloud_timeout_seconds
+        self.login_retries = login_retries or settings.town_cloud_login_retries
+        self._token: str | None = None
+        self._token_expires_at: float = 0.0
+        # 登录 single-flight：登录含验证码视觉识别链，代价高；
+        # 并发首次调用只允许一个线程走完整登录流程（双检锁）
+        self._login_lock = threading.Lock()
+
+    # ---- 验证码识别 --------------------------------------------------------
+    def _query_vision_model(
+        self, base_url: str, api_key: str, model: str, image_b64: str
+    ) -> str | None:
+        """调用单个视觉模型，返回原始文本；网络/协议失败返回 None。"""
+        try:
+            resp = requests.post(
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{image_b64}"
+                                    },
+                                },
+                                {"type": "text", "text": _CAPTCHA_PROMPT},
+                            ],
+                        }
+                    ],
+                    "max_tokens": 1024,
+                    "temperature": 0,
+                    "thinking": {"type": "disabled"},
+                },
+                timeout=60,
+            )
+            resp.raise_for_status()
+            choice = (resp.json().get("choices") or [{}])[0]
+            return (choice.get("message") or {}).get("content") or ""
+        except Exception as exc:  # noqa: BLE001 - 视觉服务异常按该候选失败处理
+            logger.warning(
+                "town_cloud_vision_captcha_failed",
+                model=model,
+                error=str(exc),
+            )
+            return None
+
+    def _read_captcha_with_vision(self, image_bytes: bytes) -> str | None:
+        """遍历视觉候选链识别算术验证码，返回求值结果；全部失败返回 None。"""
+        image_b64 = base64.b64encode(image_bytes).decode()
+        for provider, model in CAPTCHA_VISION_CANDIDATES:
+            endpoint = _vision_endpoint(provider)
+            if endpoint is None:
+                continue
+            base_url, api_key = endpoint
+            text = self._query_vision_model(base_url, api_key, model, image_b64)
+            code = eval_captcha_expression(text)
+            if code is not None:
+                return code
+            logger.warning("town_cloud_captcha_candidate_missed", model=model)
+        return None
+
+    # ---- 登录 --------------------------------------------------------------
+    def _rsa_encrypt_credentials(self, public_key_der_b64: str) -> str:
+        credentials = json_dumps_credentials(self.username, self.password)
+        key = RSA.import_key(base64.b64decode(public_key_der_b64))
+        cipher = PKCS1_v1_5.new(key)
+        return base64.b64encode(cipher.encrypt(credentials.encode("utf-8"))).decode()
+
+    def login(self) -> str:
+        """登录并缓存 access_token；验证码识别失败自动换图重试。"""
+        if not self.username or not self.password:
+            raise TownCloudLoginError(
+                "未配置 TOWN_CLOUD_USERNAME / TOWN_CLOUD_PASSWORD，无法登录云平台"
+            )
+        key_resp = requests.get(
+            f"{self.base_url}/prod-api/auth/key", timeout=self.timeout
+        )
+        key_resp.raise_for_status()
+        key_payload = key_resp.json()
+        if key_payload.get("code") != 200 or not key_payload.get("data"):
+            raise TownCloudLoginError(f"获取 RSA 公钥失败: {key_payload}")
+        encrypted = self._rsa_encrypt_credentials(key_payload["data"])
+
+        last_reason = ""
+        for attempt in range(1, self.login_retries + 1):
+            captcha_resp = requests.get(
+                f"{self.base_url}/prod-api/code", timeout=self.timeout
+            )
+            captcha_resp.raise_for_status()
+            captcha = captcha_resp.json()
+            uuid, image_b64 = captcha.get("uuid"), captcha.get("img") or ""
+            code = self._read_captcha_with_vision(base64.b64decode(image_b64))
+            if code is None:
+                last_reason = "验证码识别失败"
+                logger.warning("town_cloud_captcha_retry", attempt=attempt)
+                continue
+            result = requests.post(
+                f"{self.base_url}/prod-api/auth/login",
+                json={
+                    "username": self.username,
+                    "code": code,
+                    "uuid": uuid,
+                    "password": encrypted,
+                },
+                timeout=self.timeout,
+            ).json()
+            if result.get("code") == 200 and (result.get("data") or {}).get("access_token"):
+                data = result["data"]
+                self._token = data["access_token"]
+                self._token_expires_at = (
+                    time.time() + int(data.get("expires_in") or 43200)
+                )
+                logger.info(
+                    "town_cloud_login_ok",
+                    attempt=attempt,
+                    expires_in=data.get("expires_in"),
+                )
+                return self._token
+            last_reason = str(result.get("msg") or result)
+            logger.warning(
+                "town_cloud_login_retry", attempt=attempt, reason=last_reason
+            )
+        raise TownCloudLoginError(
+            f"云平台登录失败（已重试 {self.login_retries} 次）: {last_reason}"
+        )
+
+    def _ensure_token(self) -> str:
+        if (
+            self._token is None
+            or time.time() >= self._token_expires_at - TOKEN_REFRESH_MARGIN_SECONDS
+        ):
+            with self._login_lock:
+                if (
+                    self._token is None
+                    or time.time() >= self._token_expires_at - TOKEN_REFRESH_MARGIN_SECONDS
+                ):
+                    self.login()
+        return self._token  # type: ignore[return-value]
+
+    # ---- 数据查询 ----------------------------------------------------------
+    def _get_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        """带鉴权 GET；token 失效（HTTP 401 或 code 401）时重登一次。"""
+        for retried in (False, True):
+            resp = requests.get(
+                f"{self.base_url}/prod-api{path}",
+                params=params,
+                headers={"Authorization": f"Bearer {self._ensure_token()}"},
+                timeout=self.timeout,
+            )
+            if resp.status_code == 401 and not retried:
+                self._token = None
+                continue
+            resp.raise_for_status()
+            payload = resp.json()
+            if payload.get("code") == 401 and not retried:
+                self._token = None
+                continue
+            return payload
+        return payload
+
+    def fetch_station_directory(
+        self, tstype: str = "4"
+    ) -> list[dict[str, Any]]:
+        """拉取站点目录（airNetwork/page，含 tsno/站名/县区/在线状态）。
+
+        airData/page 的数据行不带 tsno（只有站名与 countyId），落库前
+        需先拉目录按站名关联得到站码；tstype：4=乡镇站、3=省控站、
+        9=办事处站（2=国控站不经本客户端采集）。
+
+        注意 airData/page 的 tstype 参数在不带 tsno 时会被平台忽略
+        （恒返回乡镇站全集行），目录仍需按 tstype 精确拉取。
+        """
+        rows: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            payload = self._get_json(
+                "/subsystem/ssair/airNetwork/page",
+                {"pageNum": page, "pageSize": 500, "tstype": str(tstype)},
+            )
+            if payload.get("code") != 200:
+                raise RuntimeError(f"airNetwork/page 查询失败: {payload}")
+            batch = payload.get("rows") or []
+            rows.extend(batch)
+            total = int(payload.get("total") or 0)
+            if not batch or len(rows) >= total:
+                break
+            page += 1
+            if page > MAX_PAGES:
+                logger.warning(
+                    "town_cloud_too_many_pages", total=total, collected=len(rows)
+                )
+                break
+        return rows
+
+    def fetch_air_data(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        time_step: int = 1,
+        is_audit: int = 0,
+        page_size: int = 2000,
+        tstype: str = "4",
+        factor_type: str = "1",
+        tsno: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """拉取时间窗口内站点数据行。
+
+        timeStep: 1=5分钟（窗口不得超过 3 天，平台限制）、2=小时、3=日。
+        isAudit: 0=原始 / 1=审核（实测平台对乡镇站小时/日数据两口径返回
+        同一套数据，见 xuchang_town_hour_day 抓取器说明）。
+        tstype: 4=乡镇站、3=省控站、9=办事处站。
+        factor_type: air_data_type 因子集字典——1=乡镇全因子（八参数）、
+        4=省控全因子（六参数，仅小时）、5=办事处 PM2.5/PM10 专属。
+        tsno: 站码。**必须携带**——不带 tsno 时平台忽略 tstype、恒返回
+        乡镇站全集行（2026-11-23 两次"平台不提供"误判皆源于此），省控/
+        办事处须逐站查询。
+        """
+        rows: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            params: dict[str, Any] = {
+                "pageNum": page,
+                "pageSize": page_size,
+                "tstype": str(tstype),
+                "timeStep": str(time_step),
+                "type": str(factor_type),
+                "isAudit": str(is_audit),
+                "collectionTimeBegin": start.strftime("%Y-%m-%d %H:%M:%S"),
+                "collectionTimeEnd": end.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            if tsno:
+                params["tsno"] = str(tsno)
+            payload = self._get_json(
+                "/subsystem/ssair/airData/page",
+                params,
+            )
+            if payload.get("code") != 200:
+                raise RuntimeError(f"airData/page 查询失败: {payload}")
+            batch = payload.get("rows") or []
+            rows.extend(batch)
+            total = int(payload.get("total") or 0)
+            if not batch or len(rows) >= total:
+                break
+            page += 1
+            if page > MAX_PAGES:
+                logger.warning(
+                    "town_cloud_too_many_pages", total=total, collected=len(rows)
+                )
+                break
+        return rows
+
+
+def json_dumps_credentials(username: str, password: str) -> str:
+    """复现前端 RSA 加密前的 JSON 序列化（{"username":...,"password":...}）。"""
+    return json.dumps(
+        {"username": username, "password": password},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )

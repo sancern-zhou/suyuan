@@ -30,8 +30,9 @@ def test_prompt_builder():
     print(f"\n提示词长度: {len(expert_prompt)} 字符")
 
     # 验证模式职责边界
-    assert "call_sub_agent" in assistant_prompt, "Assistant prompt 缺少 call_sub_agent 工具"
-    assert "call_sub_agent" not in expert_prompt, "Expert prompt 不应暴露 call_sub_agent"
+    assert "call_sub_agent" not in assistant_prompt, "办公（assistant/office 叶子）prompt 不应暴露 call_sub_agent"
+    social_prompt = build_react_system_prompt("social")
+    assert "target_mode" in social_prompt, "助手（social 协调者）prompt 缺少委派契约"
     assert "TodoWrite" not in expert_prompt, "Expert prompt 不应依赖任务管理工具"
     print("\n[OK] 提示词构建器测试通过")
 
@@ -55,16 +56,17 @@ def test_tool_registry():
         print(f"  - {tool_name}: {description[:50]}...")
 
     # 验证模式工具边界
-    assert "call_sub_agent" in assistant_tools, "Assistant 模式缺少 call_sub_agent"
-    assert "call_sub_agent" not in expert_tools, "Expert 模式不应暴露 call_sub_agent"
+    assert "call_sub_agent" not in assistant_tools, "办公（assistant/office 叶子）模式不应暴露 call_sub_agent"
+    social_tools = get_tools_by_mode("social")
+    assert "call_sub_agent" in social_tools, "助手（social 协调者）模式缺少 call_sub_agent"
+    # 项目接管可为 expert/query 配置委派工具（子模式白名单由 delegation.py 约束），
+    # 但不得把任务管理/未注册工具带进注册表。
     assert "TodoWrite" not in expert_tools, "Expert 模式不应暴露 TodoWrite"
     assert "calculate_pmf" not in expert_tools, "Expert 模式不应暴露未注册的 calculate_pmf"
     assert "calculate_obm_ofp" not in expert_tools, "Expert 模式不应暴露未注册的 calculate_obm_ofp"
 
     query_tools = get_tools_by_mode("query")
-    assert "complex_query_planner" in query_tools, "Query 模式缺少 complex_query_planner"
     assert "TodoWrite" not in query_tools, "Query 模式不应暴露 TodoWrite"
-    assert "call_sub_agent" not in query_tools, "Query 模式不应暴露 call_sub_agent"
     print("\n[OK] 工具注册表测试通过")
 
 
@@ -123,16 +125,16 @@ def test_call_sub_agent_assistant_session_policy():
     ) is False
 
 
-def test_call_sub_agent_schema_documents_assistant_session_policy():
-    """测试 schema 说明 assistant 子会话复用策略"""
+def test_call_sub_agent_schema_documents_office_session_policy():
+    """测试 schema 说明 office 子会话复用策略"""
     from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 
     schema = CallSubAgentTool().get_function_schema()
     properties = schema["parameters"]["properties"]
 
-    assert "默认不会自动复用旧的 assistant 子会话" in schema["description"]
+    assert "office 办公任务默认不自动复用无关旧子会话" in schema["description"]
     assert "只有显式传入 session_id 才会复用旧会话" in properties["session_id"]["description"]
-    assert "assistant 子会话未传 session_id 时默认已创建新会话" in properties["force_new_session"]["description"]
+    assert "office 子会话未传 session_id 时默认创建新会话" in properties["force_new_session"]["description"]
 
 
 def test_api_request_model():

@@ -12,9 +12,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pyodbc
+from sqlalchemy import text
 
+from app.db.database import async_session
 from app.db.repositories.weather_repo import WeatherRepository
 from app.integrations.xcai_station_sql import xcai_connection_string
+from app.scenarios.xuchang_city_exceedance.station_catalog import (
+    NATIONAL_STATION_CODES,
+    NATIONAL_STATION_META,
+)
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 XUCHANG_CITY = "许昌市"
@@ -25,6 +31,8 @@ POLLUTANT_COLUMNS = {"PM2.5": "pm25", "O3": "o3", "NOX": "no2"}
 AIR_QUALITY_LOOKBACK_HOURS = 12
 OBSERVED_WEATHER_LOOKBACK_HOURS = 3
 CALM_WIND_THRESHOLD_MS = 1.5
+TRAFFIC_POLLUTANTS = {"NO2", "CO"}
+TRAFFIC_LOOKBACK_MINUTES = 18
 
 
 def _event_hour(value: str) -> datetime:
@@ -41,7 +49,7 @@ def _event_time(value: str) -> datetime:
     return parsed.astimezone(TZ_SHANGHAI)
 
 
-def _record_hour(value: Any) -> datetime | None:
+def _record_time(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
     elif value:
@@ -53,7 +61,12 @@ def _record_hour(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=TZ_SHANGHAI)
-    return parsed.astimezone(TZ_SHANGHAI).replace(minute=0, second=0, microsecond=0)
+    return parsed.astimezone(TZ_SHANGHAI)
+
+
+def _record_hour(value: Any) -> datetime | None:
+    parsed = _record_time(value)
+    return parsed.replace(minute=0, second=0, microsecond=0) if parsed else None
 
 
 def _number(value: Any) -> float | None:
@@ -216,7 +229,7 @@ def _station_indicators(
 
 
 def _station_5min_indicators(alert: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
-    field = POLLUTANT_COLUMNS.get(str(alert.get("target_pollutant"))) or str(alert.get("target_pollutant", "")).lower()
+    field = _pollutant_field(alert.get("target_pollutant"))
     station_id = str(alert.get("station_id") or "")
     parsed = []
     for row in rows:
@@ -313,24 +326,67 @@ def _weather_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _maintenance_qc_review(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Return QC evidence only when the target station has an actual mark."""
-    mark_names = ("pm25_mark", "pm10_mark", "o3_mark", "no2_mark", "so2_mark", "co_mark", "nox_mark")
-    marked = [
-        {
+def _pollutant_field(target_pollutant: Any) -> str:
+    value = str(target_pollutant or "")
+    return POLLUTANT_COLUMNS.get(value) or value.lower()
+
+
+def _maintenance_qc_review(
+    minute_rows: list[dict[str, Any]],
+    hour_rows: list[dict[str, Any]],
+    *,
+    station_id: str,
+    field: str,
+    event_time: datetime,
+) -> dict[str, Any] | None:
+    """质控关联按告警站点、告警因子和告警时段隔离。
+
+    分钟标记仅覆盖告警时刻及此前 1 小时；小时标记仅覆盖告警小时及前一小时。
+    更早的运维记录与本次告警无关，不得触发“相关时段数据受质控影响”表述。"""
+    mark_field = f"{field}_mark"
+
+    def _marked(row: dict[str, Any], source: str) -> dict[str, Any] | None:
+        if str(row.get("station_id") or "") != station_id:
+            return None
+        mark = row.get(mark_field)
+        if mark in (None, ""):
+            return None
+        record_time = _record_time(row.get("time"))
+        if record_time is None:
+            return None
+        if source == "hour":
+            record_time = record_time.replace(minute=0, second=0, microsecond=0)
+            window_start = event_time.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+            window_end = event_time.replace(minute=0, second=0, microsecond=0)
+        else:
+            window_start = event_time - timedelta(hours=1)
+            window_end = event_time
+        if not window_start <= record_time <= window_end:
+            return None
+        return {
             "time": row.get("time"),
             "station_id": row.get("station_id"),
-            "marks": {name: row.get(name) for name in mark_names if row.get(name) not in (None, "")},
+            "source": source,
+            "marks": {mark_field: mark},
         }
+
+    records = [
+        marked
+        for source, rows in (("minute", minute_rows), ("hour", hour_rows))
         for row in rows
-        if any(row.get(name) not in (None, "") for name in mark_names)
+        if (marked := _marked(row, source)) is not None
     ]
-    if not marked:
+    if not records:
         return None
     return {
         "required": True,
-        "records": marked,
-        "instruction": "存在质控标记；相关污染物数据可能受运维质控操作影响，不应直接归因于污染变化。",
+        "station_id": station_id,
+        "pollutant_mark_field": mark_field,
+        "records": records,
+        "instruction": (
+            "告警站点的告警因子存在质控标记；相关时段数据可能受运维质控操作影响，"
+            "不应直接归因于污染变化。"
+        ),
     }
 
 
@@ -356,9 +412,10 @@ class XuchangStationDeviationEvidenceCollector:
         event_hour = _event_hour(alert["occurred_at"])
         air_start = event_hour - timedelta(hours=AIR_QUALITY_LOOKBACK_HOURS)
         weather_start = event_time - timedelta(hours=OBSERVED_WEATHER_LOOKBACK_HOURS)
-        air_result, observed_result = await asyncio.gather(
-            asyncio.to_thread(self._load_air_quality, air_start, event_time),
+        air_result, observed_result, traffic_result = await asyncio.gather(
+            asyncio.to_thread(self._load_air_quality, air_start, event_time, alert),
             self._load_observed_weather(weather_start, event_time),
+            self._load_traffic(alert, event_time),
             return_exceptions=True,
         )
 
@@ -381,6 +438,17 @@ class XuchangStationDeviationEvidenceCollector:
             }
         else:
             observed_meteorology = observed_result
+
+        if isinstance(traffic_result, BaseException):
+            traffic = {
+                "status": "failed",
+                "reason": "traffic_query_failed",
+                "error": str(traffic_result),
+                "station_id": alert.get("station_id"),
+                "snapshots": [],
+            }
+        else:
+            traffic = traffic_result
 
         computed_indicators = {
             "calculation_status": "success" if air_quality.get("local_station_hour_records") else "unavailable",
@@ -419,12 +487,13 @@ class XuchangStationDeviationEvidenceCollector:
         else:
             collection_status = "failed"
         return {
-            "schema_version": "xuchang_station_deviation_evidence/v3",
+            "schema_version": "xuchang_station_deviation_evidence/v4",
             "generated_at": datetime.now(TZ_SHANGHAI).isoformat(),
             "event": dict(alert),
             "source_screening": source_screening,
             "air_quality_context": air_quality,
             "observed_meteorology": observed_meteorology,
+            "traffic_context": traffic,
             "computed_indicators": computed_indicators,
             "collection": {
                 "status": collection_status,
@@ -436,23 +505,56 @@ class XuchangStationDeviationEvidenceCollector:
             },
         }
 
-    def _load_air_quality(self, start: datetime, end: datetime) -> dict[str, Any]:
+    def _load_air_quality(self, start: datetime, end: datetime, alert: dict[str, Any]) -> dict[str, Any]:
         start_value = start.replace(tzinfo=None)
         end_value = end.replace(tzinfo=None)
+        alert_station_id = str(alert.get("station_id") or "")
+        alert_field = _pollutant_field(alert.get("target_pollutant"))
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         connection = pyodbc.connect(self.connection_string_factory(), timeout=30)
         try:
             cursor = connection.cursor()
             cursor.execute(
-                """
-                SELECT data_time AS time, station_id, name AS station_name,
-                       lon, lat, pm25, pm10, o3, no2, so2, co, aqi
-                FROM dbo.dat_station_hour
-                WHERE city_area_code = ? AND data_time >= ? AND data_time <= ?
-                ORDER BY data_time, station_id
+                f"""
+                SELECT station_code, station_name, time_point AS time,
+                       aqi, pm25, pm10, o3, no2, so2, co,
+                       pm25_mark, pm10_mark, o3_mark, no2_mark, so2_mark, co_mark
+                FROM dbo.dat_zhongda_station_hour
+                WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                  AND station_code IN ({placeholders})
+                  AND time_point >= ? AND time_point <= ?
+                ORDER BY time_point, station_code
                 """,
-                [XUCHANG_CITY_AREA_CODE, start_value, end_value],
+                [*NATIONAL_STATION_CODES, start_value, end_value],
             )
-            station_rows = _rows(cursor)
+            hour_rows = _rows(cursor)
+            station_rows = [
+                {
+                    "time": row["time"], "station_id": str(row["station_code"]),
+                    "station_name": row["station_name"],
+                    "lon": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lon"),
+                    "lat": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lat"),
+                    "pm25": row["pm25"], "pm10": row["pm10"], "o3": row["o3"],
+                    "no2": row["no2"], "so2": row["so2"], "co": row["co"],
+                    "aqi": row["aqi"],
+                }
+                for row in hour_rows
+            ]
+            # 小时表 mark 列仅供告警站点+告警因子的质控关联判断（与图表把
+            # 标记时段画断线的口径一致），不并入 local_station_hour_records。
+            hour_mark_rows = [
+                {
+                    "time": row["time"],
+                    "station_id": str(row["station_code"]),
+                    "pm25_mark": row.get("pm25_mark"),
+                    "pm10_mark": row.get("pm10_mark"),
+                    "o3_mark": row.get("o3_mark"),
+                    "no2_mark": row.get("no2_mark"),
+                    "so2_mark": row.get("so2_mark"),
+                    "co_mark": row.get("co_mark"),
+                }
+                for row in hour_rows
+            ]
             minute_start_value = (end - timedelta(hours=1)).replace(tzinfo=None)
             cursor.execute(
                 """
@@ -474,7 +576,7 @@ class XuchangStationDeviationEvidenceCollector:
         air_status = "success" if station_rows or station_minute_rows else "empty"
         return {
             "status": air_status,
-            "source": "XcAiDb.dbo.dat_station_hour + XcAiDb.dbo.dat_zhongda_station_minute",
+            "source": "XcAiDb.dbo.dat_zhongda_station_hour + XcAiDb.dbo.dat_zhongda_station_minute",
             "window": {"start": start.isoformat(), "end": end.isoformat()},
             "local_station_hour_records": station_rows,
             "local_station_5min_records": station_minute_rows,
@@ -482,7 +584,56 @@ class XuchangStationDeviationEvidenceCollector:
                 "local_station_hours": len(station_rows),
                 "local_station_5min": len(station_minute_rows),
             },
-            "maintenance_qc_review": _maintenance_qc_review(station_minute_rows),
+            "maintenance_qc_review": _maintenance_qc_review(
+                station_minute_rows,
+                hour_mark_rows,
+                station_id=alert_station_id,
+                field=alert_field,
+                event_time=_event_time(alert["occurred_at"]),
+            ),
+        }
+
+    async def _load_traffic(self, alert: dict[str, Any], event_time: datetime) -> dict[str, Any]:
+        """读取告警前最近三个历史时隙，不调用实时接口，也不影响告警判定。"""
+        station_id = str(alert.get("station_id") or "")
+        base = {
+            "source": "traffic_snapshot + traffic_section（百度地图，6分钟时隙）",
+            "station_id": station_id,
+            "event_time": event_time.isoformat(),
+            "max_snapshot_age_minutes": TRAFFIC_LOOKBACK_MINUTES,
+            "snapshots": [],
+        }
+        if str(alert.get("target_pollutant") or "").upper() not in TRAFFIC_POLLUTANTS:
+            return {**base, "status": "not_applicable"}
+        # slot_at 为 UTC；同时携带 event_time 的带时区参数，避免 naive datetime 被当 UTC。
+        start = (event_time - timedelta(minutes=TRAFFIC_LOOKBACK_MINUTES)).astimezone(ZoneInfo("UTC"))
+        async with async_session() as session:
+            rows = (await session.execute(text("""
+                SELECT s.id, s.station_code, s.slot_at, s.evaluation_status,
+                       s.evaluation_desc, s.description, s.road_count,
+                       s.congestion_section_count,
+                       COALESCE(jsonb_agg(jsonb_build_object(
+                           'road_name', sec.road_name, 'section_desc', sec.section_desc,
+                           'speed_km_h', sec.speed_km_h,
+                           'congestion_distance_m', sec.congestion_distance_m,
+                           'congestion_trend', sec.congestion_trend
+                       ) ORDER BY sec.id) FILTER (WHERE sec.id IS NOT NULL), '[]') AS sections
+                FROM traffic_snapshot s
+                LEFT JOIN traffic_section sec ON sec.snapshot_id = s.id
+                WHERE s.station_code = :station_id AND s.slot_at >= :start AND s.slot_at <= :event_time
+                GROUP BY s.id
+                ORDER BY s.slot_at DESC
+                LIMIT 3
+            """), {"station_id": station_id, "start": start, "event_time": event_time})).mappings().all()
+        return {
+            **base,
+            "status": "success" if rows else "unavailable",
+            "reason": None if rows else "no_snapshot_within_18_minutes",
+            "snapshots": [
+                {**{key: _json_value(value) for key, value in row.items() if key != "id"},
+                 "sections": row["sections"]}
+                for row in rows
+            ],
         }
 
     async def _load_observed_weather(self, start: datetime, end: datetime) -> dict[str, Any]:

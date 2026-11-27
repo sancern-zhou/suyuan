@@ -119,7 +119,7 @@ async def _resolve_target_kb() -> dict[str, Any]:
     """解析站点目录目标知识库：优先 station_directory 绑定，其次项目 collections"""
     from sqlalchemy.ext.asyncio import AsyncSession  # noqa: F401
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.models import KnowledgeBase, KnowledgeBaseStatus
     from app.project_config.loader import load_project_context
     from config.settings import settings
@@ -308,8 +308,12 @@ async def _seed_graph_deterministic(
     document_id: str,
     catalog: dict[str, Any],
 ) -> dict[str, int]:
-    """按目录确定性写入站点实体与 located_in 关系，绕过 LLM 抽取。"""
-    from app.db.database import async_session
+    """按目录确定性写入站点实体与 located_in 关系，绕过 LLM 抽取。
+
+    LLM 对大表格的抽取是有损的（76 个乡镇站只能抽出少数），
+    站点目录是结构化数据，经共享种子服务直接写入并置为 confirmed。
+    """
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.graph_seed_service import GraphSeedError, seed_graph_extraction
 
     entities, relations = _build_catalog_extraction(catalog)
@@ -350,7 +354,7 @@ async def sync_station_knowledge_graph(
     doc_path = doc_dir / DOCUMENT_FILENAME
     doc_path.write_text(markdown, encoding="utf-8")
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.service import KnowledgeBaseService
 
     deleted_previous = False

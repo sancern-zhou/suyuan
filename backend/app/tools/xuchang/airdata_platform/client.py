@@ -17,8 +17,13 @@ import structlog
 
 logger = structlog.get_logger()
 
-DEFAULT_BASE_URL = "http://117.159.53.11:60787"
+# 2026-10-30 起 60787 旧版启用认证且匿名全量 401，默认改走本地 9.0 版（5287），
+# 认证为存在性校验头：SysCode + UserId + UserName（可经环境变量覆盖）。
+DEFAULT_BASE_URL = "http://127.0.0.1:5287"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_SYS_CODE = "SJZT"
+DEFAULT_USER_ID = "1"
+DEFAULT_USER_NAME = "suyuan"
 
 DATA_API_CODES = (
     "v_c_d_sb_145",
@@ -171,15 +176,21 @@ class AirDataPlatformClient:
         self.base_url = configured_url.rstrip("/")
         configured_timeout = timeout or os.getenv("AIRDATA_PLATFORM_TIMEOUT")
         self.timeout = float(configured_timeout) if configured_timeout else DEFAULT_TIMEOUT_SECONDS
+        self.auth_headers = {
+            "SysCode": os.getenv("AIRDATA_PLATFORM_SYS_CODE") or DEFAULT_SYS_CODE,
+            "UserId": os.getenv("AIRDATA_PLATFORM_USER_ID") or DEFAULT_USER_ID,
+            "UserName": os.getenv("AIRDATA_PLATFORM_USER_NAME") or DEFAULT_USER_NAME,
+        }
 
     def _post(self, path: str, payload: dict[str, Any]) -> Any:
         url = f"{self.base_url}{path}"
         start = time.monotonic()
+        headers = {**self.auth_headers, "Content-Type": "application/json; charset=utf-8"}
         try:
             response = httpx.post(
                 url,
                 json=payload,
-                headers={"Content-Type": "application/json; charset=utf-8"},
+                headers=headers,
                 timeout=self.timeout,
             )
         except httpx.HTTPError as exc:
@@ -332,8 +343,19 @@ class AirDataPlatformClient:
         need_keys: list[str] | None = None,
         input_db_source: str = DEFAULT_INPUT_DB_SOURCE,
         base_data: dict[str, Any] | None = None,
+        is_rank: bool = False,
+        show_other_cities: bool = False,
+        is_same_as_time_ranges: bool | None = None,
+        year_input_table_name: str | None = None,
+        year_input_db_source: str | None = None,
+        rank_data: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """调用报表汇总接口，返回统计行列表（键名为 PascalCase）"""
+        """调用报表汇总接口，返回统计行列表（键名为 PascalCase）
+
+        is_rank=True 时返回 Rank_{因子}_{338|168|Province} 系列排名列；
+        is_same_as_time_ranges/year_input_table_name(+source) 控制同比对比期数据源，
+        对比期与当期不一致时必须给 year_input_table_name，否则平台报错。
+        """
         if area_type not in VALID_AREA_TYPES:
             raise AirDataPlatformError(f"area_type 必须是 {VALID_AREA_TYPES}: {area_type}")
         if report_time_type not in VALID_REPORT_TIME_TYPES:
@@ -368,7 +390,20 @@ class AirDataPlatformClient:
             "regionArea": region_area or {},
             "regionAreaName": region_area_name or {},
             "needKeys": list(need_keys) if need_keys else [],
+            "isRank": bool(is_rank),
+            "showOtherCities": bool(show_other_cities),
         }
+        if is_same_as_time_ranges is not None:
+            payload["isSameAsTimeRanges"] = bool(is_same_as_time_ranges)
+        if year_input_table_name:
+            year_table = str(year_input_table_name).strip()
+            effective_year_source = year_input_db_source or input_db_source
+            if "." not in year_table:
+                year_table = f"{effective_year_source}.{year_table}"
+            payload["yearInputTableName"] = year_table
+            payload["yearInputDataDBSource"] = effective_year_source
+        if rank_data:
+            payload["rankData"] = rank_data
         data = self._post("/api/airdataplatform/calc-report/summary", payload)
         if data is None:
             return []

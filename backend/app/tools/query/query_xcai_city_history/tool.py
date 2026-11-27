@@ -21,9 +21,43 @@ from app.utils.data_standardizer import get_data_standardizer
 if TYPE_CHECKING:
     from app.agent.context.execution_context import ExecutionContext
 
-from .sql_client import get_sql_server_client
+from .sql_client import get_sql_server_client, normalize_city_names
 
 logger = structlog.get_logger()
+
+def _load_city_block_rule() -> tuple[frozenset[str], str]:
+    """Load the per-project blocked-city rule from backend.tool_options.
+
+    配置位于 projects/<id>/project.yaml 的 backend.tool_options.query_xcai_city_history：
+    blocked_city_names（中文城市名单，归一化后匹配）/ blocked_guidance（拒绝文案与改道指引）。
+    未配置时对全部城市开放——共享工具代码不得写死任何项目地名。
+    """
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        options = (
+            load_project_context(settings.project_id).manifest.backend.tool_options or {}
+        ).get("query_xcai_city_history") or {}
+        return (
+            frozenset(str(name) for name in options.get("blocked_city_names") or []),
+            str(options.get("blocked_guidance") or ""),
+        )
+    except Exception as exc:  # 配置缺失或加载失败一律回退为不屏蔽
+        logger.warning("query_xcai_city_history_block_rule_unavailable", error=str(exc))
+        return frozenset(), ""
+
+
+_BLOCKED_CITY_NAMES, _BLOCKED_GUIDANCE = _load_city_block_rule()
+
+
+def find_blocked_cities(cities: List[str]) -> List[str]:
+    """Return configured blocked city names (short/full) present in the requested list."""
+    return [
+        name
+        for name in normalize_city_names(cities)
+        if name in _BLOCKED_CITY_NAMES
+    ]
 
 
 class QueryXcAiCityHistoryTool(LLMTool):
@@ -40,6 +74,11 @@ class QueryXcAiCityHistoryTool(LLMTool):
                 "查询全国城市历史空气质量小时/日数据（XcAiDb SQL Server）。"
                 "hour表自2017-01-01起，day表自2021-06-25起；返回file_path供下游读取。"
                 "城市名用中文全称，时间格式为YYYY-MM-DD HH:MM:SS。"
+                + (
+                    "不支持已屏蔽城市：须改走项目配置的替代口径（见拒绝说明）。"
+                    if _BLOCKED_CITY_NAMES
+                    else ""
+                )
             ),
             "parameters": {
                 "type": "object",
@@ -100,6 +139,32 @@ class QueryXcAiCityHistoryTool(LLMTool):
         Returns:
             UDF v2.0格式的查询结果
         """
+        blocked = find_blocked_cities(cities)
+        if blocked:
+            logger.warning(
+                "query_xcai_city_history_city_blocked",
+                cities=cities,
+                blocked_cities=blocked,
+                data_type=data_type
+            )
+            return {
+                "status": "failed",
+                "success": False,
+                "error": _BLOCKED_GUIDANCE,
+                "data": None,
+                "metadata": {
+                    "tool_name": "query_xcai_city_history",
+                    "cities": cities,
+                    "blocked_cities": blocked,
+                    "data_type": data_type,
+                    "time_range": f"{start_time} to {end_time}"
+                },
+                "summary": (
+                    f"查询被拒绝：{', '.join(blocked)} 不在城市发布历史通道开放范围。"
+                    f"{_BLOCKED_GUIDANCE}"
+                )
+            }
+
         logger.info(
             "query_xcai_city_history_start",
             cities=cities,

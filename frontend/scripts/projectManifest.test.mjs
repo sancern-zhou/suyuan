@@ -26,7 +26,8 @@ test('default project enables core and legacy', () => {
     agentSceneOverrides: {},
     agentPlatformLayout: 'scenes',
     agentScenes: [],
-    sidebarAgentModes: ['query']
+    sidebarAgentModes: ['query'],
+    platformGuide: null
   })
 })
 
@@ -34,7 +35,7 @@ test('default project enables core and legacy', () => {
 test('xuchang project enables only its declared business modules', () => {
   const config = loadProjectBuildConfig({ projectId: 'xuchang', repoRoot })
 
-  assert.deepEqual(config.modules, ['core', 'legacy', 'satellite', 'xuchang-air-quality', 'xuchang-satellite'])
+  assert.deepEqual(config.modules, ['core', 'legacy', 'satellite', 'shared-conversations', 'xuchang-air-quality', 'xuchang-satellite'])
   assert.deepEqual(config.frontend.agentModes, ['assistant', 'query', 'knowledge', 'expert', 'report'])
   assert.equal(config.frontend.defaultAgentMode, 'query')
   assert.equal(config.frontend.agentPlatformLayout, 'scenes')

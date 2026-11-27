@@ -1,0 +1,159 @@
+/* 大屏面板通用样式（ scoped 组件通过 @import 引入后选择器仍带组件作用域） */
+
+.screen-card {
+  padding: 12px 14px;
+  border: 1px solid rgba(63, 200, 212, 0.18);
+  border-radius: 8px;
+  background: rgba(7, 41, 59, 0.55);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.screen-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+
+  .title-bar {
+    width: 4px;
+    height: 14px;
+    border-radius: 2px;
+    background: #3fc8d4;
+    flex-shrink: 0;
+  }
+
+  h3 {
+    margin: 0;
+    font-size: 15px;
+    color: #eaf6f8;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  small {
+    color: #6f95a3;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .title-right {
+    flex-wrap: wrap;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+}
+
+/* 时间粒度切换（当月/累计、年份） */
+.seg-switch {
+  display: inline-flex;
+  border: 1px solid rgba(63, 200, 212, 0.3);
+  border-radius: 5px;
+  overflow: hidden;
+  flex-shrink: 0;
+
+  button {
+    border: none;
+    background: transparent;
+    color: #8ab6c2;
+    font-size: 11px;
+    padding: 3px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+
+    &.active {
+      background: rgba(63, 200, 212, 0.22);
+      color: #3fc8d4;
+    }
+
+    &:hover:not(.active) { color: #d8ecf1; }
+  }
+}
+
+/* 指标小格 */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+
+  .stat-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 2px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+
+    span { font-size: 11px; color: #8ab6c2; white-space: nowrap; }
+    strong { margin-top: 2px; font-size: 17px; color: #eaf6f8; }
+    small { font-size: 10px; color: #6f95a3; }
+  }
+}
+
+/* 通用数据表 */
+.data-table-wrap {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(63, 200, 212, 0.35) transparent;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  color: #c9dfe6;
+
+  th, td {
+    padding: 5px 6px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  th:first-child, td:first-child { text-align: left; }
+
+  thead th {
+    color: #8ab6c2;
+    font-weight: normal;
+    font-size: 11px;
+    border-bottom: 1px solid rgba(63, 200, 212, 0.18);
+  }
+
+  tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+
+    &.highlight td { color: #3fc8d4; font-weight: 600; }
+    &:hover td { background: rgba(63, 200, 212, 0.05); }
+  }
+
+  .sub { color: #6f95a3; font-size: 10px; }
+}
+
+.caliber-note {
+  margin-top: 8px;
+  font-size: 10px;
+  color: #6f95a3;
+  line-height: 1.5;
+}
+
+.empty-hint {
+  padding: 16px 0;
+  text-align: center;
+  font-size: 12px;
+  color: #6f95a3;
+}
+
+/* 完成状态徽标 */
+.badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 16px;
+
+  &.ok { background: rgba(33, 163, 102, 0.2); color: #4fd695; }
+  &.fail { background: rgba(216, 82, 69, 0.2); color: #ff9d94; }
+}

@@ -5,11 +5,13 @@ modules:
   - satellite
   - xuchang-air-quality
   - xuchang-satellite
+  - shared-conversations
 frontend:
   theme: default
   brand_name: 许昌市AI应用智能体
   features:
     query_agent_as_default: true
+    assistant_floating: true
   agent_modes:
     - assistant
     - query
@@ -23,11 +25,146 @@ frontend:
   # 监测分析分组在共享卡片基础上补充知识问答入口（统一从智能体平台进入）。
   agent_scene_overrides:
     monitoring:
-      # assistant 为通用助手入口，其余为专业工作空间；顺序即平台页展示顺序。
+      # assistant 是 Web/App 共用助手主模式；office 仅作为办公子 Agent。
+      # 平台页助手卡片由共享层按 assistant_floating 统一隐藏（入口=浮球/浮窗与
+      # App ?assistant=1 深链），mode_ids 保留 assistant 仅作声明完整性。
       mode_ids: [assistant, query, knowledge, expert, report]
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
+  # 平台使用说明面板内容：由 frontend/src/components/management/PlatformGuidePanel.vue 渲染，
+  # 字段校验见 frontend/scripts/projectManifest.mjs 的 normalizePlatformGuide。
+  platform_guide:
+    usage_modes:
+    - name: 问数生图
+      desc: 自然语言查数据，可自动绘制趋势、对比等图表。
+      example: 查 9 月 1—7 日 PM2.5 日均值并画趋势图
+    - name: 知识问答
+      desc: 检索政策文件与技术规范，业务解读可追溯。
+      example: 环境空气质量新旧标准的差别？
+    - name: 专家分析
+      desc: 综合气象、站点、排放清单等多领域研判成因。
+      example: 昨晚 PM2.5 抬升是局地还是区域输送？
+    - name: 报告生成
+      desc: 自主规划任务、调度其他模式，产出正式文档，耗时一般 10 分钟以上。
+      example: 分析 11—12 月气象条件与污染物相关性
+    data_groups:
+    - title: 空气质量监测数据
+      rows:
+      - name: 许昌市空气质量小时（中大平台）
+        granularity: 1 小时
+        range: 2022-01-01 至今
+        desc: 城市 AQI、首要污染物、6 项污染物浓度；时间跨度最长，适合长期趋势
+      - name: 许昌市空气质量日（中大平台）
+        granularity: 1 日
+        range: 2022-01-01 至今
+        desc: 城市日均浓度、AQI、达标情况；适合年度/季度对比
+      - name: 许昌市国控站 5 分钟（中大平台）
+        granularity: 5 分钟
+        range: 2026-08-26 至今
+        desc: PM10、SO2、NO2、CO、O3、NOx；站点快速告警的主要输入
+      - name: 许昌市国控站小时（中大平台）
+        granularity: 1 小时
+        range: 2026-01-01 至今
+        desc: 6 个国控站逐小时浓度；PM2.5 告警判定使用该源
+      - name: 许昌市国控站日（中大平台）
+        granularity: 1 日
+        range: 2026-01-01 至今
+        desc: 国控站日数据，发布比小时数据晚约 1 天
+      - name: 乡镇站小时
+        granularity: 1 小时
+        range: 2026-01-01 至今
+        desc: 76 个乡镇/街道站；用于国控点的污染趋势分析（受接口限制部分时间数据还有缺失，目前在逐步回补）
+      - name: 乡镇站日
+        granularity: 1 日
+        range: 2026-01-01 至今
+        desc: 76 个乡镇/街道站；用于国控点的污染趋势分析
+      - name: 全省城市数据（发布数据）
+        granularity: 小时、日
+        range: 2026-10-10 至今
+        desc: 全省 18 个城市的小时和日数据及日排名查询；城市月/年累计官方统计见"河南省环境空气质量月报"
+      - name: 全省区县数据（发布数据）
+        granularity: 小时、日
+        range: 2026-10-10 至今
+        desc: 全省 190 个区县的小时和日数据及排名查询
+      - name: 许昌市月度报表（中大平台）
+        granularity: 月
+        range: 2021年7月至今
+        desc: 城市污染物浓度均值、评价用百分位浓度、分指数与综合指数、空气质量等级分布、总体天数与达标情况、浓度极值、单项达标统计、各污染物超标与污染级别天数、分污染物有效天数与超标率、超标城市统计（区域对比用）、超标强度、单项/唯一超标天数、首要污染物统计等指标查询，支持新旧标准对比
+      - name: 许昌市年度报表（中大平台）
+        granularity: 年
+        range: 2021年至今
+        desc: 年度空气质量综合报表查询
+      - name: 许昌市 PM2.5 年均值（中大平台）
+        granularity: 年
+        range: 2021年至今
+        desc: 该年 PM2.5 实际统计年均浓度（μg/m3）
+      - name: 许昌市 10 县市区官方月报统计（省/国家平台月报）
+        granularity: 月、累计
+        range: 2020-01 ~ 2026-09
+        desc: 许昌市及魏都区、开发区、东城区、示范区、建安区、鄢陵县、襄城县、禹州市、长葛市的官方月度与 1-N 月累计统计（剔除沙尘）：PM2.5、PM10、SO2、NO2、CO-95、O3-8H-90、优良天数、重污染天数（2023 年起）、综合指数；官方发布值，非逐日明细聚合，适合县域长期对比与年度总结
+      - name: 河南省环境空气质量月报（官方月报统计）
+        granularity: 月、累计
+        range: 2025-12 起（逐期发布）
+        desc: 全省及 19 个省辖市（区）（含济源示范区、郑州航空港区）、88 个省辖市所辖区、101 个县（市）的官方月度与 1-N 月累计统计及官方同比：PM2.5、PM10、O3、优良天数、重度及以上污染天数、综合指数；城市月度/累计统计的官方口径，可用于许昌在全省的位次与横向对比
+      - name: 许昌市年度目标与实际（官方考核定版）
+        granularity: 年
+        range: 2015 ~ 2026
+        desc: 上级下达的年度目标值（PM10、PM2.5、优良天、重污染天，2026 年为在途目标）与国家网口径实际完成值：PM2.5、PM10、SO2、NO2、CO、优良天、重污染天（剔沙尘）、臭氧超标天；年度目标值的唯一来源，年度考核与完成情况问题优先用此数据
+      - name: 许昌市 10 县市区年度目标与实际（考核定版）
+        granularity: 年
+        range: 2020 ~ 2025
+        desc: 市本级及 9 个县（市、区）的年度目标、实际值与完成判定（剔除沙尘考核口径）：PM10、PM2.5、优良天、重污染天；重污染天与月报口径在 2023 年差 3—4 天（沙尘天），年度考核以本表为准；2020 年仅重污染天
+      - name: 河南省 18 地市年度目标完成情况（省考核）
+        granularity: 年
+        range: 2021 ~ 2025
+        desc: 全省 18 个地市（含济源）的省考核口径目标完成情况：PM10、PM2.5、优良天、重污染天目标与实际、完成判定，2022—2023 年含 5—9 月臭氧超标天数；适合许昌在全省的年度考核横向比较；2025 年省表未定稿，仅目标与判定可用
+      - name: 168 城市全国排名（生态环境部）
+        granularity: 月、累计
+        range: 2026-01 ~ 2026-07
+        desc: 全国 168 个重点城市的综合指数与 PM2.5 浓度及排名（倒序，1=最差），当月与 1-N 月累计；仅用于全国排名与城市横向对比，浓度绝对值以本地口径为准
+    - title: 气象与空气质量预报数据
+      rows:
+      - name: 许昌气象实况
+        granularity: 1 小时
+        range: 2024-12-31 至今
+        desc: 温度、湿度、风向/风速、气压、降水
+      - name: 气象再分析（边界层高度、云量等）
+        granularity: 1 小时
+        range: 2025-07-31 至今
+        desc: 模式/再分析数据，不是地面站实测
+      - name: NMC 许昌小时预报
+        granularity: 3 小时
+        range: 未来 7 天滚动
+        desc: 逐 3 小时的气温、湿度、风向/风速、降水概率
+      - name: 中国天气网日预报
+        granularity: 1 日
+        range: 未来 15 天
+        desc: 第 8—15 天为趋势展望，精度低于前 7 天
+      - name: 空气质量预报（空气质量发布 APP）
+        granularity: 1 日
+        range: 未来 7 天
+        desc: AQI 范围、等级、首要污染物（来源为环境监测总站）
+    - title: 企业门禁、排放和知识资料
+      rows:
+      - name: 企业门禁数据
+        granularity: 日
+        range: 2026年4月14日 至今
+        desc: 各企业违规次数、违规车辆特征
+      - name: 企业排放源清单
+        granularity: 年度静态
+        range: 清单版本 2026-09
+        desc: 约 2300 家有坐标企业
+      - name: 排污许可证资料
+        granularity: 静态
+        range: 1328 家
+        desc: 许昌市许可证企业身份、许可污染物、许可附件
+      - name: 项目知识库
+        granularity: —
+        range: 持续更新
+        desc: 知识问答、报告口径和业务解释；公开的技术规范、标准、政策文件和已授权资料
 backend:
+  # 项目专属技能目录（SKILL.md 声明式技能）；解析时组合共享库 backend/docs/skills，项目目录优先。
+  skills_dir: projects/xuchang/skills
   tools:
     - get_gems_image
     - get_sentinel5p_image
@@ -36,6 +173,23 @@ backend:
     - query_airdata_platform
     - airdata_calc_report_summary
     - xuchang_station_catalog
+    - xuchang_cube_metrics
+    - query_xuchang_traffic_status
+    - execute_crawler_sql_query
+  # 共享 prompt builder 的项目补充口径片段（query_monitoring_* 报告 DAG 子模式）：
+  # 许昌中台路由与本市口径只在项目片段里维护，共享层保持中性。
+  # 固定问数工作流的项目声明：中大 5 分钟数据与 cube 语义层按部署注入
+  # 共享问数工作流（共享层不写死任何项目的工具路由）。
+  fixed_query_workflow_tools:
+    query_monitoring:
+      tools: [get_5min_data, xuchang_cube_metrics]
+    query_monitoring_station:
+      tools: [get_5min_data]
+    query_monitoring_city:
+      tools: [xuchang_cube_metrics]
+  prompt_fragment_files:
+    query_monitoring_station: projects/xuchang/prompts/fragments/query_monitoring_station.md
+    query_monitoring_city: projects/xuchang/prompts/fragments/query_monitoring_city.md
   agent_mode_tools:
     query:
       - run_agent_workflow
@@ -64,11 +218,14 @@ backend:
       - execute_echarts_python
       - knowledge_graph_query
       - resolve_station_geo
+      # 站点周边实时路况（百度地图 Traffic API，实时额度与定时抓取共享）
+      - query_xuchang_traffic_status
       - query_national_province_air_quality
-      - query_national_city_air_quality
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - execute_python
     expert:
       - run_agent_workflow
@@ -93,9 +250,11 @@ backend:
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - query_national_province_air_quality
-      - query_national_city_air_quality
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - resolve_station_geo
+      # 实时路况已移交问数模式；专家模式历史路况走 execute_postgres_sql_query（traffic_snapshot）
       - meteorological_trajectory_analysis
       # 许昌源清单与上风向企业分析（企业排放清单 + 排污许可证合并筛查）
       - query_xuchang_emission_inventory
@@ -104,6 +263,8 @@ backend:
       # 正式报告收口：保存 QMD、渲染 HTML/Word、验收并触发右侧预览
       - create_report_package
       - execute_python
+      # PPTX 自由创作（技能 pptx_authoring）的渲染级 QA 验收闭环
+      - validate_pptx
       - read_file
       - write_file
       - edit_file
@@ -141,7 +302,8 @@ backend:
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
-      - query_national_city_air_quality
+      - xuchang_cube_metrics
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - execute_sql_query
       - execute_python
       - create_business_chart
@@ -159,7 +321,8 @@ backend:
       - execute_postgres_sql_query
       - query_airdata_platform
       - xuchang_station_catalog
-      - query_national_city_air_quality
+      - xuchang_cube_metrics
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - resolve_station_geo
       - execute_python
       - create_business_chart
@@ -175,6 +338,7 @@ backend:
       - get_weather_forecast
       - query_airdata_platform
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - resolve_station_geo
       - execute_postgres_sql_query
       - execute_python
@@ -189,28 +353,34 @@ backend:
       - edit_file
       - create_business_chart
       - execute_python
+      # PPTX 自由创作（技能 pptx_authoring）的渲染级 QA 验收闭环
+      - validate_pptx
+      # DOCX/XLSX 自由创作（技能 docx_authoring/xlsx_authoring）的验收闭环
+      - validate_office
+      # 交互式 HTML 报告成稿（技能 interactive_html_report）：展示主体
+      - create_html_artifact
       - create_report_package
+      # 通报/报告发布到报告中心（污染原因分析等定时报告任务）
+      - publish_report
       - run_agent_workflow
       - list_skills
       - view_skill
-    social:
+    assistant:
       - list_session_resources
       - read_session_resource
       - publish_session_file
-      - execute_sql_query
-      - execute_crawler_sql_query
-      - execute_bigdata_sql_query
-      - execute_postgres_sql_query
-      - query_xcai_city_history
-      - get_weather_data
-      - get_weather_forecast
-      - execute_python
-      - create_business_chart
-      - knowledge_qa_workflow
-      - knowledge_document_reader
+      - read_file
+      - edit_file
+      - manage_assistant_memory
+      - call_sub_agent
+      - run_agent_workflow
+      - manage_assistant_runs
+      - list_skills
+      - view_skill
+      - session_search
       - web_search
       - web_fetch
-      - schedule_task
+      - manage_assistant_schedule
       - send_notification
   # 广东数据源工具已改为项目专属（共享白名单不含、默认不注册），无需再逐项禁用；
   # 仅保留非项目工具的显式禁用项。
@@ -229,38 +399,69 @@ backend:
   # 禁止在本项目任何模式的工具列表中加入上述 GIS 工具或重新打开此开关。
   gis_tools_enabled: false
   mode_prompt_files:
-    assistant: projects/xuchang/prompts/assistant.md
+    office: projects/xuchang/prompts/office.md
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
     expert: projects/xuchang/prompts/expert.md
-    social: projects/xuchang/prompts/social.md
+    assistant: projects/xuchang/prompts/assistant.md
     report: projects/xuchang/prompts/report.md
-  # 通用助手在共享白名单基础上追加的项目专属工具：
-  # create_skill_draft 允许助手在用户确认后沉淀技能草稿（只写 .drafts/，不直接发布）。
+  # 办公子 Agent 的技能草稿只写 .drafts/，不直接发布。
   agent_mode_extra_tools:
-    assistant:
+    office:
       - create_skill_draft
   fetchers:
     - city_weather_history
     - nmc_observed_weather
     - nmc_weather_chart
+    # 小时观测聚合日值（日历日 00-24 北京时），供问数/专家模式直接查询
+    - observed_weather_daily
     - xuchang_daily_attainment_forecast_fetcher
     - xuchang_annual_attainment_forecast_fetcher
-    - xuchang_cnemc_station_hour_fetcher
     - xuchang_city_exceedance_fetcher
-    - xuchang_henan_month_year_accumulate_fetcher
+    # 省空气质量APP 2026-09 停服，接口不可达；排名改由 xuchang_henan_ranking_recalc_fetcher 重算
+    # - xuchang_henan_month_year_accumulate_fetcher
+    # 河南实时发布系统：18城市组(含济源)小时/日值 + 全省站点小时/日值
+    - xuchang_henan_ssfb_city_publish_fetcher
+    - xuchang_henan_ssfb_site_publish_fetcher
+    # 河南实时发布系统：全省区县(含济源/功能区)小时/日值 + 平台口径日排名
+    - xuchang_henan_county_publish_fetcher
+    # 省APP已停服：仅对SsfbCityDay官方日值排序(日排名);月/年累计改走官方月报(ProvinceMonthReport)
+    - xuchang_henan_ranking_recalc_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_air_quality_forecast_fetcher
+    # 同一抓取器中午 12:00 再跑一次（08:30 定时曾因远程 XcAiDb 07:30 时段断连连日失败）
+    - xuchang_air_quality_forecast_fetcher_noon
     - xuchang_weather_situation_evidence_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
-    # 备用功能，暂不启用：场景二站点日污染超标确认与溯源任务触发
-    # - xuchang_station_daily_exceedance_fetcher
+    # 场景二：站点日污染超标确认与溯源任务触发
+    - xuchang_station_daily_exceedance_fetcher
     - xuchang_transport_analysis_fetcher
+    # 数据大屏整屏快照（Cube 同源聚合，web 端 /api/xuchang-dashboard 只读文件）
+    - xuchang_screen_snapshot_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
     - xuchang_zhongda_city_hour_fetcher
+    # 空气质量信息联网系统(许昌市空气质量管控平台)：乡镇站5分钟数据(TownStationData 2026-10-21 停更后的替代源)，仅保留30天
+    - xuchang_town_five_minute_fetcher
+    # 许昌市空气质量管控平台：乡镇站小时/日数据回写 TownStationData 原表(原始+审核同值双写，恢复 view_dat_town_* 视图)
+    - xuchang_town_hour_fetcher
+    - xuchang_town_day_fetcher
+    # 许昌市空气质量管控平台：办事处站(tstype=9)5分钟 PM2.5/PM10（必须带 tsno 逐站查询，仅保留30天）
+    - xuchang_office_five_minute_fetcher
+    # 许昌市空气质量管控平台：办事处站小时 PM2.5/PM10（供小时地图与空间高值提醒）
+    - xuchang_office_hour_fetcher
+    # 许昌市空气质量管控平台：省控站(tstype=3)小时六参数（平台省控仅小时粒度，仅保留30天）
+    - xuchang_shengkong_station_fetcher
+    # ④污染原因分析：许昌PM2.5日均高于相邻五市均值30%（轻度污染及以上为20%）触发通报（微信群+APP）
+    - xuchang_pollution_cause_trigger_fetcher
+    # ①月度特征分析：每月2日上月证据包（APP 推局长/科长）
+    - xuchang_monthly_review_evidence_fetcher
+    # ②企业核查线索周报（代理口径，CEMS 接入前）：每周一上风向筛查线索（APP）
+    - xuchang_enterprise_clue_weekly_fetcher
+    # 乡镇站 PM2.5/PM10 小时高值：单因子 1~2 站逐站提醒，>2 站聚合一条并附小时地图
+    - xuchang_town_high_value_alert_fetcher
     - gems_xuchang_image_fetcher
   weather_history:
     bootstrap_days: 90
@@ -286,6 +487,68 @@ backend:
       - {city: 周口市, province: 河南省, lat: 33.63, lon: 114.70}
       - {city: 驻马店市, province: 河南省, lat: 32.93, lon: 113.92}
       - {city: 济源市, province: 河南省, lat: 35.08, lon: 112.58}
+  # 共享工具 query_xcai_city_history 的项目级屏蔽规则：许昌本市数据不走城市发布历史
+  # 通道（官方口径以中大平台为准），命中即拒绝并给改道指引。
+  tool_options:
+    # 共享工具 execute_sql_query 的许昌配置：受限表白名单 + 国控站长历史路由文案。
+    # 内容来自共享层原 XUCHANG_MONITORING_SQL_TABLES/XUCHANG_CRAWLER_TABLE_HINTS/
+    # _build_xuchang_schema_guide（行为逐字节等价迁移，2026-11-17）。
+    execute_sql_query:
+      allowed_tables:
+      - city_aqi_publish_history
+      - CityDayAQIPublishHistory
+      - CityAQIPublishHistory
+      - CurrentAirQuality
+      - XuchangNmcHourlyWeatherForecast
+      - dbo.XuchangNmcHourlyWeatherForecast
+      - XuchangWeatherComDailyForecast
+      - dbo.XuchangWeatherComDailyForecast
+      - dat_zhongda_station_minute
+      - dat_zhongda_station_hour
+      - dat_zhongda_city_hour
+      - WeatherForecast7Day
+      - city_168_statistics_new_standard
+      - city_168_statistics_old_standard
+      - province_statistics_new_standard
+      - province_statistics_old_standard
+      - information_schema.columns
+      - information_schema.tables
+      exclude_tables: [openmeteoairqualityforecast72h]
+      alternate_table_hints:
+        dat_station_hour: >-
+          许昌国控站点小时/日长历史不通过 execute_sql_query 查询；请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。
+        dat_station_day: >-
+          许昌国控站点小时/日长历史不通过 execute_sql_query 查询；请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。
+      schema_description: |-
+        监测数据SQL Server查询工具（许昌）。二选一：describe_table 查表结构，或 sql 执行 SELECT。硬约束：只允许 SELECT；最大 1000 条；中文串加 N 前缀；分页用 TOP。database 默认 XcAiDb。
+        【常用表索引】WeatherForecast7Day(7天预报)/XuchangNmcHourlyWeatherForecast(NMC逐3小时气象)/XuchangWeatherComDailyForecast(许昌1-15日)/CurrentAirQuality(当前+今明摘要)/CityAQIPublishHistory·CityDayAQIPublishHistory(城市小时·日)/dat_zhongda_station_minute·hour·city_hour(中大平台)/city_168_statistics_*·province_statistics_*(统计)。
+        【路由】国控站 5 分钟与最新小时实时数据（"最近5分钟数据"类问题）用本工具 dat_zhongda_station_minute/dat_zhongda_station_hour（实时在流）；国控站点小时/日长历史改用 execute_crawler_sql_query；国控站点日值（日及以上）优先 query_airdata_platform（v_s_d_app_145/v_s_d_src_145），长历史才用 crawler StationDay。各表字段与样例行用 describe_table 获取。
+
+        【高频表口径规则】字段清单用 describe_table 获取，此处只列硬规则。城市/区划名称与代码从项目上下文获取，不得把 {city_name}/{city_code} 模板变量原样写进 SQL；不同表的城市字段不同，禁止跨表套用字段名。
+        【状态口径】用户未明确要求标况（标准状态/参比状态）时，仅查询并返回实况数据，不得并列返回两种口径；仅用户明确要求标况或实况/标况对比时才查标况并分别标注。状态口径与原始/审核、实时/定版、考核口径不得混同；数据源未说明差异原因时不得自行解释。
+        【数据源优先级】国控站点小时/日长历史与城市长历史使用 execute_crawler_sql_query。中大平台站点5分钟/小时数据仍使用本工具的 dat_zhongda_station_minute/dat_zhongda_station_hour（实时在流）；crawler 库 StationHour 为政府侧采集镜像、2026-11-15 起停更，勿用于最新值。
+        【预报数据源优先级】未来逐3小时气象预报优先 XuchangNmcHourlyWeatherForecast（NMC 官方，7天）；中国天气网日预报与之同源归并。
+        【气象边界】许昌气象实况与历史网格用 get_weather_data（本工具无许昌气象表，dat_weather_hour 无许昌数据）；边界层高度/短波辐射缺口直接 get_weather_forecast；许昌城区 1-15 日日预报只查 XuchangWeatherComDailyForecast（city_code='101180401'，已含温度/天气/风向风力，勿再叠加其他源）。
+        【字段陷阱】PM2.5 列名=PM2_5（非 PM25）；日值列带 _24h 后缀（臭氧为 O3_8h_24h）；中大表城市字段=area、站点=station_code、时间=time_point，须过滤 data_table_type='Act' AND parameter_type='gp'；无效值站点表 -99 / 城市表 -999，统计前必须排除；质量标记列（*_mark）非空表示带标记值，慎用于统计；dat_zhongda_city_hour 查 2026 年数据必须加 data_type_plan='155th'（用错规划期返回空）；city_168/province_statistics 同名双标准表注意新旧。
+    # 共享工具 execute_postgres_sql_query 的许昌扩展：路况/告警结果表白名单追加
+    # 与许昌路由口径注记（2026-11-17 自共享层描述迁入）。
+    execute_postgres_sql_query:
+      allowed_tables_extra:
+      - traffic_snapshot
+      - traffic_section
+      - v_station_traffic_hourly
+      - xuchang_station_alert_episodes
+      schema_notes: |-
+        【许昌路况时序】traffic_snapshot 路况快照（6 分钟时隙，slot_at 为 UTC；evaluation_status 0未知~4严重拥堵）；traffic_section 以 snapshot_id 关联；v_station_traffic_hourly 按 station_code+小时聚合，可与空气质量小时数据 join；缺失时隙=未采集不可回补，实时路况用 query_xuchang_traffic_status。
+        【站点快速告警结论】查站点快速抬升告警结论必须加 task_id = 'task_xuchang_station_deviation_alert'（conclusion 结论 / broadcast_message 通报正文；findings、image_paths 为 JSON 列）；xuchang_station_alert_episodes 一行一个告警过程，event_ids 可关联 scheduled_task_results.event_id 取历次结论。
+        【站点编码】observed_weather_data 的许昌站编码 ZzMTA。
+        【示例】SELECT completed_at, station_name, conclusion, broadcast_message FROM scheduled_task_results WHERE task_id = 'task_xuchang_station_deviation_alert' ORDER BY completed_at DESC LIMIT 20。
+    query_xcai_city_history:
+      blocked_city_names: [许昌, 许昌市]
+      blocked_guidance: >-
+        许昌市数据不在城市发布历史（XcAiDb）通道开放范围：许昌官方口径以中大平台为准。
+        请改用 query_airdata_platform（城市日 v_c_d_sb_145/v_c_d_sb_155；月度及以上统计用
+        airdata_calc_report_summary）或 execute_crawler_sql_query（CityHour/CityDay 长历史）查询许昌。
 knowledge:
   collections:
   - xuchang
@@ -295,3 +558,10 @@ scheduled_tasks:
   - task_xuchang_station_daily_source_analysis_report
   - task_xuchang_weekly_weather_situation_report
   - task_xuchang_mee_cnemc_weekly_news
+  - task_runtime_monitor
+  # ④污染原因分析通报（PM2.5 高于相邻五市均值 30%、轻度污染及以上为 20% 触发）
+  - task_xuchang_pollution_cause_analysis
+  # ①月度特征分析通报（每月 2 日，APP 推局长/科长）
+  - task_xuchang_monthly_review_analysis
+  # ②企业核查线索周报（代理口径，APP 推科长/区县/执法）
+  - task_xuchang_enterprise_clue_weekly

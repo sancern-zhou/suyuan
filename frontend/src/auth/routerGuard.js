@@ -34,7 +34,8 @@ export function createAuthGuard(authStore) {
       return true
     }
 
-    // 开发阶段页面（数据大屏/现场巡查快报）：仅超级管理员可见；
+    // 开发阶段页面（实时地图/现场巡查快报）：仅超级管理员可见；
+    // 数据大屏已开放给全部登录用户，不再做 adminOnly 限制；
     // 墙屏令牌直连不受此限（后端令牌校验把关）。
     if (to.meta?.adminOnly && authStore.isAuthenticated) {
       const user = authStore.user

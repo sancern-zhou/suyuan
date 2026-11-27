@@ -4,8 +4,41 @@
 # - route=tool 的 locator 必须是已注册工具名（守卫测试校验）
 # - 字段细节不进地图，由 describe_table / 工具 schema 按需提供
 # - 工具名或表名变更时必须同步更新本文件
+#
+# 【许昌空气质量查询优先级总纲】
+# 1. 常规指标（18城含济源排名/最新小时日值/区县聚合/县级站/乡镇站76个/办事处站31个/省控站8个）→ xuchang_cube_metrics
+#    （数据窗口：ssfb 2026-10-03 起；乡镇站 TownHour/TownDay 2024 起、2025 年起完整，
+#     必须过滤 caliber：官方结论用 caliber='app' 审核口径）
+# 区县级数据语义（问数/专家通用）：区县不止县级站一个来源，共五类口径——
+# ①区县聚合 SsfbCountyHour/Day（省平台区县口径，含济源+功能区）；②区内县级站 SsfbSite*（每县1~2个代表站）；
+# ③乡镇站 Town*（76个，区域高密度网格）；④办事处站 OfficeFiveMinute（31个，城区街道尺度，仅PM2.5/PM10）；
+# ⑤省控站 ShengkongHour（8个，六参数）。县级站是单点代表，乡镇/办事处站网才能反映区内梯度与局地异常。
+# 2. 长历史/同比/跨年趋势/语义层未覆盖明细 → execute_crawler_sql_query
+#    （DataCrawler MySQL：许昌本地 2016/2018 起长历史 + Ssfb* 采集表）
+# 3. SQL Server 侧（发布口径长历史/中大审核口径/预报表）→ execute_sql_query
+#    （注意：CityDay 缺济源；本地月/年排名与官方审核口径存在±0.5μg/m³级别差异，正式引用以官方发布为准）
+# 4. 中台独有口径（区域/站点基础表、城市/站点日数据、月度及以上报表）→
+#    xuchang_station_catalog 解析编码 + query_airdata_platform / airdata_calc_report_summary
+#    （乡镇小时/日已迁本地 TownHour/TownDay，中台 v_t_* 乡镇视图仅备用）
+# 同一问题优先用高层工具；仅在需要语义层未覆盖的字段/时间时下沉到 SQL 工具。
 
 sources:
+  - domain: 空气质量（语义层：河南18城市组含济源排名/小时日值 + 区县聚合/县级站/乡镇站/办事处站/省控站）
+    route: tool
+    projects: [xuchang]
+    locator: xuchang_cube_metrics
+    usage: "优先用本工具点数查询（免写SQL）：SsfbCityRanking（月/年/日累计统计与排名，**本地计算非官方口径**，银行家修约：PM2.5/CO 一位小数其余整数，Rank* 升序=1 最优，含济源，需 periodType+period 过滤）/SsfbCityHourRank（某小时 18 城排名，dataTime 过滤到小时）/SsfbCityHour/SsfbCityDay（城市小时日值）/SsfbCountyHour/SsfbCountyDay（全省区县聚合口径，190 区县含济源+功能区，与省平台区县页签同源）/SsfbSiteHour/SsfbSiteDay（全省区县站点 193 区县，County 字段做区县口径，剔除国控）/TownHour/TownDay（乡镇站76个，2024 起、2025 年起完整，必须过滤 caliber：官方结论用 caliber='app' 审核口径，区县从 stationName 前缀解析）/TownFiveMinute（乡镇站最近30天 5 分钟实时数据，原始未审核口径，5 分钟不发布 AQI，需按 HJ633 由六参数推算）/OfficeFiveMinute（办事处站31个，城区街道尺度，5分钟+小时同表，仅 PM2.5/PM10 两因子）/ShengkongHour（许昌8个省控站小时六参数）；排名规则=数值越低越靠前，相同值并列。区县级问题按五类口径组合：区县聚合看 SsfbCounty*，区内梯度与局地异常看乡镇/办事处站网（Town*/OfficeFiveMinute），县级站/省控站是单点参照（SsfbSite*/ShengkongHour）"
+    granularity: 逐小时/逐日/月年累计
+    caveats: "数据窗口：ssfb 2026-10-03 起、乡镇站 2024 起、办事处/省控站滚动保留 30 天（OfficeFiveMinute/ShengkongHour 不用于历史回看）；本地排名已用 2026-08 官方数据回验（单项浓度平均差 PM2.5 0.4/PM10 0.6 μg/m³）；省APP官方表 HenanCityAccumulateRanking 的 city_rank 经验证为行政区划顺序（非排名）且已停更，勿当排名引用；编码解析用 xuchang_station_catalog"
+
+  - domain: 空气质量（河南实时发布：18城市组含济源 + 区县聚合 + 许昌县级站 + 本地重算排名）
+    route: tool
+    projects: [xuchang]
+    locator: execute_crawler_sql_query / xuchang_station_catalog
+    usage: "采集库 MySQL：SsfbCityHour/SsfbCityDay（18 城市组，GroupID 过滤，济源在既有发布历史中长期缺失可用此表补）/SsfbSiteHour/SsfbSiteDay（许昌县级站，SiteID 过滤）/SsfbCountyHour/SsfbCountyDay（区县聚合，County/City 名称直接在行内）/SsfbCityRanking（城市日排名，仅对官方日值排序，Rank* 升序=1 最优，相同值并列，无聚合统计）/TownStationData（乡镇站小时/日，IsHour+IsAudit 双口径）/TownStationFiveMinute（乡镇5分钟）/OfficeStationFiveMinute（办事处站5分钟+小时，IsHour 区分）/ShengkongStationHour（省控站小时）；办事处/省控/乡镇5分钟行内直接带 StationName/CountyName，按名称 LIKE 过滤即可，无需解析编码；常规指标优先走 xuchang_cube_metrics，本路由用于语义层未覆盖的明细/自定义查询；县级站编码不可猜，先用 xuchang_station_catalog 解析（action=lookup_henan_cities 取城市 GroupID，station_type=county 取县级站编码）"
+    granularity: 逐小时/逐日/月年累计
+    caveats: "ssfb 源仅保留约最近 8 天且日值次日发布，不能做同比/历史回看；源日值接口 2026-10 起不发布 PM10（重算排名时由小时均值补齐）；日值发布后才能算，排名任务在每日 06:10；省 APP 2026-09 起停服，官方排名仅作 SsfbCityRanking 的 OfficialZong/OfficialRank 对照列（≤2026-08）；乡镇5分钟/办事处/省控三表滚动保留 30 天，不用于历史回看；乡镇小时/日长历史（2024-01 起）在 TownStationData，聚合前必须过滤 IsAudit 口径"
+
   - domain: 空气质量（国控站点/城市长历史，2016 起）
     route: tool
     locator: execute_crawler_sql_query
@@ -25,9 +58,10 @@ sources:
     locator: get_weather_data / get_weather_forecast / query_airdata_platform
     usage: "历史实况回看与多时效预报用 get_weather_data/get_weather_forecast（lat/lon + past_days/hourly/daily）；空气质量预报产品用 query_airdata_platform；交付时标注起报时间与时效"
     granularity: 逐小时/3小时间隔/逐日
-    caveats: "预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表，禁止在其中寻找气象数据"
+    caveats: "库内历史网格（ERA5 再分析/边界层/云量）与站点实况由预采集窗口维护，一般覆盖近 90 天，更早需在线补采（近5天即时、更大范围后台排队）；预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表（dat_weather_hour 无许昌数据），禁止在其中寻找许昌气象数据"
 
-  - domain: 空气质量（全国城市对比）
-    route: tool
-    locator: query_national_city_air_quality
-    usage: "全国城市六参数浓度与 AQI 对比、排名类分析"
+  # 【暂时下线 2026-10-27】query_national_city_air_quality 已停止注册，条目同步移除
+  # - domain: 空气质量（全国城市对比）
+  #   route: tool
+  #   locator: query_national_city_air_quality
+  #   usage: "全国城市六参数浓度与 AQI 对比、排名类分析"

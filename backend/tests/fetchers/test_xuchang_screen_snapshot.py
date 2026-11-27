@@ -1,0 +1,797 @@
+"""许昌数据大屏快照 fetcher：聚合、单段降级、地图站点 5 分钟口径、告警窗口。"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from app.fetchers.xuchang_screen_snapshot import (
+    SNAPSHOT_DIR,
+    SNAPSHOT_FILE,
+    XuchangScreenSnapshotFetcher,
+)
+from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
+
+NOW = datetime(2026, 10, 24, 15, 0, 0)
+CUTOFF = "2026-10-24T14:00:00.000"
+TOWN_SLOT = "2026-10-24T14:35:00.000"
+
+
+def _cube_rows(cube: str, members: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{f"{cube}.{key}": value for key, value in members.items()}]
+
+
+def _make_cube_load(handlers: dict[str, Any]):
+    """按 measures[0] 分发的 cube_load 假实现；值为异常则抛出。"""
+
+    async def _load(query: dict[str, Any]) -> list[dict[str, Any]]:
+        key = query["measures"][0]
+        handler = handlers.get(key)
+        if handler is None:
+            raise AssertionError(f"未预期的 Cube 查询: {query}")
+        if isinstance(handler, Exception):
+            raise handler
+        if callable(handler):
+            return handler(query)
+        return handler
+
+    return _load
+
+
+def _default_handlers() -> dict[str, Any]:
+    return {
+        # cutoff 探测
+        "SsfbCityHour.count": _cube_rows("SsfbCityHour", {"dataTime": CUTOFF, "count": 1}),
+        # header（dimensions 含 quality）
+        "SsfbCityHour.maxAqi": lambda query: (
+            _cube_rows("SsfbCityHour", {
+                "maxAqi": 82, "avgPm25": 58, "avgPm10": 96, "avgO3": 105,
+                "avgNo2": 34, "avgSo2": 8, "avgCo": 0.6,
+                "quality": "良", "primaryPollutant": "PM2.5",
+            })
+            if "SsfbCityHour.quality" in query.get("dimensions", [])
+            else _cube_rows("SsfbCityHour", {
+                "dataTime": CUTOFF, "maxAqi": 82, "avgPm25": 58,
+                "avgPm10": 96, "avgO3": 105,
+            })
+        ),
+        "SsfbCityHourRank.rankAqi": [
+            *_cube_rows("SsfbCityHourRank", {
+                "city": "漯河市", "rankAqi": 1, "avgAqi": 61, "avgPm25": 43,
+                "avgPm10": 81, "avgO3": 96, "rankPm25": 1, "rankPm10": 2,
+                "rankO3": 3, "quality": "良", "primaryPollutant": None,
+            }),
+            *_cube_rows("SsfbCityHourRank", {
+                "city": "许昌市", "rankAqi": 5, "avgAqi": 82, "avgPm25": 58,
+                "avgPm10": 96, "avgO3": 105, "rankPm25": 4, "rankPm10": 6,
+                "rankO3": 8, "quality": "良", "primaryPollutant": "PM2.5",
+            }),
+        ],
+        "SsfbCountyHourRank.rankAqi": _cube_rows("SsfbCountyHourRank", {
+            "county": "建安区", "rankAqi": 1, "avgAqi": 79, "avgPm25": 55,
+            "avgPm10": 96, "avgO3": 102, "rankPm25": 2, "rankPm10": 3,
+            "rankO3": 4, "quality": "良", "primaryPollutant": "PM2.5",
+        }),
+        # 区县日排名（10 县市区，最新日 + 许昌过滤）
+        "SsfbCountyDayRank.count": _cube_rows("SsfbCountyDayRank", {
+            "dataDate": "2026-10-23T00:00:00.000", "count": 188,
+        }),
+        "SsfbCountyDayRank.rankAqi": _cube_rows("SsfbCountyDayRank", {
+            "county": "襄城县", "rankAqi": 66, "avgAqi": 68, "avgPm25": 47,
+            "avgPm10": 83, "avgO38h": 128, "rankPm25": 3, "rankPm10": 5,
+            "rankO3": 7, "quality": "良", "primaryPollutant": None,
+        }),
+        # 区县代表点（地图 counties 层）：先探测最新可用小时
+        "SsfbCountyHour.count": _cube_rows("SsfbCountyHour", {
+            "dataTime": CUTOFF, "count": 1,
+        }),
+        # AQI/等级/首要污染物不再取上游列（旧 HJ633 口径），只取六参数浓度
+        "SsfbCountyHour.avgPm25": _cube_rows("SsfbCountyHour", {
+            "county": "建安区", "avgPm25": 55,
+            "avgPm10": 96, "avgO3": 102, "avgSo2": 8, "avgNo2": 28, "avgCo": 0.6,
+        }),
+        # 168 城全国排名（累计期次）：Cube 对 periodEnd 排序可能被静默忽略，
+        # 夹具按升序（最旧在前）返回，断言 fetcher 仍取最新期次 1-9月
+        "Rank168CityMonthly.compositeIndexRank": [
+            *_cube_rows("Rank168CityMonthly", {
+                "periodLabel": "1-1月", "periodType": "cum",
+                "dataMonth": "2026-01-01T00:00:00.000",
+                "compositeIndexRank": 13, "pm25Rank": 7,
+                "compositeIndex": 13.1, "pm25": 83.1,
+            }),
+            *_cube_rows("Rank168CityMonthly", {
+                "periodLabel": "1-9月", "periodType": "cum",
+                "dataMonth": "2026-09-01T00:00:00.000",
+                "compositeIndexRank": 88, "pm25Rank": 102,
+                "compositeIndex": 4.31, "pm25": 43.2,
+            }),
+        ],
+        # 数据质量在线率
+        "SsfbSiteHour.onlineSites": _cube_rows("SsfbSiteHour", {
+            "dataTime": CUTOFF, "city": "许昌市", "onlineSites": 23,
+        }),
+        "TownFiveMinute.onlineSites": _cube_rows("TownFiveMinute", {
+            "dataTime": TOWN_SLOT, "onlineSites": 71,
+        }),
+        "XuchangCityYearTarget.pm25Target": _cube_rows("XuchangCityYearTarget", {
+            "year": "2026", "pm25Target": 44, "pm10Target": 76,
+            "goodDaysTarget": 285, "heavyDaysTarget": 3,
+        }),
+        "ProvinceMonthCum.pm25": _cube_rows("ProvinceMonthCum", {
+            "dataMonth": "2026-09-01T00:00:00.000", "pm25": 43.2, "pm10": 74,
+            "goodDays": 218, "heavyDays": 1, "goodDaysRatio": 79.9,
+        }),
+        "SsfbCityDay.count": [
+            *_cube_rows("SsfbCityDay", {"quality": "优", "count": 4, "avgPm25": 30}),
+            *_cube_rows("SsfbCityDay", {"quality": "良", "count": 10, "avgPm25": 52}),
+            *_cube_rows("SsfbCityDay", {"quality": "轻度污染", "count": 2, "avgPm25": 88}),
+        ],
+        # 乡镇站 5 分钟：探测最新槽位 → 锁定该槽取全部站点
+        "TownFiveMinute.count": _cube_rows("TownFiveMinute", {
+            "dataTime": TOWN_SLOT, "count": 1,
+        }),
+        "TownFiveMinute.avgPm25": _cube_rows("TownFiveMinute", {
+            "stationName": "禹州市范坡镇", "dataTime": TOWN_SLOT,
+            "avgPm25": 61, "avgPm10": 90,
+            "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
+            "maxAqi": None,
+        }),
+        "TownHour.count": _cube_rows("TownHour", {"dataTime": CUTOFF, "count": 1}),
+        "TownHour.avgPm25": _cube_rows("TownHour", {
+            "stationName": "禹州市范坡镇", "avgPm25": 60, "avgPm10": 88,
+            "avgSo2": 9, "avgNo2": 29, "avgCo": 0.6, "avgO3": 98,
+        }),
+        "ShengkongHour.count": [],
+        "OfficeFiveMinute.count": [],
+        "OfficeFiveMinute.avgPm25": [],
+        # 左侧统计/考核/排名段
+        "ProvinceMonth.count": _cube_rows("ProvinceMonth", {
+            "dataMonth": "2026-09-01T00:00:00.000", "count": 19,
+        }),
+        "ProvinceMonth.pm25": _cube_rows("ProvinceMonth", {
+            "region": "许昌市", "pm25": 30.0, "pm10": 55.0, "o3": 160.0,
+            "goodDays": 25, "heavyDays": 0, "compositeIndex": 6.5,
+            "pm25YoY": 90.0, "compositeIndexYoY": 50.0,
+        }),
+        "ProvinceMonthCum.count": _cube_rows("ProvinceMonthCum", {
+            "dataMonth": "2026-09-01T00:00:00.000", "count": 19,
+        }),
+        "ProvinceMonthCum.pm25": lambda query: (
+            _cube_rows("ProvinceMonthCum", {
+                "region": "许昌市", "pm25": 43.2, "pm10": 74, "o3": 165.0,
+                "goodDays": 218, "heavyDays": 1, "goodDaysRatio": 79.9,
+                "compositeIndex": 7.0, "pm25YoY": 88.0, "compositeIndexYoY": 45.0,
+            })
+            if "region" in str(query.get("dimensions", []))
+            # 旧 _year_target 段查询（dimensions 只有 dataMonth）
+            else _cube_rows("ProvinceMonthCum", {
+                "dataMonth": "2026-09-01T00:00:00.000", "pm25": 43.2, "pm10": 74,
+                "goodDays": 218, "heavyDays": 1, "goodDaysRatio": 79.9,
+            })
+        ),
+        "XuchangCountyYearTarget.count": _cube_rows("XuchangCountyYearTarget", {
+            "year": 2025, "count": 10,
+        }),
+        "XuchangCountyYearTarget.pm25Target": _cube_rows("XuchangCountyYearTarget", {
+            "region": "建安区", "regionType": "urban",
+            "pm25Target": 41, "pm25": 45, "pm10Target": 70, "pm10": 75,
+            "goodDaysTarget": 269, "goodDays": 250,
+            "heavyDaysTarget": 6, "heavyDays": 7,
+            "pm25Completed": "否", "goodDaysCompleted": "否", "heavyDaysCompleted": "否",
+        }),
+        "CountyMonth.count": _cube_rows("CountyMonth", {
+            "dataMonth": "2026-09-01T00:00:00.000", "count": 10,
+        }),
+        "CountyMonth.pm25": _cube_rows("CountyMonth", {
+            "region": "鄢陵县", "regionType": "county",
+            "pm25": 30.47, "pm10": 58.03, "so2": 11, "no2": 19, "co95": 0.9,
+            "o3_8h_90": 180, "goodDays": 21, "heavyDays": 0, "compositeIndex": 7.575,
+        }),
+        "CountyMonthCum.count": _cube_rows("CountyMonthCum", {
+            "periodEnd": "2026-09-30T00:00:00.000", "count": 10,
+        }),
+        "CountyMonthCum.pm25": _cube_rows("CountyMonthCum", {
+            "region": "鄢陵县", "regionType": "county",
+            "pm25": 32.0, "pm10": 60.0, "so2": 10, "no2": 20, "co95": 1.0,
+            "o3_8h_90": 175, "goodDays": 200, "heavyDays": 1, "compositeIndex": 7.2,
+        }),
+        # ssfb 日报排名段（昨日官方日值 + 许昌昨日单日）
+        "SsfbCityRanking.count": _cube_rows("SsfbCityRanking", {
+            "period": "2026-10-23", "count": 18,
+        }),
+        "SsfbCityRanking.avgPm25": [
+            *_cube_rows("SsfbCityRanking", {
+                "city": "漯河市", "avgPm25": 43.0, "avgPm10": 81.0,
+                "avgO38h": 132.0, "rankPm25": 1, "rankPm10": 2, "rankO3": 4,
+            }),
+            *_cube_rows("SsfbCityRanking", {
+                "city": "许昌市", "avgPm25": 58.0, "avgPm10": 96.0,
+                "avgO38h": 155.0, "rankPm25": 5, "rankPm10": 7, "rankO3": 9,
+            }),
+        ],
+        # 日报排名段：全市日值一段取齐（AQI + 许昌等级/首要污染物）
+        "SsfbCityDay.aqiVal": [
+            *_cube_rows("SsfbCityDay", {
+                "city": "漯河市", "aqiVal": 61, "avgPm25": 43.0,
+                "avgPm10": None, "avgO38h": 132.0,
+                "quality": "良", "primaryPollutant": None,
+            }),
+            *_cube_rows("SsfbCityDay", {
+                "city": "许昌市", "aqiVal": 82, "avgPm25": 58.0,
+                "avgPm10": None, "avgO38h": 155.0,
+                "quality": "良", "primaryPollutant": "PM2.5",
+            }),
+        ],
+    }
+
+
+def _write_episode_state(registry: Path, episodes: dict[str, list[dict[str, Any]]]) -> None:
+    directory = registry / "xuchang_station_deviation_alerts"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "episode_state.json").write_text(
+        json.dumps({"active": episodes.get("active", []), "history": episodes.get("history", [])}),
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture
+def registry(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_screen_snapshot.get_data_registry",
+        lambda: tmp_path,
+    )
+    return tmp_path
+
+
+def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_screen_snapshot.cube_load", _make_cube_load(handlers)
+    )
+
+    async def _fake_observed_met(self):
+        return {"time": "2026-10-24T14:00:00", "temperature": 18.2,
+                "humidity": 61, "wind_speed": 8.0, "wind_direction": 45.0}
+
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_observed_met", _fake_observed_met,
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_forecast_72h",
+        lambda self: {"hourly": [{"data_time": "2026-10-24T15:00:00", "aqi": 79, "pm25": 55}],
+                      "daily": [{"date": "2026-10-25", "aqi": 80, "min_aqi": 70,
+                                 "max_aqi": 90, "primary_pollutant": "PM2.5"}]},
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_national_stations",
+        lambda self, alert_names, granularity="5min": [{
+            "station_id": "1008A", "station_name": "许昌学院", "type": "national",
+            "granularity": granularity, "lon": 113.8611, "lat": 34.0443,
+            "data_time": CUTOFF, "aqi": 85, "pm25": 60 if granularity == "5min" else 58,
+            "pm10": 100, "o3": 110, "so2": 9, "no2": 31, "co": 0.7, "alerting": False,
+        }],
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_broadcast",
+        lambda self: [{"time": "2026-10-24T08:05:00", "task_name": "站点日污染溯源报告",
+                       "station_name": "许昌学院", "text": "结论摘要"}],
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_alert_dispatch",
+        lambda self, alerts: {"ep-1": {
+            "time": "2026-10-24T10:05:00",
+            "text": "【浓度告警】1.告警站点：许昌学院\n2.污染指标：PM2.5",
+        }},
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_assets",
+        lambda self: [{
+            "kind": "transport", "title": "区域后向轨迹走廊图",
+            "asset_path": "xuchang_transport_analysis/20261024/j1.regional-paths.png",
+            "taken_at": "2026-10-24T09:30:00",
+        }],
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_minute_latest",
+        lambda self: {
+            "station": {"station_name": "许昌学院", "data_time": "2026-10-24T14:35:00",
+                        "aqi": 88, "pm25": 62},
+            "city": {"area": "许昌市", "data_time": "2026-10-24T14:00:00",
+                     "aqi": 85, "quality": "良", "primary": "PM2.5"},
+        },
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_nmc_forecast",
+        lambda self: {
+            "publish_time": "2026-10-24T14:30:00",
+            "rows": [{"time": "2026-10-24T15:00:00", "temperature": 18.0,
+                      "humidity": 60, "wind_speed": 3.0, "wind_direction": "北风",
+                      "wind_direction_degrees": 0.0,
+                      "precipitation_probability": 10, "weather_text": "多云"}],
+        },
+    )
+    return XuchangScreenSnapshotFetcher(now_factory=lambda: NOW)
+
+
+@pytest.fixture
+def episodes_writer(registry):
+    return _write_episode_state
+
+
+async def test_fetch_and_store_writes_full_snapshot(
+    monkeypatch, registry, episodes_writer
+):
+    episodes_writer(registry, {
+        "active": [{
+            "episode_id": "ep-1", "station_id": "1008A", "station_name": "许昌学院",
+            "target_pollutant": "pm25", "alert_type": "deviation", "status": "active",
+            "started_at": "2026-10-24T10:00:00", "last_seen_at": "2026-10-24T14:00:00",
+            "hour_count": 5, "peak_station_value": 96, "peak_deviation_ratio": 1.8,
+        }],
+        "history": [],
+    })
+    handlers = _default_handlers()
+    # 乡镇站 5 分钟：锁定最新槽位（14:35）
+    handlers["TownFiveMinute.count"] = _cube_rows("TownFiveMinute", {
+        "dataTime": TOWN_SLOT, "count": 1,
+    })
+    handlers["TownFiveMinute.avgPm25"] = _cube_rows("TownFiveMinute", {
+        "stationName": "禹州市范坡镇", "dataTime": TOWN_SLOT,
+        "avgPm25": 61, "avgPm10": 90,
+        "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
+        "maxAqi": None,
+    })
+
+    fetcher = _make_fetcher(monkeypatch, handlers)
+    result = await fetcher.fetch_and_store()
+
+    snapshot_path = registry / SNAPSHOT_DIR / SNAPSHOT_FILE
+    assert snapshot_path.exists()
+    assert result["segments_failed"] == []
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+    assert snapshot["schema_version"] == 3
+    assert snapshot["data_cutoff_hour"] == CUTOFF
+    assert snapshot["latest_station_time"] == TOWN_SLOT
+    assert snapshot["errors"] is None
+    # header
+    assert snapshot["header"]["aqi"] == 82
+    assert snapshot["header"]["quality"] == "良"
+    assert snapshot["header"]["met"]["humidity"] == 61
+    # 排名（实时：AQI/PM2.5/PM10/O3 值 + 分因子排名）
+    assert snapshot["city_hour_rank"]["rows"][0]["city"] == "漯河市"
+    assert snapshot["city_hour_rank"]["rows"][1]["rank"] == 5
+    assert snapshot["city_hour_rank"]["rows"][1]["pm10"] == 96
+    assert snapshot["city_hour_rank"]["rows"][1]["o3"] == 105
+    assert snapshot["city_hour_rank"]["rows"][1]["rank_pm25"] == 4
+    assert snapshot["city_hour_rank"]["rows"][1]["rank_o3"] == 8
+    assert snapshot["county_hour_rank"]["rows"][0]["county"] == "建安区"
+    assert snapshot["county_hour_rank"]["rows"][0]["rank_pm10"] == 3
+    assert snapshot["county_hour_rank"]["rows"][0]["o3"] == 102
+    assert snapshot["county_day_rank"]["data_date"].startswith("2026-10-23")
+    assert snapshot["county_day_rank"]["rows"][0]["county"] == "襄城县"
+    assert snapshot["county_day_rank"]["rows"][0]["aqi"] == 68
+    assert snapshot["county_day_rank"]["rows"][0]["rank_o3"] == 7
+    # 达标：官方累计截至 9 月，本地 10 月自算 14 天中 14 天优良
+    assert snapshot["year_target"]["official_cum"]["as_of_month"] == "2026-09"
+    local = snapshot["year_target"]["local_since_official"]
+    assert local["from"] == "2026-10-01"
+    assert local["to"] == "2026-10-23"
+    assert local["good_days"] == 14
+    assert local["days_total"] == 16
+    assert local["pm25_avg"] == 51.0
+    # 告警
+    assert snapshot["alerts"][0]["station_name"] == "许昌学院"
+    assert snapshot["alerts"][0]["status"] == "active"
+    assert snapshot["alerts"][0]["lon"] == 113.8611
+    # 告警行回挂通报正文（_alert_dispatch 查库，此处为桩）
+    assert snapshot["alerts"][0]["dispatch"]["text"].startswith("【浓度告警】")
+    assert result["alerts_with_dispatch"] == 1
+    # 站点：国控（monkeypatch 桩）+ 乡镇 5 分钟（AQI 按 HJ633 推算）
+    assert snapshot["stations"]["national"][0]["station_id"] == "1008A"
+    assert snapshot["stations"]["national"][0]["granularity"] == "5min"
+    assert snapshot["stations"]["national_hour"][0]["granularity"] == "hour"
+    assert snapshot["stations"]["national_hour"][0]["pm25"] == 58
+    townships = snapshot["stations"]["townships"]
+    est_aqi, est_primary = hourly_aqi_and_primary({
+        "so2": 10, "no2": 30, "o3": 100, "co": 0.7, "pm10": 90, "pm25": 61,
+    })
+    assert townships and townships[0]["caliber"] == "src"
+    assert townships[0]["station_name"] == "禹州市范坡镇"
+    assert townships[0]["aqi_estimated"] is True
+    assert townships[0]["aqi"] == int(round(est_aqi))
+    assert townships[0]["data_time"] == TOWN_SLOT
+    assert townships[0]["lon"] == 113.531
+    # 六参数齐全（前端大屏图标支持按污染物切换显示）
+    assert townships[0]["pm25"] == 61
+    assert townships[0]["pm10"] == 90
+    assert townships[0]["o3"] == 100
+    assert townships[0]["so2"] == 10
+    assert townships[0]["no2"] == 30
+    assert townships[0]["co"] == 0.7
+    hourly = snapshot["stations"]["townships_hour"]
+    # 上游 maxAqi/quality 是旧 HJ633 折点口径，AQI 由六参数按收严表重算：
+    # pm25=60 在收严表恰为 IAQI 100（旧表仅 73），断言值可区分两套折点
+    hour_aqi, hour_primary = hourly_aqi_and_primary({
+        "so2": 9, "no2": 29, "o3": 98, "co": 0.6, "pm10": 88, "pm25": 60,
+    })
+    assert hourly and hourly[0]["caliber"] == "app"
+    assert hourly[0]["granularity"] == "hour"
+    assert hourly[0]["aqi"] == int(round(hour_aqi)) == 100
+    assert hourly[0]["aqi_estimated"] is True
+    assert hourly[0]["primary"] == hour_primary == "PM2.5"
+    assert hourly[0]["quality"] is None
+    assert hourly[0]["pm25"] == 60
+    # 区县代表点：仅内置坐标表中的区县 + 最新小时值
+    counties = snapshot["stations"]["counties"]
+    assert counties and counties[0]["station_name"] == "建安区"
+    assert counties[0]["type"] == "county"
+    # 快报页标注数据时段用；区县小时不参与 latest_station_time（仍为乡镇 5 分钟槽位）
+    assert counties[0]["data_time"] == CUTOFF
+    county_aqi, county_primary = hourly_aqi_and_primary({
+        "so2": 8, "no2": 28, "o3": 102, "co": 0.6, "pm10": 96, "pm25": 55,
+    })
+    assert counties[0]["aqi"] == int(round(county_aqi))
+    assert counties[0]["aqi_estimated"] is True
+    assert counties[0]["primary"] == county_primary
+    assert counties[0]["pm10"] == 96
+    assert counties[0]["o3"] == 102
+    assert counties[0]["so2"] == 8
+    assert counties[0]["no2"] == 28
+    assert counties[0]["co"] == 0.6
+    # 轮播素材段
+    assert snapshot["assets"][0]["kind"] == "transport"
+    assert "xuchang_transport_analysis" in snapshot["assets"][0]["asset_path"]
+    # P2 段：168 城排名 / 分钟级 / 在线率
+    assert snapshot["rank168"]["composite_rank"] == 88
+    assert snapshot["rank168"]["period_label"] == "1-9月"
+    assert snapshot["minute"]["station"]["aqi"] == 88
+    assert snapshot["minute"]["city"]["quality"] == "良"
+    assert snapshot["quality"]["site_hour"]["online"] == 23
+    assert snapshot["quality"]["town_hour"]["online"] == 71
+    assert snapshot["quality"]["town_hour"]["caliber"] == "src"
+    assert snapshot["quality"]["town_hour"]["data_time"] == TOWN_SLOT
+    # 播报
+    assert snapshot["broadcast"][0]["task_name"] == "站点日污染溯源报告"
+    # ssfb 日报排名段：最新期次 + PM2.5 升序 + 分因子排名 + AQI（官方日值现算排名）
+    daily_rank = snapshot["ssfb_daily_ranking"]
+    assert daily_rank["period"] == "2026-10-23"
+    assert [row["city"] for row in daily_rank["rows"]] == ["漯河市", "许昌市"]
+    assert daily_rank["rows"][1]["rank_pm25"] == 5
+    assert daily_rank["rows"][1]["rank_pm10"] == 7
+    assert daily_rank["rows"][1]["rank_o3"] == 9
+    assert daily_rank["rows"][0]["aqi"] == 61
+    assert daily_rank["rows"][0]["rank"] == 1
+    assert daily_rank["rows"][1]["aqi"] == 82
+    assert daily_rank["rows"][1]["rank"] == 2
+    assert daily_rank["xuchang"]["date"] == "2026-10-23"
+    assert daily_rank["xuchang"]["quality"] == "良"
+    assert daily_rank["xuchang"]["primary"] == "PM2.5"
+    assert daily_rank["xuchang"]["pm25"] == 58.0
+    assert daily_rank["xuchang"]["pm10"] is None
+
+
+async def test_segment_failure_degrades_without_killing_screen(monkeypatch, registry):
+    handlers = _default_handlers()
+    handlers["SsfbCityHourRank.rankAqi"] = RuntimeError("语义层排队超时")
+    _write_episode_state(registry, {"active": [], "history": []})
+
+    fetcher = _make_fetcher(monkeypatch, handlers)
+    result = await fetcher.fetch_and_store()
+
+    snapshot = json.loads(
+        (registry / SNAPSHOT_DIR / SNAPSHOT_FILE).read_text(encoding="utf-8")
+    )
+    assert snapshot["city_hour_rank"] is None
+    assert "语义层排队超时" in snapshot["errors"]["city_hour_rank"]
+    assert snapshot["header"]["aqi"] == 82
+    assert result["segments_failed"] == ["city_hour_rank"]
+
+
+async def test_ssfb_daily_ranking_failure_degrades(monkeypatch, registry):
+    """日报排名段独立降级：任务未跑出期次时整屏其余段不受影响。"""
+    handlers = _default_handlers()
+    handlers["SsfbCityRanking.count"] = []
+    _write_episode_state(registry, {"active": [], "history": []})
+
+    fetcher = _make_fetcher(monkeypatch, handlers)
+    result = await fetcher.fetch_and_store()
+
+    snapshot = json.loads(
+        (registry / SNAPSHOT_DIR / SNAPSHOT_FILE).read_text(encoding="utf-8")
+    )
+    assert snapshot["ssfb_daily_ranking"] is None
+    assert "无日排名期次" in snapshot["errors"]["ssfb_daily_ranking"]
+    # 与日报段无依赖的段照常生成
+    assert snapshot["province_city_ranking"]["month"]["rows"]
+    assert result["segments_failed"] == ["ssfb_daily_ranking"]
+
+
+async def test_cutoff_missing_skips_realtime_segments(monkeypatch, registry):
+    handlers = _default_handlers()
+    handlers["SsfbCityHour.count"] = []
+    _write_episode_state(registry, {"active": [], "history": []})
+
+    fetcher = _make_fetcher(monkeypatch, handlers)
+    await fetcher.fetch_and_store()
+
+    snapshot = json.loads(
+        (registry / SNAPSHOT_DIR / SNAPSHOT_FILE).read_text(encoding="utf-8")
+    )
+    assert snapshot["data_cutoff_hour"] is None
+    assert snapshot["header"] is None
+    assert snapshot["city_hour_rank"] is None
+    # 与 cutoff 无关的段照常生成
+    assert snapshot["year_target"]["official_cum"]["good_days"] == 218
+
+
+async def test_alerts_window_and_order(monkeypatch, registry):
+    _write_episode_state(registry, {
+        "active": [{
+            "episode_id": "ep-active", "station_id": "1008A", "station_name": "许昌学院",
+            "status": "active", "started_at": "2026-10-24T09:00:00",
+            "last_seen_at": "2026-10-24T13:00:00",
+        }],
+        "history": [
+            {
+                "episode_id": "ep-recent", "station_id": "1005A", "station_name": "市一中",
+                "status": "closed", "started_at": "2026-10-23T10:00:00",
+                "last_seen_at": "2026-10-24T07:00:00",
+            },
+            {
+                "episode_id": "ep-stale", "station_id": "1003A", "station_name": "开发区",
+                "status": "closed", "started_at": "2026-10-18T10:00:00",
+                "last_seen_at": "2026-10-19T07:00:00",
+            },
+        ],
+    })
+    handlers = _default_handlers()
+    fetcher = _make_fetcher(monkeypatch, handlers)
+
+    alerts = fetcher._alerts()
+
+    assert [item["episode_id"] for item in alerts] == ["ep-active", "ep-recent"]
+
+
+def test_broadcast_runs_on_db_bridge_pool(monkeypatch):
+    """to_thread 中调用同步存储仍须走专用桥线程池，避免 asyncpg 跨 loop。"""
+    import app.db.sync_bridge as sync_bridge
+    from app.scheduled_tasks.storage.task_result_storage_db import (
+        DatabaseTaskResultStorage,
+    )
+
+    called = {}
+
+    def fake_query_page(self, **kwargs):
+        assert self._runner is sync_bridge.run_db
+        called["query"] = kwargs
+        return [], 0
+
+    monkeypatch.setattr(DatabaseTaskResultStorage, "query_page", fake_query_page)
+
+    assert XuchangScreenSnapshotFetcher()._broadcast() == []
+    assert called["query"] == {"page": 1, "page_size": 10}
+
+
+def _dispatch_record(completed_at, episode_ids, text="通报正文", **fields):
+    """任务结果行的最小替身：通报正文、完成时间与事件属性（extra）。"""
+    from types import SimpleNamespace
+
+    values = {
+        "broadcast_message": text,
+        "conclusion": None,
+        "started_at": None,
+        "completed_at": datetime.fromisoformat(completed_at),
+        "extra": {"event_attributes": {"episode_ids": episode_ids}},
+    }
+    values.update(fields)
+    return SimpleNamespace(**values)
+
+
+def _patch_dispatch_pages(monkeypatch, pages):
+    import app.db.sync_bridge as sync_bridge
+    from app.scheduled_tasks.storage.task_result_storage_db import (
+        DatabaseTaskResultStorage,
+    )
+
+    calls = []
+
+    def fake_query_page(self, **kwargs):
+        assert self._runner is sync_bridge.run_db
+        calls.append(kwargs)
+        records = pages[kwargs["page"]]
+        return records, len(records)
+
+    monkeypatch.setattr(DatabaseTaskResultStorage, "query_page", fake_query_page)
+    return calls
+
+
+def test_alert_dispatch_links_notice_by_episode_ids(monkeypatch):
+    """通报按结果行 extra.event_attributes.episode_ids 回挂 episode，自新到旧取最新。"""
+    from app.fetchers.xuchang_screen_snapshot import (
+        DISPATCH_LOOKBACK,
+        DISPATCH_PAGE_SIZE,
+    )
+
+    unrelated = [
+        _dispatch_record("2026-10-24T09:00:00", ["other"])
+        for _ in range(DISPATCH_PAGE_SIZE - 4)
+    ]
+    pages = {
+        # 首页满页但只命中前三条告警，须继续翻页
+        1: [
+            _dispatch_record("2026-10-24T13:05:00", ["ep-1", "ep-2"]),
+            _dispatch_record("2026-10-24T13:02:00", ["ep-1"]),
+            _dispatch_record("2026-10-24T12:40:00", [], text="其它任务结论"),
+            _dispatch_record(
+                "2026-10-24T12:30:00", ["ep-3"],
+                broadcast_message=None, conclusion="结论摘要",
+            ),
+            *unrelated,
+        ],
+        2: [_dispatch_record("2026-10-24T08:40:00", ["ep-4"], text="次页通报")],
+    }
+    calls = _patch_dispatch_pages(monkeypatch, pages)
+    alerts = [
+        {"episode_id": "ep-1", "started_at": "2026-10-24T10:00:00+08:00"},
+        {"episode_id": "ep-2", "started_at": "2026-10-24T10:00:00+08:00"},
+        {"episode_id": "ep-3", "started_at": "2026-10-24T09:00:00"},
+        {"episode_id": "ep-4", "started_at": "2026-10-24T08:30:00+08:00"},
+        {"episode_id": None, "started_at": None},
+    ]
+
+    dispatch = XuchangScreenSnapshotFetcher()._alert_dispatch(alerts)
+
+    assert set(dispatch) == {"ep-1", "ep-2", "ep-3", "ep-4"}
+    # 同站多因子合批的一条通报回挂到各自 episode；同一 episode 多条取最新
+    assert dispatch["ep-1"] == {"time": "2026-10-24T13:05:00", "text": "通报正文"}
+    assert dispatch["ep-2"] == dispatch["ep-1"]
+    # 无通报正文时与播报段同口径，退回结论
+    assert dispatch["ep-3"] == {"time": "2026-10-24T12:30:00", "text": "结论摘要"}
+    assert dispatch["ep-4"] == {"time": "2026-10-24T08:40:00", "text": "次页通报"}
+    # 查询下界取最早告警的起始时间（带时区的按本地时间归一）
+    earliest = (
+        datetime.fromisoformat("2026-10-24T08:30:00+08:00").astimezone().replace(tzinfo=None)
+    )
+    assert [call["page"] for call in calls] == [1, 2]
+    assert all(call["page_size"] == DISPATCH_PAGE_SIZE for call in calls)
+    assert all(call["started_after"] == earliest - DISPATCH_LOOKBACK for call in calls)
+
+
+def test_alert_dispatch_scan_is_capped(monkeypatch):
+    """一直未命中时最多翻 DISPATCH_MAX_PAGES 页；没有 episode_id 就不查库。"""
+    from app.fetchers.xuchang_screen_snapshot import (
+        DISPATCH_MAX_PAGES,
+        DISPATCH_PAGE_SIZE,
+    )
+
+    full_page = [_dispatch_record("2026-10-24T09:00:00", ["other"]) for _ in range(DISPATCH_PAGE_SIZE)]
+    calls = _patch_dispatch_pages(monkeypatch, {page: list(full_page) for page in range(1, DISPATCH_MAX_PAGES + 2)})
+
+    assert XuchangScreenSnapshotFetcher()._alert_dispatch([{"episode_id": None}]) == {}
+    assert calls == []
+
+    assert XuchangScreenSnapshotFetcher()._alert_dispatch([
+        {"episode_id": "ep-1", "started_at": "not-a-time"},
+    ]) == {}
+    assert [call["page"] for call in calls] == list(range(1, DISPATCH_MAX_PAGES + 1))
+    # 起始时间解析不出时不设下界，只按最新优先扫描
+    assert calls[0]["started_after"] is None
+
+
+async def test_dispatch_lookup_failure_keeps_alert_list(monkeypatch, registry):
+    """通报查库失败只让告警不可展开，不能连带丢掉告警列表。"""
+    _write_episode_state(registry, {"active": [{
+        "episode_id": "ep-1", "station_id": "1008A", "station_name": "许昌学院",
+        "status": "active", "started_at": "2026-10-24T10:00:00",
+        "last_seen_at": "2026-10-24T14:00:00",
+    }], "history": []})
+    fetcher = _make_fetcher(monkeypatch, _default_handlers())
+
+    def boom(self, alerts):
+        raise RuntimeError("数据库连接超时")
+
+    monkeypatch.setattr(XuchangScreenSnapshotFetcher, "_alert_dispatch", boom)
+    result = await fetcher.fetch_and_store()
+
+    snapshot = json.loads(
+        (registry / SNAPSHOT_DIR / SNAPSHOT_FILE).read_text(encoding="utf-8")
+    )
+    assert [item["episode_id"] for item in snapshot["alerts"]] == ["ep-1"]
+    assert snapshot["alerts"][0]["dispatch"] is None
+    assert "数据库连接超时" in snapshot["errors"]["alert_dispatch"]
+    assert result["segments_failed"] == ["alert_dispatch"]
+    assert result["alerts_with_dispatch"] == 0
+
+
+@pytest.mark.parametrize("kind", ["township", "office"])
+async def test_five_minute_map_keeps_each_stations_latest_slot(monkeypatch, kind):
+    fetcher = XuchangScreenSnapshotFetcher(now_factory=lambda: NOW)
+    older = "2026-10-24T14:30:00.000"
+    rows = [
+        {"stationName": "禹州市范坡镇" if kind == "township" else "魏都区丁庄街道办事处",
+         "dataTime": TOWN_SLOT, "avgPm25": 61, "avgPm10": 90},
+        {"stationName": "禹州市顺店镇" if kind == "township" else "魏都区北大街道办事处",
+         "dataTime": older, "avgPm25": 20, "avgPm10": 30},
+        {"stationName": "禹州市范坡镇" if kind == "township" else "魏都区丁庄街道办事处",
+         "dataTime": older, "avgPm25": 10, "avgPm10": 20},
+    ]
+
+    async def fake_load(_query):
+        return _cube_rows("TownFiveMinute" if kind == "township" else "OfficeFiveMinute", {}) + [
+            {f"{'TownFiveMinute' if kind == 'township' else 'OfficeFiveMinute'}.{key}": value
+             for key, value in row.items()} for row in rows
+        ]
+
+    monkeypatch.setattr("app.fetchers.xuchang_screen_snapshot.cube_load", fake_load)
+    stations = await (fetcher._township_stations() if kind == "township" else fetcher._office_stations())
+    assert len(stations) == 2
+    assert stations[0]["pm25"] == 61
+    assert stations[0]["data_time"] == TOWN_SLOT
+    assert stations[1]["pm25"] == 20
+    assert stations[1]["data_time"] == older
+
+
+def test_screen_snapshot_fetcher_is_registered_for_xuchang():
+    from types import SimpleNamespace
+
+    from app.services import lifecycle_manager
+
+    context = SimpleNamespace(
+        enabled_modules={"legacy", "xuchang-air-quality"},
+        manifest=SimpleNamespace(
+            backend=SimpleNamespace(
+                fetchers=["xuchang_screen_snapshot_fetcher"],
+                weather_history=None,
+            )
+        ),
+    )
+    fetchers = lifecycle_manager._configured_fetchers(context)
+
+    assert [fetcher.name for fetcher in fetchers] == ["xuchang_screen_snapshot_fetcher"]
+    assert fetchers[0].schedule == "6-56/5 * * * *"
+
+
+def test_assets_scanner_picks_latest_per_kind_with_window(registry, monkeypatch):
+    from app.fetchers.xuchang_screen_snapshot import (
+        ASSETS_PER_KIND,
+        XuchangScreenSnapshotFetcher as F,
+    )
+    import os
+
+    now_ts = NOW.timestamp()
+    transport_dir = registry / "xuchang_transport_analysis" / "20261024"
+    transport_dir.mkdir(parents=True, exist_ok=True)
+    gems_dir = registry / "satellite" / "gems" / "xuchang"
+    gems_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir = registry / "xuchang_transport_analysis" / "20260101"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+
+    paths = {
+        transport_dir / "job-a.regional-paths.png": now_ts - 100,
+        transport_dir / "job-a.local-enterprise.png": now_ts - 200,
+        gems_dir / "gems_AOD_xuchang_20261024100000.png": now_ts - 300,
+        stale_dir / "job-old.regional-paths.png": now_ts - 200 * 86400,
+    }
+    for path, mtime in paths.items():
+        path.write_bytes(b"png")
+        os.utime(path, (mtime, mtime))
+
+    # 超出每类上限的多余文件
+    extra = transport_dir / "job-b.regional-paths.png"
+    extra.write_bytes(b"png")
+    os.utime(extra, (now_ts - 50, now_ts - 50))
+
+    fetcher = F(now_factory=lambda: NOW)
+    assets = fetcher._assets()
+
+    kinds = [item["kind"] for item in assets]
+    assert kinds.count("transport") <= ASSETS_PER_KIND
+    assert "gems" in kinds
+    # 窗口外的旧文件不入快照
+    assert all("job-old" not in item["asset_path"] for item in assets)
+    # 按 mtime 倒序，最新的 job-b 优先于 job-a
+    assert assets[0]["asset_path"].endswith("job-b.regional-paths.png")

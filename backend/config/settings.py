@@ -130,9 +130,14 @@ class Settings(BaseSettings):
         default="Src", description="站点小时抓取口径：Src=原始；App=审核后"
     )
     zhongda_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
-    zhongda_login_retries: int = Field(default=8, ge=1, le=30, description="验证码 OCR 重试次数")
+    zhongda_login_retries: int = Field(
+        default=3,
+        ge=1,
+        le=30,
+        description="单次登录尝试上限；平台连续失败3次即锁10分钟，重试过多会自我续锁",
+    )
 
-    # 空气质量信息联网系统（旧云平台，许昌乡镇站 5 分钟/小时/日数据替代源）。
+    # 空气质量信息联网系统（许昌市空气质量管控平台，许昌乡镇站 5 分钟/小时/日数据替代源）。
     # TownStationData 2026-10-21 起停更后启用；账号密码环境变量注入。
     town_cloud_api_base_url: str = Field(default="http://117.159.53.11:60601")
     town_cloud_username: str = Field(default="")
@@ -150,6 +155,36 @@ class Settings(BaseSettings):
         ge=7,
         le=365,
         description="5 分钟数据保留天数，超过即删除",
+    )
+    town_hour_lookback_hours: int = Field(
+        default=30,
+        ge=6,
+        le=720,
+        description="乡镇站小时数据回看窗口（小时），覆盖平台迟到发布与事后修正",
+    )
+    town_day_lookback_days: int = Field(
+        default=16,
+        ge=2,
+        le=180,
+        description="乡镇站日数据回看窗口（天），覆盖跨日补审与事后修正",
+    )
+    office_five_minute_lookback_minutes: int = Field(
+        default=180,
+        ge=15,
+        le=4320,
+        description="办事处站 5 分钟数据回看窗口（分钟）；平台限制单次查询窗口 ≤ 3 天",
+    )
+    shengkong_hour_lookback_hours: int = Field(
+        default=30,
+        ge=6,
+        le=720,
+        description="省控站小时数据回看窗口（小时），覆盖平台迟到发布与事后修正",
+    )
+    oldcloud_extra_retention_days: int = Field(
+        default=30,
+        ge=7,
+        le=365,
+        description="办事处 5 分钟/省控小时数据保留天数，超过即删除",
     )
 
     # 助手模式后台委派（run_in_background）在交付边界的等待上限：
@@ -287,6 +322,21 @@ class Settings(BaseSettings):
             "静态直连令牌：非空时允许携带 ?access_token= 的 GET 请求免网关登录"
             "访问 dashboard_api_prefix 下的只读接口（大屏设备开机即显）；"
             "空=禁用（默认）。路由层仍需复核同一令牌"
+        ),
+    )
+    xuchang_wechat_push_api_prefix: str = Field(
+        default="",
+        description=(
+            "部署级机器令牌放行的 API 前缀（如 /api/xuchang-wechat-push）；"
+            "与 xuchang_wechat_push_token 成对配置，空=禁用（默认）"
+        ),
+    )
+    xuchang_wechat_push_token: str = Field(
+        default="",
+        description=(
+            "静态机器令牌：非空时允许携带 Authorization: Bearer 的 GET/POST 免"
+            "网关登录访问 xuchang_wechat_push_api_prefix 下的接口（微信群 RPA "
+            "推送 agent 取消息/回执）；空=禁用（默认）。路由层仍需复核同一令牌"
         ),
     )
     auth_docs_public: bool = Field(

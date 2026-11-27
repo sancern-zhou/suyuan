@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
+import numpy as np
 import pytest
 
 from app.scenarios.xuchang_station_deviation.service import (
@@ -9,6 +10,21 @@ from app.scenarios.xuchang_station_deviation.service import (
     detect_station_deviations,
     evaluate_adverse_meteorology,
 )
+
+
+def _capture_chart_figure(monkeypatch) -> dict:
+    """捕获 write_*_chart 最终 savefig 前的 Figure，供断言图形内容。"""
+    from matplotlib.figure import Figure
+
+    captured: dict = {}
+    original = Figure.savefig
+
+    def _capture(self, *args, **kwargs):
+        captured["fig"] = self
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", _capture)
+    return captured
 
 
 def test_aqi_is_mapped_to_dynamic_threshold_level():
@@ -162,30 +178,40 @@ def test_marked_minute_value_is_exempt_from_alert_calculation():
 
 
 @pytest.mark.asyncio
-async def test_run_attaches_daily_pollution_source_features(tmp_path):
-    rows = [
-        {**_row("a", 40), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
-         "pm10": 50, "so2": 2, "no2": 10, "co": 0.3},
-        {**_row("b", 10), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
-         "pm10": 20, "so2": 2, "no2": 10, "co": 0.3},
-        {**_row("c", 10), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
-         "pm10": 20, "so2": 2, "no2": 10, "co": 0.3},
-        {**_row("a", 100), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
-         "pm10": 120, "so2": 2, "no2": 10, "co": 0.3},
-        {**_row("a", 100), "data_source": "minute", "data_time": datetime(2026, 8, 4, 8, 5),
-         "pm10": 120, "so2": 2, "no2": 10, "co": 0.3},
-    ]
+async def test_run_sudden_rise_alert_carries_source_features(tmp_path):
+    # service 层按国控站点白名单过滤，须使用规范站点编码。
+    stations = ("1003A", "1005A", "1008A", "1009A", "1011A", "1012A")
+    rows = []
+    # 上一完整小时行：提供站点 × 污染物选档（PM10=80 → 良档）。
+    for sid in stations:
+        rows.append({**_row(sid, 80), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7), "aqi": 80})
+    # 历史 3 个连续 5 分钟槽：全部 40（DS 基线）。
+    for minute in (50, 55, 0):
+        for sid in stations:
+            rows.append({**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 8, 4, 7, minute) if minute else datetime(2026, 8, 4, 8, 0)})
+    # 当前 5 分钟槽：1003A 站 PM10 = 200（Δ160 ≥ max(40×0.3, 15)=15 → DS）。
+    # CO 本底 0.5 mg/m³，避免 CO 同窗口抢主告警。
+    for sid in stations:
+        value = 200 if sid == "1003A" else 40
+        row = {**_row(sid, value), "data_source": "minute", "data_time": datetime(2026, 8, 4, 8, 5)}
+        row["co"] = 0.5
+        rows.append(row)
     service = XuchangStationDeviationAlertService(output_root=tmp_path)
-    service.load_station_rows = lambda timestamp: (rows, {"hour": 3, "minute": 3})
+    service.load_station_rows = lambda timestamp: (rows, {"hour": 6, "minute": 6})
 
     result = await service.run(datetime(2026, 8, 4, 8, 6))
 
-    alert = next(item for item in result["alerts"] if item["station_id"] == "a")
+    pushed = result["alerts"]
+    assert pushed, "单点突升应产生推送"
+    alert = next(item for item in pushed if item["station_id"] == "1003A" and item["rule_type"] == "sudden_rise")
+    assert alert["air_quality_level"] == "良"
+    assert alert["detail"]["threshold"] == 15.0
     features = alert["pollutant_source_features"]
     assert features["status"] == "calculated"
-    assert features["sample_count"] == 3
     assert "classification" in features
     assert "minute pollutants" in features["granularity"]
+    # 同窗口同站的 OL 需 2 个窗口确认，本槽只记 streak，不产生并发规则。
+    assert result["suppressed_alerts"] == []
 
 
 def _alert(station_id: str, pollutant: str) -> dict:
@@ -255,18 +281,138 @@ def test_multifactor_snapshot_prefers_slot_pm25_over_previous_hour():
     assert latest["a"]["PM2.5"] == (datetime(2026, 9, 12, 21, 35), 52.0)
 
 
+def test_timeseries_chart_breaks_line_at_marked_slot(tmp_path, monkeypatch):
+    # 带质控标识的 5 分钟数据视为无效：该槽不画值，折线在标识处断开不连线。
+    captured = _capture_chart_figure(monkeypatch)
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    base = datetime(2026, 9, 12, 21, 25)
+    rows = [
+        {**_row("a", 40), "data_source": "minute", "data_time": base},
+        {**_row("a", 45), "data_source": "minute", "data_time": base + timedelta(minutes=5), "pm10_mark": "质控"},
+        {**_row("a", 50), "data_source": "minute", "data_time": base + timedelta(minutes=10)},
+    ]
+    alert = {**_alert("a", "PM10"), "measurement_granularity": "5min", "rule_type": "sudden_rise"}
+
+    path = service.write_timeseries_chart(alert, rows)
+
+    assert path is not None and path.exists()
+    line = next(item for item in captured["fig"].axes[0].lines if item.get_label() == "a")
+    ydata = np.asarray(line.get_ydata(), dtype=float)
+    assert not np.isnan(ydata[0]) and np.isnan(ydata[1]) and not np.isnan(ydata[2])
+
+
+def test_timeseries_chart_returns_none_when_all_points_marked(tmp_path):
+    # 全部数据点带标识 → 图上无有效数据，不产出图表。
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    base = datetime(2026, 9, 12, 21, 25)
+    rows = [
+        {**_row("a", 40), "data_source": "minute", "data_time": base, "pm10_mark": "质控"},
+        {**_row("a", 45), "data_source": "minute", "data_time": base + timedelta(minutes=5), "pm10_mark": "质控"},
+    ]
+    alert = {**_alert("a", "PM10"), "measurement_granularity": "5min", "rule_type": "sudden_rise"}
+
+    assert service.write_timeseries_chart(alert, rows) is None
+
+
+def test_timeseries_chart_breaks_line_at_marked_hour_value(tmp_path, monkeypatch):
+    # PM2.5 小时告警：小时表的质控标记（零值校准）同样留空断线，
+    # 不再画 0 值并把前后有效点连线。
+    captured = _capture_chart_figure(monkeypatch)
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    rows = [
+        {**_row("a", 40), "data_source": "hour", "data_time": datetime(2026, 9, 12, 10)},
+        {**_row("a", 0), "data_source": "hour", "data_time": datetime(2026, 9, 12, 11), "pm25_mark": "BB"},
+        {**_row("a", 45), "data_source": "hour", "data_time": datetime(2026, 9, 12, 12)},
+    ]
+    alert = {**_alert("a", "PM2.5"), "measurement_granularity": "hour", "rule_type": "sudden_rise"}
+
+    path = service.write_timeseries_chart(alert, rows)
+
+    assert path is not None and path.exists()
+    line = next(item for item in captured["fig"].axes[0].lines if item.get_label() == "a")
+    ydata = np.asarray(line.get_ydata(), dtype=float)
+    assert ydata[0] == 40.0 and np.isnan(ydata[1]) and ydata[2] == 45.0
+
+
+def test_multifactor_table_renders_marked_value_blank(tmp_path, monkeypatch):
+    # 带标识数据直接空着（—，与缺测同口径），不再显示灰斜体数值。
+    captured = _capture_chart_figure(monkeypatch)
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    rows = [
+        {**_row("a", 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35),
+         "so2": 30, "so2_mark": "校准", "no2": 80},
+        {**_row("b", 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35),
+         "so2": 30, "no2": 80},
+    ]
+
+    path = service.write_multifactor_table([_alert("a", "NO2"), _alert("b", "SO2")], rows)
+
+    assert path is not None and path.exists()
+    table = captured["fig"].axes[0].tables[0]
+    # 列序 = 站点 + (PM2.5, PM10, SO2, NO2, CO, O3)；行序 = sorted(station_ids)。
+    assert table[(1, 3)].get_text().get_text() == "—"  # a 的 SO2 带标识 → 空着
+    assert table[(1, 4)].get_text().get_text() == "80.00"  # a 的 NO2 正常
+    assert table[(2, 3)].get_text().get_text() == "30.00"  # b 的 SO2 正常
+
+
 @pytest.mark.asyncio
-async def test_run_nox_slot_alerts_only_through_no2_lane(tmp_path):
+async def test_run_screen_minute_pollutants_through_dedicated_lanes(tmp_path):
+    # 分钟表只有 4 因子通道（PM10/SO2/NO2/CO）；O3 暂不纳入，NOX 无独立
+    # 通道，PM2.5 只在整点槽走小时版。1003A 站 NO2=100（优档：40→优）：
+    # Δ60 ≥ max(40×0.5, 10)=20 → 单点突升。
+    stations = ("1003A", "1005A", "1008A", "1009A", "1011A", "1012A")
     rows = []
-    for sid, no2_value in (("a", 100), ("b", 40), ("c", 40)):
+    for sid in stations:
+        rows.append({**_row(sid, 40), "data_source": "hour", "data_time": datetime(2026, 9, 12, 20), "aqi": 40})
+    for minute in (20, 25, 30):
+        for sid in stations:
+            rows.append({**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, minute)})
+    for sid in stations:
         row = {**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)}
-        row["no2"] = no2_value
+        row["no2"] = 100 if sid == "1003A" else 40
+        row["co"] = 0.5
         rows.append(row)
     service = XuchangStationDeviationAlertService(output_root=tmp_path)
-    service.load_station_rows = lambda timestamp: (rows, {"hour": 3, "minute": 3})
+    service.load_station_rows = lambda timestamp: (rows, {"hour": 6, "minute": 6})
 
     result = await service.run(datetime(2026, 9, 12, 21, 36))
 
-    pollutants = {a["target_pollutant"] for a in result["alerts"] if a["station_id"] == "a"}
+    alerts_for_a = [a for a in result["alerts"] if a["station_id"] == "1003A"]
+    pollutants = {a["target_pollutant"] for a in alerts_for_a}
     assert pollutants == {"NO2"}
+    assert all(a["rule_type"] == "sudden_rise" for a in alerts_for_a)
+    assert all("alert_level" not in a for a in alerts_for_a)
     assert all("multifactor_table_path" not in a for a in result["alerts"])
+
+
+@pytest.mark.asyncio
+async def test_run_pm25_hour_chart_limits_to_six_hour_window(tmp_path, monkeypatch):
+    # PM2.5 小时告警图表只画过去 6 小时（告警槽为最后一个点）：
+    # 00/01 点的旧行留在规则判定里，但不进图表。
+    captured = _capture_chart_figure(monkeypatch)
+
+    stations = ("1003A", "1005A", "1008A", "1009A", "1011A", "1012A")
+    rows = []
+    for hour_value in (0, 1):
+        for sid in stations:
+            rows.append({**_row(sid, 40), "data_source": "hour", "data_time": datetime(2026, 9, 12, hour_value)})
+    for hour_value in (3, 4, 5, 6, 7):
+        for sid in stations:
+            value = 50.0 if (hour_value == 7 and sid == "1003A") else 40.0
+            rows.append({**_row(sid, value), "data_source": "hour", "data_time": datetime(2026, 9, 12, hour_value)})
+    # 告警槽 08 点：1003A 50→65（轻度档阈值 12.5，Δ15 → DS）。
+    for sid in stations:
+        value = 65.0 if sid == "1003A" else 40.0
+        rows.append({**_row(sid, value), "data_source": "hour", "data_time": datetime(2026, 9, 12, 8)})
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    service.load_station_rows = lambda timestamp: (rows, {"hour": 6, "minute": 6})
+
+    result = await service.run(datetime(2026, 9, 12, 9, 10), granularity="hour")
+
+    pushed = result["alerts"]
+    assert pushed and all(a["measurement_granularity"] == "hour" for a in pushed)
+    assert all(a["timeseries_chart_path"] for a in pushed)
+    line = next(item for item in captured["fig"].axes[0].lines if item.get_label() == "1003A")
+    assert [ts.replace(tzinfo=None) for ts in line.get_xdata()] == [
+        datetime(2026, 9, 12, hour_value) for hour_value in (3, 4, 5, 6, 7, 8)
+    ]

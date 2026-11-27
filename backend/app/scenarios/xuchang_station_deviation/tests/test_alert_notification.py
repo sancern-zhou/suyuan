@@ -1,4 +1,8 @@
-"""Tests for the deterministic station-alert notification workflow."""
+"""Tests for the deterministic station-alert notification workflow.
+
+推送文案为 6 条目紧凑格式（【浓度告警】+ 编号条目），全部由代码从证据包
+确定性渲染，不再经 LLM 生成。
+"""
 
 import asyncio
 import json
@@ -7,6 +11,7 @@ import pytest
 
 from app.scenarios.xuchang_station_deviation.alert_notification import (
     _collect_media,
+    compose_station_alert_fallback_message,
     compose_station_alert_message,
     run_station_alert_workflow,
 )
@@ -87,68 +92,464 @@ def _package(alerts: list[dict], media: list[str] | None = None) -> dict:
     }
 
 
-def test_compose_deviation_notification_covers_all_sections():
-    package = _package([
+def test_compose_deviation_notification_compact_six_items():
+    message = compose_station_alert_message(_package([
         {"alert": _deviation_alert(), "evidence": _deviation_evidence()},
-    ])
+    ]))
+    lines = message.splitlines()
 
-    message = compose_station_alert_message(package)
-
-    assert message.startswith("【许昌站点污染抬升告警｜开发区｜NO2】")
-    for section in ("一、告警概况", "二、监测趋势", "三、气象与质控", "四、污染特征", "五、调度指令"):
-        assert section in message
-    assert "单站相对区域偏高" in message
-    assert "均值19.4" in message
-    assert "相对偏高80.4%" in message
-    # 观测时间必须换算为本地时区（02:00Z -> 10:00+08），且使用告警前最近一条
-    assert "2026-09-13 10:00观测" in message
-    assert "风来东东北方向（68°）" not in message  # 必须选 213° 那条而非更早记录
-    assert "南西南方向（213°）" in message
-    assert "拥堵、怠速、机械和燃烧" in message
-    assert "不作为来源认定或同步上升证据" in message
+    assert lines[0] == "【浓度告警】1.告警站点：开发区"
+    assert lines[1] == "2.告警时间：2026年09月13日12:00"
+    assert lines[2] == "3.污染指标：NO2"
+    assert lines[3] == (
+        "4.告警情况：开发区实测35.0微克/立方米，周边5站均值19.4，"
+        "绝对偏差15.6，相对偏差80.4%"
+    )
+    assert lines[4] == "5.气象情况：温度22.2℃，相对湿度77%，西南偏南风，风速0.8米/秒"
+    assert lines[5] == "6.质控关联：告警站点及因子均无质控标记记录"
+    # 观测时间必须换算为本地时区且取告警前最近一条（213° 那条而非更早的 68°）
+    assert "东北偏东风" not in message
     assert "backend/" not in message  # 不暴露本地路径
 
 
 def test_compose_rise_notification_uses_rise_indicators():
     alert = _deviation_alert(
         target_pollutant="PM10",
-        measurement_granularity="5min",
         station_value=180.0,
         rise_window_values=[120.0, 135.0, 150.0, 158.0, 166.0, 172.0, 180.0],
         total_rise_abs=60.0,
         total_rise_rate=0.5,
         rule="six_consecutive_5min_rises_and_pollutant_thresholds",
-        pollutant_source_features={"status": "not_calculated"},
     )
     message = compose_station_alert_message(_package([
         {"alert": alert, "evidence": _deviation_evidence()},
     ]))
 
-    assert "单站持续快速上升" in message
-    assert "从120连续6个5分钟节抬升至180" in message
-    assert "累计抬升60" in message and "累计涨幅50%" in message
-    assert "本次未计算污染组成特征" in message
-    assert "检查站点周边积尘、带泥和运输抛撒" in message
+    assert "4.告警情况：开发区实测180.0微克/立方米，30分钟内从120.0连续6个5分钟节抬升至180.0" in message
+    assert "累计抬升60.0（累计涨幅50.0%）" in message
 
 
-def test_multi_factor_episode_merges_into_one_notice(tmp_path):
+def test_hour_granularity_appends_to_pollutant_line():
+    alert = _deviation_alert(
+        measurement_granularity="hour",
+        rise_window_values=[20.0, 26.0, 35.0],
+        rule="six_consecutive_hourly_rises_and_pollutant_thresholds",
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+
+    assert "3.污染指标：NO2（小时数据）" in message
+    assert "从20.0连续2个小时节抬升至35.0" in message
+
+
+def test_upgrade_alert_prefixed_in_fact_sentence():
+    alert = _deviation_alert(is_upgrade=True)
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+
+    assert "4.告警情况：【升级】开发区实测35.0微克/立方米" in message
+    assert message.splitlines()[0] == "【浓度告警】1.告警站点：开发区"
+
+
+def test_renotify_alert_prefixed_in_fact_sentence():
+    # 滞回心跳的持续提醒：站名前加【持续】标记，区别于新事件。
+    alert = _deviation_alert(is_renotify=True)
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+
+    assert "4.告警情况：【持续】开发区实测35.0微克/立方米" in message
+
+
+def test_multi_factor_episode_merges_into_one_notice():
     pm10 = _deviation_alert(
         target_pollutant="PM10",
         station_value=180.0,
-        rule="relative_deviation > threshold AND absolute_delta > pollutant_absolute_threshold",
         pollutant_source_features={"status": "not_calculated"},
-        upwind_road_scope_image_path=None,
     )
     no2 = _deviation_alert()
     message = compose_station_alert_message(_package([
         {"alert": pm10, "evidence": _deviation_evidence()},
         {"alert": no2, "evidence": _deviation_evidence()},
     ]))
+    lines = message.splitlines()
 
-    assert "【许昌站点污染抬升告警｜开发区｜PM10、NO2】" in message
-    assert "合并为一条通报" in message
-    assert message.count("三、气象与质控") == 1  # 气象与质控只出现一次
-    assert "自行核实周边3公里范围" in message  # PM10 地图缺失时如实说明
+    assert lines[0] == "【浓度告警】1.告警站点：开发区"
+    assert lines[2] == "3.污染指标：PM10、NO2"
+    # 气象与质控只出现一次
+    assert sum(1 for line in lines if line.startswith("5.气象情况")) == 1
+    assert sum(1 for line in lines if line.startswith("6.质控关联")) == 1
+    assert "开发区实测180.0微克/立方米" in message
+    assert "开发区实测35.0微克/立方米" in message
+
+
+def test_region_merged_alerts_listed_in_notice():
+    primary = _deviation_alert(
+        target_pollutant="PM25",
+        station_value=95.0,
+        rule="six_consecutive_hourly_rises_and_pollutant_thresholds",
+        detail={
+            "region_stations": [
+                {"station_id": "1005A", "station_name": "文教园区", "station_value": 88.0},
+                {"station_id": "1008A", "station_name": "椹涧乡", "station_value": 82.0},
+            ]
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": primary, "evidence": _deviation_evidence()},
+    ]))
+    lines = message.splitlines()
+
+    assert lines[0] == "【浓度告警】1.告警站点：开发区，文教园区，椹涧乡"
+    assert "文教园区实测88.0微克/立方米" in message
+    assert "椹涧乡实测82.0微克/立方米" in message
+
+
+def test_region_merged_sudden_rise_facts():
+    # DS 区域合并：合并站带基线抬升信息，逐站事实句分号衔接。
+    primary = _deviation_alert(
+        target_pollutant="PM25",
+        station_value=57.0,
+        rule_type="sudden_rise",
+        rule="sudden_rise",
+        rule_label="单点突升",
+        detail={
+            "baseline": 40.0,
+            "delta": 17.0,
+            "region_stations": [
+                {
+                    "station_id": "1012A", "station_name": "望田路111号",
+                    "station_value": 55.0, "delta": 15.0, "baseline": 40.0,
+                },
+            ],
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": primary, "evidence": _deviation_evidence()},
+    ]))
+
+    assert "4.告警情况：开发区实测57.0微克/立方米，较近段基线40.0抬升17.0；" in message
+    assert "望田路111号实测55.0微克/立方米，较近段基线40.0抬升15.0" in message
+
+
+def test_multi_station_rise_facts():
+    # MR 多站同步抬升：主站事实 + 共N站口径 + 覆盖说明；其余站进区域清单句。
+    alert = _deviation_alert(
+        target_pollutant="PM10",
+        station_id="1005A",
+        station_name="市一中",
+        station_value=38.0,
+        rule_type="multi_station_rise",
+        rule="multi_station_rise",
+        rule_label="多站同步抬升",
+        detail={
+            "path": "co_deviation",
+            "involved_stations": [
+                {"station_id": "1005A", "station_name": "市一中", "station_value": 38.0,
+                 "peer_mean": 25.0, "delta": 13.0, "threshold": 12.5},
+                {"station_id": "1012A", "station_name": "望田路111号", "station_value": 37.0,
+                 "peer_mean": 25.2, "delta": 11.8, "threshold": 12.6},
+            ],
+            "region_stations": [
+                {"station_id": "1012A", "station_name": "望田路111号", "station_value": 37.0,
+                 "peer_mean": 25.2, "delta": 11.8},
+            ],
+            "mr_tier": "push",
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+    lines = message.splitlines()
+
+    assert lines[0] == "【浓度告警】1.告警站点：市一中，望田路111号"
+    assert "市一中实测38.0微克/立方米，周边站均值25.0，偏高13.0" in message
+    assert "共2站一致偏高，已覆盖涉事站点单站告警" in message
+    assert "望田路111号实测37.0微克/立方米" in message
+
+    # 非区域合并告警不出现合并站
+    plain = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": _deviation_evidence()},
+    ]))
+    assert "望田路111号" not in plain
+
+
+def test_multi_station_co_rise_region_facts_use_rise_value():
+    alert = _deviation_alert(
+        target_pollutant="PM2.5",
+        station_value=33.0,
+        rule_type="multi_station_rise",
+        rule="multi_station_rise",
+        detail={
+            "path": "co_rise",
+            "involved_stations": [
+                {"station_id": "1003A", "station_name": "开发区", "station_value": 33.0,
+                 "baseline": 23.0, "rise": 10.0},
+                {"station_id": "1008A", "station_name": "许昌学院", "station_value": 22.0,
+                 "baseline": 18.0, "rise": 4.0},
+            ],
+            "region_stations": [
+                {"station_id": "1008A", "station_name": "许昌学院", "station_value": 22.0,
+                 "baseline": 18.0, "rise": 4.0},
+            ],
+        },
+    )
+
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+
+    assert "许昌学院实测22.0微克/立方米，较近段基线18.0抬升4.0" in message
+    assert "抬升缺测" not in message
+
+
+def test_multi_station_regional_trend_message():
+    alert = _deviation_alert(
+        target_pollutant="PM2.5", station_id="1012A", station_name="望田路111号",
+        station_value=34.0, rule_type="multi_station_rise", rule="multi_station_rise",
+        detail={
+            "path": "regional_trend", "trend_hold_slots": 1,
+            "involved_stations": [
+                {"station_id": "1012A", "station_name": "望田路111号",
+                 "station_value": 34.0, "baseline": 30.0, "rise": 4.0},
+                {"station_id": "1005A", "station_name": "市一中",
+                 "station_value": 28.0, "baseline": 25.0, "rise": 3.0},
+            ],
+            "region_stations": [
+                {"station_id": "1005A", "station_name": "市一中",
+                 "station_value": 28.0, "baseline": 25.0, "rise": 3.0},
+            ],
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": alert, "evidence": _deviation_evidence()},
+    ]))
+    assert "望田路111号实测34.0微克/立方米，较基线30.0抬升4.0" in message
+    assert "本小时同步抬升，共2站持续上升" in message
+
+
+def test_fallback_message_matches_main_renderer():
+    package = _package([{"alert": _deviation_alert(), "evidence": _deviation_evidence()}])
+
+    assert compose_station_alert_fallback_message(package) == compose_station_alert_message(package)
+
+
+def test_qc_marks_at_alert_station_and_pollutant_are_named():
+    evidence = _deviation_evidence(
+        observed_meteorology={"status": "unavailable", "station_hour_records": []},
+    )
+    evidence["computed_indicators"]["station_5min_process"]["marked_quality_records"] = [
+        {"time": "2026-09-13T11:55:00+08:00", "station_id": "1003A", "mark": "质控"},
+        {"time": "2026-09-13T12:00:00+08:00", "station_id": "1003A", "mark": "零校准"},
+    ]
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "5.气象情况：暂无可用气象观测" in message
+    assert (
+        "6.质控关联：开发区NO2存在2条质控标记记录（最近09-13 12:00），"
+        "相关时段数据可能受运维质控影响，须与污染事实区分" in message
+    )
+
+
+def test_qc_only_other_pollutant_mark_at_alert_station_does_not_claim_impact():
+    evidence = _deviation_evidence(
+        air_quality_context={
+            "maintenance_qc_review": {
+                "required": True,
+                "records": [{"time": "2026-09-13T12:00:00+08:00", "marks": {"pm10_mark": "质控"}}],
+            }
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+
+
+def test_qc_only_other_station_mark_does_not_claim_impact():
+    evidence = _deviation_evidence(
+        air_quality_context={
+            "maintenance_qc_review": {
+                "required": True,
+                "records": [
+                    {"time": "2026-09-13T12:00:00+08:00", "station_id": "1005A", "marks": {"no2_mark": "质控"}}
+                ],
+            }
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+
+
+def test_qc_matching_station_and_pollutant_claim_impact():
+    evidence = _deviation_evidence(
+        air_quality_context={
+            "maintenance_qc_review": {
+                "required": True,
+                "station_id": "1003A",
+                "pollutant_mark_field": "no2_mark",
+                "records": [
+                    {"time": "2026-09-13T11:55:00+08:00", "station_id": "1003A", "source": "minute",
+                     "marks": {"no2_mark": "质控"}},
+                    {"time": "2026-09-13T12:00:00+08:00", "station_id": "1003A", "source": "hour",
+                     "marks": {"no2_mark": "零校准"}},
+                ],
+            }
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert (
+        "6.质控关联：开发区NO2存在2条质控标记记录（最近09-13 12:00），"
+        "相关时段数据可能受运维质控影响，须与污染事实区分" in message
+    )
+
+
+def test_qc_citywide_legacy_records_are_filtered_to_alert_scope():
+    """旧证据包的 maintenance_qc_review 为全市任站任因子口径：渲染期过滤后，
+    只有告警站点+告警因子的记录计入，且无命中时不再误报。"""
+    legacy_records = [
+        {"time": "2026-09-13T11:50:00+08:00", "station_id": "1005A", "marks": {"o3_mark": "质控"}},
+        {"time": "2026-09-13T11:55:00+08:00", "station_id": "1003A", "marks": {"pm10_mark": "零校准"}},
+        {"time": "2026-09-13T12:00:00+08:00", "station_id": "1003A", "marks": {"no2_mark": "质控"}},
+    ]
+    evidence = _deviation_evidence(
+        air_quality_context={"maintenance_qc_review": {"required": True, "records": legacy_records}},
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+    assert (
+        "6.质控关联：开发区NO2存在1条质控标记记录（最近09-13 12:00）" in message
+    )
+
+
+def test_qc_old_record_from_previous_day_does_not_claim_impact():
+    evidence = _deviation_evidence(
+        air_quality_context={
+            "maintenance_qc_review": {
+                "required": True,
+                "records": [{
+                    "time": "2026-09-12T21:00:00+08:00",
+                    "station_id": "1003A",
+                    "source": "hour",
+                    "marks": {"no2_mark": "质控"},
+                }],
+            }
+        },
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+    assert "存在1条质控标记记录" not in message
+
+
+def test_qc_minute_record_older_than_one_hour_does_not_claim_impact():
+    evidence = _deviation_evidence()
+    evidence["computed_indicators"]["station_5min_process"]["marked_quality_records"] = [
+        {"time": "2026-09-13T10:59:59+08:00", "station_id": "1003A", "mark": "质控"},
+    ]
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": evidence},
+    ]))
+
+    assert "6.质控关联：告警站点及因子均无质控标记记录" in message
+
+
+def _traffic_evidence(slot_at="2026-09-13T11:54:00+08:00"):
+    return _deviation_evidence(traffic_context={
+        "status": "success",
+        "snapshots": [{
+            "slot_at": slot_at,
+            "evaluation_desc": "严重拥堵",
+            "sections": [
+                {"road_name": "建安大道", "speed_km_h": 12.5,
+                 "congestion_distance_m": 650, "section_desc": "西向东"},
+                {"road_name": "学院路", "speed_km_h": 18.0,
+                 "congestion_distance_m": 300},
+            ],
+        }],
+    })
+
+
+def test_no2_notice_appends_latest_pre_alert_traffic_snapshot():
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": _traffic_evidence()},
+    ]))
+
+    assert "7.周边路况（百度地图）：11:54（较告警早6分钟）开发区周边1公里严重拥堵；" in message
+    assert "建安大道（车速12.5公里/小时、拥堵650米、西向东）" in message
+    assert "学院路（车速18.0公里/小时、拥堵300米）" in message
+    assert "仅作现场排查参考，不作为污染来源判定依据" in message
+
+
+def test_traffic_clause_supports_co_and_deduplicates_same_station():
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(target_pollutant="CO", station_value=1.5),
+         "evidence": _traffic_evidence()},
+        {"alert": _deviation_alert(target_pollutant="NO2"),
+         "evidence": _traffic_evidence()},
+    ]))
+    assert message.count("7.周边路况（百度地图）") == 1
+    assert message.count("开发区周边1公里") == 1
+
+
+def test_traffic_clause_summarizes_congestion_duration_and_clear_window():
+    congested = _traffic_evidence()
+    snapshots = congested["traffic_context"]["snapshots"]
+    snapshots.append({"slot_at": "2026-09-13T11:48:00+08:00", "evaluation_status": 3,
+                      "evaluation_desc": "拥堵", "congestion_section_count": 1, "sections": [{}]})
+    snapshots.append({"slot_at": "2026-09-13T11:42:00+08:00", "evaluation_status": 3,
+                      "evaluation_desc": "拥堵", "congestion_section_count": 1, "sections": [{}]})
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": congested},
+    ]))
+    assert "告警前18分钟窗口内3个时隙有缓行/拥堵记录，本次记录持续约18分钟" in message
+
+    clear = _traffic_evidence()
+    clear["traffic_context"]["snapshots"] = [
+        {"slot_at": "2026-09-13T11:54:00+08:00", "evaluation_status": 1,
+         "evaluation_desc": "畅通", "congestion_section_count": 0, "sections": []},
+        {"slot_at": "2026-09-13T11:48:00+08:00", "evaluation_status": 1,
+         "evaluation_desc": "畅通", "congestion_section_count": 0, "sections": []},
+        {"slot_at": "2026-09-13T11:42:00+08:00", "evaluation_status": 1,
+         "evaluation_desc": "畅通", "congestion_section_count": 0, "sections": []},
+    ]
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": clear},
+    ]))
+    assert "告警前18分钟窗口内3个时隙均未记录缓行/拥堵" in message
+
+
+def test_traffic_clause_omits_stale_future_missing_and_other_pollutants():
+    for slot_at in ("2026-09-13T11:30:00+08:00", "2026-09-13T12:06:00+08:00"):
+        message = compose_station_alert_message(_package([
+            {"alert": _deviation_alert(), "evidence": _traffic_evidence(slot_at)},
+        ]))
+        assert "周边路况" not in message
+    for evidence in (_deviation_evidence(), _deviation_evidence(
+            traffic_context={"status": "failed", "snapshots": []})):
+        message = compose_station_alert_message(_package([
+            {"alert": _deviation_alert(), "evidence": evidence},
+        ]))
+        assert "周边路况" not in message
+    message = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(target_pollutant="PM10"),
+         "evidence": _traffic_evidence()},
+    ]))
+    assert "周边路况" not in message
 
 
 def test_collect_media_deduplicates_and_keeps_existing_files(tmp_path):
@@ -194,17 +595,9 @@ def test_run_station_alert_workflow_delivers_composed_notice(tmp_path, monkeypat
         "app.scenarios.xuchang_station_deviation.alert_notification.EventTaskDelivery",
         _FakeDelivery,
     )
-
-    async def _fake_chat(messages, **kwargs):
-        assert messages[0]["role"] == "user"
-        assert "可信证据包" in messages[0]["content"]
-        assert '"alerts"' in messages[0]["content"]
-        assert "执行指令测试" in messages[0]["content"]
-        return {"content": [{"type": "text", "text": "LLM 生成的站点告警通报"}]}
-
     monkeypatch.setattr(
-        "app.services.llm_service.llm_service.chat_anthropic",
-        _fake_chat,
+        "app.scenarios.xuchang_station_deviation.wechat_push_queue.get_data_registry",
+        lambda: tmp_path,
     )
 
     from types import SimpleNamespace
@@ -218,11 +611,21 @@ def test_run_station_alert_workflow_delivers_composed_notice(tmp_path, monkeypat
 
     result = asyncio.run(run_station_alert_workflow(task=task, execution=execution, event=event))
 
+    expected_message = compose_station_alert_message(package)
     assert delivered["user_ids"] == ["app:android:android_demo"]
-    assert delivered["message"] == "LLM 生成的站点告警通报"
+    assert delivered["message"] == expected_message
+    assert delivered["message"].startswith("【浓度告警】")
     assert delivered["media"] == [str(chart)]
     assert "投递成功1个" in result["summary"]
+    assert result["final_message"] == expected_message
     assert result["tool_call_details"]["media_count"] == 1
+
+    # 文案定稿后同步入队微信群推送队列
+    from app.scenarios.xuchang_station_deviation import wechat_push_queue
+
+    pending = wechat_push_queue.list_pending_messages(root=tmp_path)
+    assert len(pending) == 1
+    assert pending[0]["text"] == expected_message
 
 
 def test_run_station_alert_workflow_requires_evidence_path():

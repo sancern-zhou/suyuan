@@ -109,6 +109,10 @@ REPORT_MATCH_ID_COLUMNS = ("UniqueCode", "StationCode", "DistrictCode", "CityCod
 # 报表预览的字符量上限，超出后减少预览行数并把完整数据落盘
 REPORT_PREVIEW_MAX_CHARS = 6000
 
+# 乡镇站视图已下线：数据走本地语义层 xuchang_cube_metrics（TownHour/TownDay）。
+# client 的 DATA_API_CODES 保留（station_catalog 目录构建与日报乡镇小时场景直连使用）。
+TOWN_DATA_VIEWS = frozenset({"v_t_d_app", "v_t_d_src", "v_t_h_app", "v_t_h_src"})
+
 _API_CODE_HINTS = {
     "region": "区域表（行政区划，含经纬度与气象编码）",
     "station": "站点表（站点名称/编码/坐标/地址）",
@@ -117,41 +121,41 @@ _API_CODE_HINTS = {
     "v_c_d_src_155": "城市日数据-原始155口径（非新国标替代口径，仅近半月少量，不作默认）",
     "v_s_d_app_145": "站点日数据-审核145口径",
     "v_s_d_src_145": "站点日数据-原始145口径",
-    "v_t_d_app": "乡镇日数据-审核",
-    "v_t_d_src": "乡镇日数据-原始",
-    "v_t_h_app": "乡镇小时数据-审核",
-    "v_t_h_src": "乡镇小时数据-原始",
 }
+
+# 各中台视图实测数据时间范围（查询窗口超出即空结果）；口径分段见 _API_CODE_HINTS
+VIEW_TIME_RANGES_NOTE = (
+    "\n\n【中台各视图数据时间范围】（实测，超出即空结果）："
+    "城市日按 v_c_d_sb_145（2021-07~2025-12）/v_c_d_sb_155（2026-01 起）口径分段；"
+    "站点日 v_s_d_* 为十四五口径。查询更早历史请改用 execute_crawler_sql_query（2016/2018 起长历史）。"
+)
 
 # 许昌空气质量查询的三条数据通道同属中大国发平台，中台工具承担中台独有口径
 DATA_SOURCE_NOTE = (
-    "【数据源归属与优先级】许昌空气质量数据实际有三个查询通道，且同属中大国发平台数据源，仅时间粒度与覆盖时段不同："
-    "①中大平台审核后数据（站点5分钟/站点小时/城市小时，近期高时效，审核后口径）；"
-    "②长历史采集库（城市小时/城市日/站点日等历史归档，时间跨度最长）；"
-    "③大气监测接口中台（本工具，区域/站点基础表、城市/站点/乡镇日时数据、同比报表）。"
-    "①②为第一优先级：用户问许昌空气质量数据时，优先走中大平台审核后数据与长历史采集库；"
-    "本工具用于中台独有口径（区域/站点基础表、乡镇日/小时数据、月度与年度报表统计），"
-    "以及①②未落库的时间段；不要用本工具重复查询①②已覆盖且口径一致的数据。"
+    "【数据源优先级】许昌数据三通道同属中大国发平台：①中大平台审核后数据（站点5分钟/小时、城市小时，"
+    "高时效）②长历史采集库（历史归档最长）③大气监测接口中台（本工具，区域/站点基础表、城市/站点日、"
+    "报表统计）。①②为第一优先级；本工具只查中台独有口径与①②未落库时段。"
+)
+
+# 状态口径默认实况，与原始/审核等其他维度独立
+STATE_CALIBER_NOTE = (
+    "【状态口径】用户未明确要求标况（标准状态/参比状态）时，仅查询并返回实况数据，不得并列返回两种口径；"
+    "仅用户明确要求标况或实况/标况对比时才查标况并分别标注。状态口径与原始/审核、实时/定版、考核口径不得混同；"
+    "数据源未说明差异原因时不得自行解释。"
 )
 
 # 官方口径唯一，不做跨源交叉比对
 OFFICIAL_CALIBER_NOTE = (
-    "【官方口径】中大国发平台是许昌空气质量数据的官方口径，也是唯一权威来源。"
-    "本工具返回的中台数据即官方口径，不要再为“验证”而引入其他数据源（外省平台、公开榜单、模式预报、"
-    "第三方接口、模型反演等）做交叉比对，也不要因外部数值不同就改写官方值或声明官方数据存疑。"
-    "只有用户明确要求对比不同来源时才做对比，并在回答中区分官方口径与参考来源。"
+    "【官方口径】中台返回即官方口径、唯一权威来源：勿引入外部源（榜单/模式/三方接口）交叉比对，"
+    "也不据此改写或质疑官方值；仅用户明确要求时才对比并区分口径。"
 )
 
 # 禁止用时/日数据自行汇总月度和年度统计
 AGGREGATION_RULE_NOTE = (
-    "【统计口径硬规则】禁止用小时数据、日数据自行汇总或计算月度、季度、半年、年度统计值"
-    "（包括均值、极值、有效天数、达标率、重污染天数、排名、同比等任何月度及以上指标）。"
-    "①中大平台审核后数据与②长历史采集库都是明细通道，不含月度及以上统计，"
-    "不能用来满足月度及以上统计需求，也不能用其明细自行汇总代替报表。"
-    "月度及以上统计一律直接查询平台已生成的统计报表接口 airdata_calc_report_summary，"
-    "用 report_time_type 指定粒度：4 月报、5 季度报、6 半年报、7 年报、8 任意时间段。"
-    "本接口只用于取明细/基础数据与中台独有口径；用户问“这个月/今年空气质量怎么样”、"
-    "月均浓度、年度排名、月度同比等时必须改用 airdata_calc_report_summary，不得自行汇总代替报表。"
+    "【统计口径硬规则】本接口与采集库均为明细通道：月均/季/半年/年、达标率、重污染天、"
+    "月度同比等月度及以上统计禁止从小时/日明细自算，一律调 airdata_calc_report_summary"
+    "（report_time_type 定粒度：4 月/5 季/6 半年/7 年/8 任意段）。"
+    "用户问“这个月/今年怎么样”等月度及以上问题时必须改用该接口。"
 )
 
 # 城市日数据按 timepoint 互斥分区，新国标默认口径
@@ -165,10 +169,7 @@ CITY_NEW_STANDARD_NOTE = (
 
 # 回答中必须回传数据源与口径，便于溯源
 DATA_SOURCE_DISCLOSURE_NOTE = (
-    "【数据源声明】回答中必须说明本次查询实际使用的数据源与口径，"
-    "写明数据源名称（大气监测接口中台 / 中大平台审核后数据 / 长历史采集库）、api_code 或表名、"
-    "国标口径（新国标/国标二 还是原始或旧口径）、时间范围与筛选条件；"
-    "混用多通道或跨分段查询时逐段说明。缺少该说明视为未完成查询。"
+    "【数据源声明】回答须说明实际数据源（中台/中大审核/采集库）与口径、时间范围；缺少视为未完成。"
 )
 
 
@@ -373,8 +374,11 @@ class QueryAirDataPlatformTool(LLMTool):
     """大气环境监测数据接口中台通用数据查询工具"""
 
     def __init__(self):
-        api_code_enum = list(ALL_API_CODES)
-        data_hint = "；".join(f"{code}={_API_CODE_HINTS[code]}" for code in DATA_API_CODES)
+        api_code_enum = [code for code in ALL_API_CODES if code not in TOWN_DATA_VIEWS]
+        data_hint = "；".join(
+            f"{code}={_API_CODE_HINTS[code]}" for code in DATA_API_CODES
+            if code not in TOWN_DATA_VIEWS
+        )
         function_schema = {
             "name": "query_airdata_platform",
             "description": (
@@ -382,18 +386,18 @@ class QueryAirDataPlatformTool(LLMTool):
                 f"可选接口：{'；'.join(f'{code}={_API_CODE_HINTS[code]}' for code in REFERENCE_API_CODES)}。"
                 f"空气质量数据接口：{data_hint}。"
                 f"{DATA_SOURCE_NOTE}"
+                f"{VIEW_TIME_RANGES_NOTE}"
+                f"{STATE_CALIBER_NOTE}"
                 f"{OFFICIAL_CALIBER_NOTE}"
                 f"{CITY_NEW_STANDARD_NOTE}"
                 f"{AGGREGATION_RULE_NOTE}"
                 f"{DATA_SOURCE_DISCLOSURE_NOTE}"
-                "数据接口输出 32 个字段：8 项污染物浓度（so2/no2/pm10/co/o3_8h/o3/pm2_5/no/nox）、"
-                "对应 *_mark 数据标记、*_iaqi 分指数、aqi、qualitytype 空气质量等级、primarypollutant 首要污染物；"
-                "name/code 为城市或站点或乡镇名称与编码，timepoint 为时间点（日粒度 yyyy-MM-dd，时粒度 yyyy-MM-dd HH）。"
-                "filters 多条件为 AND；field 必须是该接口可过滤字段，否则条件被静默忽略；"
-                "时间字段格式 yyyy-MM-dd 或 yyyy-MM-dd HH:mm:ss；同一字段可传多条（如 gte+lte）。"
-                "注意 v_t_d_app（乡镇日-审核）当前中台侧配置故障暂不可用，乡镇日数据请改用 v_t_d_src。"
-                "乡镇站/站点编码应先用 xuchang_station_catalog 解析，不要凭名称猜测编码。"
-                "自动翻页聚合，超过 24 行时完整数据落盘并返回 file_path。"
+                "数据接口输出 32 字段：8 项污染物浓度（so2/no2/pm10/co/o3_8h/o3/pm2_5/no/nox）+ "
+                "*_mark 标记 + *_iaqi 分指数 + aqi/qualitytype 等级/primarypollutant 首污；"
+                "name/code 名称编码、timepoint 时间（日 yyyy-MM-dd，时 yyyy-MM-dd HH）。"
+                "filters 多条件 AND；field 必须是可过滤字段（否则静默忽略）；"
+                "同字段可传多条（如 gte+lte）。站点编码先用 xuchang_station_catalog 解析，勿凭名称猜。"
+                "自动翻页聚合，>24 行完整数据落盘并返回 file_path。"
             ),
             "parameters": {
                 "type": "object",
@@ -572,51 +576,36 @@ class AirDataCalcReportSummaryTool(LLMTool):
 
     def __init__(self):
         table_hint = (
-            "DataCrawler 源表常用取值：view_dat_city_day_substitutionback_pantype145、"
-            "view_dat_city_day_substitutionback_pantype155、view_dat_city_day_src_pantype155、"
-            "view_dat_station_day_app_pantype145、view_dat_station_day_src_pantype145、"
-            "view_dat_town_day_app、view_dat_town_day_src、view_dat_town_hour_app、view_dat_town_hour_src"
+            "源表命名规则 view_dat_{city|station|town}_{day|hour}_{app|src|substitutionback|src}"
+            "[_pantype{145|155}]，如 view_dat_city_day_substitutionback_pantype145、"
+            "view_dat_station_day_app_pantype145、view_dat_town_hour_src"
         )
         function_schema = {
             "name": "airdata_calc_report_summary",
             "description": (
-                "按时间范围对站点/区县/城市/区域做空气质量报表统计，并与 year 指定年份同期做同比对比"
-                "（大气环境监测数据接口中台，许昌项目）。"
-                "返回行为扁平字典，键名为 PascalCase，统计值均为字符串，无效值统一为 —。"
-                "默认只返回当期值，且仅投影常用字段到上下文：标识列（站点/城市/区县名称编码、TimePoint）+ "
-                "六项污染物（SO2/NO2/PM10/CO/O3_8h/PM2_5）浓度，其余五项为 *_Curr 取整口径、*_Curr_ForNow 全精度口径；"
-                "PM2.5 在上下文中只回传 PM2_5_Curr_ForNow_R1（由全精度值按四舍六入五成双/银行家算法保留一位小数，"
-                "回答中 PM2.5 浓度一律用该字段），PM2_5_Curr 与 PM2_5_Curr_ForNow 原始双口径及其同比字段只保存在落盘原始视图，不进上下文；"
-                "百分位（*_P_Curr）、单项指数（*_SingleIndex）、综合指数 CompositeIndex、"
-                "天数统计（FineDays/StandardDay/StandardRate/OverDays/DayCounts_Curr、Lvl1~Lvl6）。"
-                "同比对比字段（*_Compare 对比期值、*_Increase 变幅、*_ChangeType 变幅类型）仅在 include_compare=true 时返回，"
-                "默认不传时同比字段全部剔除、不进上下文。"
-                "同比对比期跨 2026-01-01 规划期分段时（当期窗口在 155 表、year 落在 2025 及以前），"
-                "平台单表取不到对比期，工具会自动改查对应的 145 表、按站点/区县/城市对齐后计算同比，"
-                "并在 metadata.compare_source=auto_cross_caliber_145 与 summary 中说明，无需再分两次调用。"
-                "完整报表模板有 300+ 统计项（含极值、超标天数、首要污染物、沙尘等模块）；"
-                "需要白名单之外的字段时，用 need_keys 精确指定（区分大小写，如 PM2_5_Curr_ForNow_R1、PM25ExcessDays、"
-                "PM2_5_Curr_ForNow_Compare），传入后跳过默认过滤与投影、原样返回；"
-                "need_keys 指定 PM2_5_Curr_ForNow_R1 时由平台全精度值计算后返回。"
-                "因字段投影省略或行数/字符量超限，完整当期数据（含字段清单）自动落盘并在 metadata 返回 file_path，"
-                "可结合 file_path 原始视图与 need_keys 二次查询。"
+                "按时间范围对站点/区县/城市/区域做空气质量报表统计，并与 year 同期同比（中台，许昌）。"
+                "返回扁平字典（PascalCase 键，值为字符串，无效值 —）。默认仅投影：标识列+六参数浓度"
+                "（*_Curr 取整/*_Curr_ForNow 全精度）；PM2.5 一律用 PM2_5_Curr_ForNow_R1"
+                "（银行家修约 1 位小数），其原始双口径与同比只存落盘视图；"
+                "同比字段（*_Compare/*_Increase/*_ChangeType）仅 include_compare=true 时返回。"
+                "同比对比期跨 2026-01-01 规划期分段时工具自动改查 145 表对齐计算"
+                "（metadata.compare_source=auto_cross_caliber_145 会说明），无需分两次调用。"
+                "完整报表 300+ 统计项（极值/超标天数/首要污染物/沙尘/百分位 *_P_Curr/单项指数/"
+                "CompositeIndex/天数统计等）：白名单外字段用 need_keys 精确指定（区分大小写），"
+                "传入后跳过默认投影原样返回；投影省略或超限时完整数据自动落盘（metadata.file_path），"
+                "可结合原始视图与 need_keys 二次查询。"
                 f"{table_hint}。"
-                "统计窗口和 reportTimeType 决定报表粒度：4 月报、5 季度报、6 半年报、7 年报、8 任意时间段。"
+                "reportTimeType 决定粒度：4 月报、5 季度报、6 半年报、7 年报、8 任意时间段。"
                 f"{DATA_SOURCE_NOTE}"
+                f"{STATE_CALIBER_NOTE}"
                 f"{OFFICIAL_CALIBER_NOTE}"
-                "【统计口径硬规则】本接口是许昌月度及以上统计的唯一来源："
-                "禁止用小时数据、日数据自行汇总或计算月度、季度、半年、年度统计值"
-                "（包括均值、极值、有效天数、达标率、重污染天数、排名、同比等任何月度及以上指标），"
-                "也不得用自行汇总的结果代替或修正平台报表；报表数值以本接口返回为准。"
-                "①中大平台审核后数据与②长历史采集库都是明细通道，不含月度及以上统计，"
-                "月度及以上统计只能来自本接口，不要用①②的明细自行汇总。"
-                "用户问月均浓度、年度排名、月度同比、达标天数等月度及以上指标时，必须调用本接口，"
-                "并按 report_time_type 指定粒度（4 月报、5 季度报、6 半年报、7 年报、8 任意时间段）。"
-                "本接口只覆盖平台已生成的统计项；报表未包含的字段用 need_keys 精确指定，"
-                "仍取不到时才说明平台报表无该口径，不得改用明细数据自行计算。"
-                "【国标口径】ns_type 默认 2（国标二/新国标），用户未指定国标时不要传 1；"
-                "input_table_name 必须与统计窗口的规划期分段匹配（pantype145 对应 2021-2025，pantype155 对应 2026 起），"
-                "跨 2026-01-01 的窗口需分两段统计后合并。"
+                "【统计口径硬规则】本接口是许昌月度及以上统计的唯一来源（中大平台与长历史采集库均为明细通道）："
+                "月均/季/半年/年、达标率、重污染天、月度同比等一律调本接口并按 report_time_type 定粒度，"
+                "禁止用小时/日明细自算或修正平台报表；报表未含字段用 need_keys 取，"
+                "仍取不到才说明平台无该口径，不得明细手算。"
+                "【国标口径】ns_type 默认 2（新国标），用户未指定时不要传 1；"
+                "input_table_name 必须匹配规划期分段（pantype145=2021-2025，pantype155=2026 起），"
+                "跨 2026-01-01 的窗口分两段统计后合并。"
                 f"{DATA_SOURCE_DISCLOSURE_NOTE}"
             ),
             "parameters": {
@@ -636,7 +625,11 @@ class AirDataCalcReportSummaryTool(LLMTool):
                     },
                     "year": {
                         "type": "integer",
-                        "description": "对比年份，取该年同月同日区间作为同比对比期",
+                        "description": (
+                            "对比年份，取该年同月同日区间作为同比对比期；"
+                            "同比报错“需要指定对比年份所采用的数据源yearInputTableName”时，"
+                            "用 year_input_table_name 显式指定对比期数据源后重试"
+                        ),
                     },
                     "area_type": {
                         "type": "integer",
@@ -656,6 +649,19 @@ class AirDataCalcReportSummaryTool(LLMTool):
                         "description": (
                             "是否返回同比字段：*_Compare 对比期值、*_Increase 变幅、*_ChangeType 变幅类型"
                             "（浓度列含全套，其余常用列仅 *_Compare）；默认 false 只返回当期值"
+                        ),
+                    },
+                    "is_rank": {
+                        "type": "boolean",
+                        "description": (
+                            "是否返回 338 城/168 城/省内排名列（Rank_因子_338|168|Province，"
+                            "因子含综合指数与 6 项浓度，含 _Compare 同比排名）。"
+                            "口径性质：中台基于发布数据实时计算的排名，实时更新但仅作参考，"
+                            "非官方定版；官方定版的 168 城排名是生态环境部逐月发布的月度排名"
+                            "（本地语义层 Rank168CityMonthly，有发布滞后）。"
+                            "注意：排名只在输入数据包含的城市范围内计算，"
+                            "当前库内城市日数据仅覆盖许昌时排名恒为 1、无意义不要引用，"
+                            "待中台侧提供全国城市数据后才产出有效实时排名"
                         ),
                     },
                     "ns_type": {
@@ -679,6 +685,29 @@ class AirDataCalcReportSummaryTool(LLMTool):
                             "传入后跳过默认的同比剥离与字段投影，原样返回平台结果"
                         ),
                     },
+                    "is_same_as_time_ranges": {
+                        "type": "boolean",
+                        "description": (
+                            "对比期是否使用与当期相同的时间范围；不传由平台按 year 同月同日推断。"
+                            "对比期与当期时间范围不同（自定义对比窗口）时必须传 false"
+                        ),
+                    },
+                    "year_input_table_name": {
+                        "type": "string",
+                        "description": (
+                            "同比对比期数据源表名（dat 风格视图，可带 DataCrawler. 前缀）。"
+                            "对比期与当期不共用同一 timeRange/数据源时必须指定，"
+                            "否则平台报“对比年份不使用相同的timeRange则需要指定对比年份所采用的数据源”"
+                            "（典型：跨规划期分段对比，当期 pantype155 而 year=2025 需给 pantype145 表）"
+                        ),
+                    },
+                    "year_input_db_source": {
+                        "type": "string",
+                        "description": (
+                            "同比对比期数据源所属库（main/DataCrawler/publish），默认随 input_table_name "
+                            "的库；仅 year_input_table_name 指定的表在另一个库时才需要传"
+                        ),
+                    },
                 },
                 "required": [
                     "start_time",
@@ -696,7 +725,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
             description="Calc air quality report summary with YoY comparison via AirDataPlatform",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.1.0",
+            version="1.3.0",
             requires_context=True,
         )
 
@@ -742,6 +771,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
             ns_type=int(ns_type) if ns_type else 2,
             region_area=region_area,
             region_area_name=region_area_name,
+            is_same_as_time_ranges=True,
         )
         if not compare_rows:
             return None
@@ -785,6 +815,10 @@ class AirDataCalcReportSummaryTool(LLMTool):
         region_area_name: dict[str, Any] | None = None,
         need_keys: list[str] | None = None,
         include_compare: bool = False,
+        is_rank: bool = False,
+        is_same_as_time_ranges: bool | None = None,
+        year_input_table_name: str = "",
+        year_input_db_source: str = "",
         **kwargs,
     ) -> dict[str, Any]:
         logger.info(
@@ -796,7 +830,11 @@ class AirDataCalcReportSummaryTool(LLMTool):
             area_type=area_type,
             report_time_type=report_time_type,
             include_compare=include_compare,
+            is_rank=is_rank,
             need_keys=need_keys,
+            is_same_as_time_ranges=is_same_as_time_ranges,
+            year_input_table_name=year_input_table_name,
+            year_input_db_source=year_input_db_source,
         )
         try:
             client = get_airdata_platform_client()
@@ -812,6 +850,10 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 region_area=region_area,
                 region_area_name=region_area_name,
                 need_keys=need_keys,
+                is_rank=bool(is_rank),
+                is_same_as_time_ranges=is_same_as_time_ranges,
+                year_input_table_name=year_input_table_name or None,
+                year_input_db_source=year_input_db_source or None,
             )
             metadata = {
                 "tool_name": self.name,
@@ -822,7 +864,12 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 "report_time_type": report_time_type,
                 "ns_type": ns_type,
                 "compare_year": year,
+                "is_rank": bool(is_rank),
             }
+            if is_same_as_time_ranges is not None:
+                metadata["is_same_as_time_ranges"] = bool(is_same_as_time_ranges)
+            if year_input_table_name:
+                metadata["year_input_table_name"] = year_input_table_name
 
             if not data:
                 return {

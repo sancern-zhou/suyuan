@@ -1,0 +1,575 @@
+"""许昌站点告警 → 个人微信群 RPA 推送 agent（wechatauto-replica 驱动微信 4.x）。
+
+常驻轮询后端待发队列，把告警通报发进指定群。仅发不收；依赖个人微信 4.x
+电脑版已登录，主窗隐藏到托盘时会在实发前自动恢复。企业微信不参与识别。
+部署步骤见 README.md。
+
+用法：
+    python agent.py                # 常驻轮询（Ctrl+C 退出）
+    python agent.py --once         # 只跑一轮
+    python agent.py --dry-run      # 轮询但只打印不实发（验证链路）
+    python agent.py --test "文本"  # 手动发一条到配置的群（验证微信环境）
+    python agent.py --test-file x.docx  # 手动发一份文件到配置的群（验收附件链路）
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import socket
+import sys
+import time
+import tomllib
+from datetime import datetime
+from pathlib import Path
+
+import httpx
+
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = BASE_DIR / "config.toml"
+DATA_DIR = BASE_DIR / "data"
+LOG_PATH = DATA_DIR / "agent.log"
+SENT_MARKERS_PATH = DATA_DIR / "sent_markers.json"
+# 存活心跳：每轮轮询、每条消息处理前 touch，供看门狗识别"进程在但已冻结"
+LIVENESS_PATH = DATA_DIR / "agent_liveness"
+
+# 本地已发送标记上限：防止 ack 丢失导致重复发送，同时控制文件体积
+SENT_MARKERS_LIMIT = 500
+
+PENDING_PATH = "/api/xuchang-wechat-push/pending"
+ACK_PATH = "/api/xuchang-wechat-push/ack"
+MEDIA_PATH = "/api/xuchang-wechat-push/media"
+ATTACHMENT_PATH = "/api/xuchang-wechat-push/attachment"
+
+# 单实例守卫：双 agent 会同时拉取同一消息导致重复发群，用本地端口占位互斥
+INSTANCE_LOCK_PORT = 47615
+
+# 图片按 content-type 落本地临时文件的扩展名映射
+_MEDIA_EXTS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+}
+MEDIA_FETCH_RETRIES = 2
+
+
+def safe_attachment_filename(item: dict, index: int) -> str:
+    """从附件记录取展示文件名并净化，保留原扩展名供微信识别文件类型。"""
+    raw = str(item.get("filename") or "").strip()
+    if not raw:
+        raw = Path(str(item.get("path") or "").replace("\\", "/")).name
+    name = Path(raw.replace("\\", "/")).name
+    name = re.sub(r'["\r\n\t]+', "", name).strip(" .")
+    if not name:
+        name = f"attachment_{index}.docx"
+    return name[:120]
+
+
+def log(message: str) -> None:
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}"
+    try:
+        # pythonw（无控制台）自启时 sys.stdout 为 None，日志只落文件
+        if sys.stdout is not None:
+            print(line, flush=True)
+    except (OSError, ValueError):
+        pass
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except OSError:
+        pass
+
+
+def touch_liveness() -> None:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        LIVENESS_PATH.touch()
+    except OSError:
+        pass
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        raise ConfigError(
+            f"缺少配置文件 {CONFIG_PATH}，请复制 config.example.toml 为 config.toml 并填写"
+        )
+    raw = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    backend = raw.get("backend") or {}
+    wechat = raw.get("wechat") or {}
+    agent = raw.get("agent") or {}
+    cfg = {
+        "base_url": str(backend.get("base_url") or "").rstrip("/"),
+        "token": str(backend.get("token") or ""),
+        "group_name": str(wechat.get("group_name") or "").strip(),
+        "message_prefix": str(wechat.get("message_prefix") or ""),
+        "poll_interval_seconds": float(agent.get("poll_interval_seconds", 15)),
+        "send_retry": int(agent.get("send_retry", 2)),
+        "send_retry_delay_seconds": float(agent.get("send_retry_delay_seconds", 3)),
+        "http_timeout_seconds": float(agent.get("http_timeout_seconds", 10)),
+        "agent_id": socket.gethostname(),
+    }
+    if not cfg["base_url"] or cfg["base_url"].startswith("http") is False:
+        raise ConfigError("config.toml [backend].base_url 未填写（如 https://host）")
+    if not cfg["token"] or cfg["token"] == "change-me":
+        raise ConfigError("config.toml [backend].token 未填写（与后端 XUCHANG_WECHAT_PUSH_TOKEN 一致）")
+    if not cfg["group_name"]:
+        raise ConfigError("config.toml [wechat].group_name 未填写（目标微信群名）")
+    return cfg
+
+
+def ensure_winsdk_shim() -> None:
+    """winsdk 在 Python 3.11+ 无预编译 wheel，用 winrt 新包做同名转发。
+
+    wechatauto 的 OCR 兜底（UIA 偶发失败时顶上）需要 winsdk；缺它时每次
+    兜底都会 ModuleNotFoundError，表现为发送偶发失败/附图丢失。
+    """
+    try:
+        import winsdk  # noqa: F401
+        return
+    except ImportError:
+        pass
+    shim_dir = BASE_DIR / "winsdk_shim"
+    if (shim_dir / "winsdk").is_dir() and str(shim_dir) not in sys.path:
+        sys.path.insert(0, str(shim_dir))
+
+
+class WeChatSender:
+    """wechatauto-replica 驱动（仅限个人微信 4.x，明确排除企业微信）。
+
+    长驻复用同一个 GUI 实例；每次实发前严格识别 Weixin.exe 主窗，隐藏到
+    托盘时先恢复。上游 quick_send 每次重建实例且只找可见窗口，会漏掉隐藏
+    主窗，并可能因“企业微信”也含“微信”而误选，故不在这里使用。
+    """
+
+    def __init__(self) -> None:
+        ensure_winsdk_shim()
+        try:
+            from wechat_gui import PersonalWeChatGUI
+        except ImportError as exc:
+            raise RuntimeError(
+                "未安装 wechatauto-replica，请先运行 install.bat"
+            ) from exc
+        self._gui_class = PersonalWeChatGUI
+        self._gui = None
+
+    def _get_gui(self):
+        if self._gui is None:
+            self._gui = self._gui_class(event_logger=log)
+        else:
+            self._gui.prepare_for_send()
+        return self._gui
+
+    @staticmethod
+    def _check_result(result, action: str) -> None:
+        status = str((result or {}).get("status") or "")
+        if "成功" not in status and "ok" not in status.lower():
+            raise RuntimeError(f"{action}未确认：{result}")
+
+    def send_text(self, group_name: str, text: str) -> None:
+        self._check_result(self._get_gui().send_msg(text, group_name), "发送")
+
+    def send_image(self, group_name: str, image_path: str) -> None:
+        self._check_result(
+            self._get_gui().send_image(image_path, group_name), "图片发送"
+        )
+
+    def send_file(self, group_name: str, file_path: str) -> None:
+        self._check_result(
+            self._get_gui().send_file(file_path, group_name), "文件发送"
+        )
+
+
+def http_headers(cfg: dict) -> dict:
+    return {"Authorization": f"Bearer {cfg['token']}"}
+
+
+def fetch_pending(cfg: dict) -> list[dict] | None:
+    try:
+        response = httpx.get(
+            f"{cfg['base_url']}{PENDING_PATH}",
+            params={
+                "limit": 10,
+                "agent_id": cfg["agent_id"],
+                "caps": "attachments",
+            },
+            headers=http_headers(cfg),
+            timeout=cfg["http_timeout_seconds"],
+        )
+    except httpx.HTTPError as exc:
+        log(f"[warn] 后端不可达：{exc}")
+        return None
+    if response.status_code == 403:
+        log("[error] 后端返回 403：未启用推送接口（检查 XUCHANG_WECHAT_PUSH_TOKEN/API_PREFIX 是否配置）")
+        return None
+    if response.status_code == 401:
+        log("[error] 后端返回 401：token 不正确，检查 config.toml 的 token")
+        return None
+    if response.status_code != 200:
+        log(f"[warn] 拉取待发消息失败：HTTP {response.status_code}")
+        return None
+    return response.json().get("messages") or []
+
+
+def ack(cfg: dict, message_id: str, status: str, detail: str | None = None) -> bool:
+    try:
+        response = httpx.post(
+            f"{cfg['base_url']}{ACK_PATH}",
+            json={
+                "id": message_id,
+                "status": status,
+                "detail": detail,
+                "agent_id": cfg["agent_id"],
+            },
+            headers=http_headers(cfg),
+            timeout=cfg["http_timeout_seconds"],
+        )
+    except httpx.HTTPError as exc:
+        log(f"[warn] 回执失败（{message_id} {status}）：{exc}")
+        return False
+    if response.status_code != 200:
+        log(f"[warn] 回执被拒（{message_id} {status}）：HTTP {response.status_code}")
+        return False
+    log(f"[info] 回执成功：{message_id} -> {response.json().get('result')}")
+    return True
+
+
+def load_markers() -> dict:
+    try:
+        data = json.loads(SENT_MARKERS_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("markers"), dict):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"markers": {}}
+
+
+def save_markers(markers: dict) -> None:
+    items = sorted(markers["markers"].items(), key=lambda kv: kv[1], reverse=True)
+    markers["markers"] = dict(items[:SENT_MARKERS_LIMIT])
+    SENT_MARKERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = SENT_MARKERS_PATH.with_suffix(".tmp")
+    temp_path.write_text(
+        json.dumps(markers, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    temp_path.replace(SENT_MARKERS_PATH)
+
+
+def send_with_retry(cfg: dict, sender: WeChatSender, text: str) -> str | None:
+    """成功返回 None；重试耗尽返回最后一次错误信息。"""
+    last_error = "未知错误"
+    for attempt in range(1 + cfg["send_retry"]):
+        try:
+            sender.send_text(cfg["group_name"], text)
+            return None
+        except Exception as exc:
+            last_error = str(exc)
+            log(f"[warn] 发送失败（第 {attempt + 1} 次）：{last_error}")
+            if attempt < cfg["send_retry"]:
+                time.sleep(cfg["send_retry_delay_seconds"])
+    return last_error
+
+
+def fetch_media(cfg: dict, message_id: str, index: int) -> Path | None:
+    """下载消息附图到本地临时文件；重试耗尽返回 None。
+
+    图片体积大于文本响应，公网链路单独放宽超时；断网时仍受重试次数约束。
+    """
+    url = f"{cfg['base_url']}{MEDIA_PATH}/{message_id}/{index}"
+    timeout = max(30.0, float(cfg["http_timeout_seconds"]))
+    for attempt in range(1 + MEDIA_FETCH_RETRIES):
+        try:
+            response = httpx.get(url, headers=http_headers(cfg), timeout=timeout)
+            if response.status_code == 200:
+                ext = _MEDIA_EXTS.get(
+                    response.headers.get("content-type", "").split(";")[0].strip(),
+                    ".png",
+                )
+                cache_dir = DATA_DIR / "media_cache"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                local_path = cache_dir / f"{message_id}_{index}{ext}"
+                local_path.write_bytes(response.content)
+                return local_path
+            log(
+                f"[warn] 附图下载失败（{message_id}#{index} 第 {attempt + 1} 次）："
+                f"HTTP {response.status_code}"
+            )
+        except (httpx.HTTPError, OSError) as exc:
+            log(f"[warn] 附图下载失败（{message_id}#{index} 第 {attempt + 1} 次）：{exc}")
+        if attempt < MEDIA_FETCH_RETRIES:
+            time.sleep(2)
+    return None
+
+
+def send_image_with_retry(cfg: dict, sender: WeChatSender, image_path: str) -> str | None:
+    """附图发送带轮内重试（UIA 偶发失败/OCR 兜底抖动时第二次常成功）。"""
+    last_error = "未知错误"
+    for attempt in range(1 + cfg["send_retry"]):
+        try:
+            sender.send_image(cfg["group_name"], image_path)
+            return None
+        except Exception as exc:
+            last_error = str(exc)
+            log(f"[warn] 附图发送失败（第 {attempt + 1} 次）：{last_error}")
+            if attempt < cfg["send_retry"]:
+                time.sleep(cfg["send_retry_delay_seconds"])
+    return last_error
+
+
+def fetch_attachment(cfg: dict, message_id: str, index: int, item: dict) -> Path | None:
+    """下载报告等文档附件到本地缓存；扩展名来自附件文件名，不默认图片后缀。"""
+    url = f"{cfg['base_url']}{ATTACHMENT_PATH}/{message_id}/{index}"
+    timeout = max(30.0, float(cfg["http_timeout_seconds"]))
+    cache_dir = DATA_DIR / "media_cache" / f"{message_id}_{index}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # 目录承担唯一性，文件名保持后端给的展示名，微信群里的文件消息显示原名。
+    local_path = cache_dir / safe_attachment_filename(item, index)
+    temp_path = local_path.with_name(local_path.name + ".part")
+    for attempt in range(1 + MEDIA_FETCH_RETRIES):
+        try:
+            with httpx.stream(
+                "GET", url, headers=http_headers(cfg), timeout=timeout
+            ) as response:
+                if response.status_code != 200:
+                    log(
+                        f"[warn] 附件下载失败（{message_id}#{index} 第 {attempt + 1} 次）："
+                        f"HTTP {response.status_code}"
+                    )
+                else:
+                    with temp_path.open("wb") as handle:
+                        for chunk in response.iter_bytes():
+                            if chunk:
+                                handle.write(chunk)
+                    temp_path.replace(local_path)
+                    return local_path
+        except (httpx.HTTPError, OSError) as exc:
+            log(f"[warn] 附件下载失败（{message_id}#{index} 第 {attempt + 1} 次）：{exc}")
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if attempt < MEDIA_FETCH_RETRIES:
+            time.sleep(2)
+    return None
+
+
+def send_file_with_retry(cfg: dict, sender: WeChatSender, file_path: str) -> str | None:
+    """文档附件发送带轮内重试；与图片同为剪贴板文件通路，失败不重发文本。"""
+    last_error = "未知错误"
+    for attempt in range(1 + cfg["send_retry"]):
+        try:
+            sender.send_file(cfg["group_name"], file_path)
+            return None
+        except Exception as exc:
+            last_error = str(exc)
+            log(f"[warn] 附件发送失败（第 {attempt + 1} 次）：{last_error}")
+            if attempt < cfg["send_retry"]:
+                time.sleep(cfg["send_retry_delay_seconds"])
+    return last_error
+
+
+def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bool) -> None:
+    messages = fetch_pending(cfg)
+    if messages is None:
+        return
+    for msg in messages:
+        # 长积压时整轮可能远超看门狗检查周期：逐条打心跳，
+        # 冻结判定只针对"单条消息处理内"超过阈值的情况
+        touch_liveness()
+        message_id = str(msg.get("id") or "")
+        raw_text = str(msg.get("text") or "")
+        # 场景前缀由后端写在文案首行（如【污染原因分析】）；仅当文案不带
+        # 场景前缀时才叠加 agent 全局 message_prefix，避免双前缀刷屏
+        if cfg.get("message_prefix") and not raw_text.startswith("【"):
+            text = f"{cfg['message_prefix']}{raw_text}"
+        else:
+            text = raw_text
+        if not message_id or not raw_text:
+            log(f"[warn] 跳过异常消息：{msg}")
+            continue
+        if message_id in markers["markers"]:
+            # 上轮已实发但 ack 未达：只补回执，绝不重发
+            log(f"[info] {message_id} 本地已发送，补回执")
+            ack(cfg, message_id, "sent", detail="本地已发送标记补回执")
+            continue
+        if dry_run:
+            media = msg.get("media") or []
+            attachments = msg.get("attachments") or []
+            suffix = f"（附图 {len(media)} 张，附件 {len(attachments)} 份）" if media or attachments else ""
+            log(f"[dry-run] 将发到「{cfg['group_name']}」：{text[:80]}...{suffix}")
+            continue
+        if sender is None:
+            return  # 微信不可用：消息留在队列，下轮再试
+        error = send_with_retry(cfg, sender, text)
+        if error is not None:
+            ack(cfg, message_id, "failed", detail=error)
+            continue
+        log(f"[info] 已发送告警 {message_id} 到「{cfg['group_name']}」")
+        # 文本发出后立即落本地标记：进程在附图阶段被杀/崩溃时，重启后只补
+        # ack 不再重发文本（避免群里出现重复通报）
+        markers["markers"][message_id] = datetime.now().isoformat(
+            timespec="seconds"
+        )
+        save_markers(markers)
+        # 逐张发附图、逐份发文档附件：单项失败只记录，不重发整条消息
+        # （避免文案重复刷群）
+        media = msg.get("media") or []
+        failed_media: list[int] = []
+        for index in range(len(media)):
+            # 附图下载（每张最多 2×30s）+发送（3 次重试）也较长，逐张打心跳
+            touch_liveness()
+            local_path = fetch_media(cfg, message_id, index)
+            if local_path is None:
+                failed_media.append(index)
+                continue
+            error = send_image_with_retry(cfg, sender, str(local_path))
+            if error is None:
+                log(f"[info] 已发送附图 {message_id}#{index}")
+            else:
+                failed_media.append(index)
+        attachments = msg.get("attachments") or []
+        failed_attachments: list[str] = []
+        for index, item in enumerate(attachments):
+            if not isinstance(item, dict):
+                failed_attachments.append(f"#{index}")
+                continue
+            touch_liveness()
+            local_path = fetch_attachment(cfg, message_id, index, item)
+            if local_path is None:
+                failed_attachments.append(safe_attachment_filename(item, index))
+                continue
+            error = send_file_with_retry(cfg, sender, str(local_path))
+            if error is None:
+                log(f"[info] 已发送附件 {message_id}#{index} {local_path.name}")
+            else:
+                failed_attachments.append(local_path.name)
+        detail_parts: list[str] = []
+        if media:
+            media_detail = f"附图 {len(media) - len(failed_media)}/{len(media)} 张成功"
+            if failed_media:
+                media_detail += f"（失败序号：{','.join(map(str, failed_media))}）"
+            detail_parts.append(media_detail)
+        if attachments:
+            attachment_detail = (
+                f"附件 {len(attachments) - len(failed_attachments)}/{len(attachments)} 份成功"
+            )
+            if failed_attachments:
+                attachment_detail += f"（失败：{'、'.join(failed_attachments)}）"
+            detail_parts.append(attachment_detail)
+        detail = "；".join(detail_parts) if detail_parts else None
+        if detail and (failed_media or failed_attachments):
+            log(f"[warn] {message_id} {detail}")
+        ack(cfg, message_id, "sent", detail=detail)
+
+
+def ensure_sender(cfg: dict, sender: WeChatSender | None) -> WeChatSender | None:
+    if sender is not None:
+        return sender
+    try:
+        return WeChatSender()
+    except RuntimeError as exc:
+        log(f"[warn] {exc}")
+        return None
+
+
+def acquire_instance_lock() -> socket.socket | None:
+    """占本地端口做进程互斥：双 agent 会同时拉取同一消息导致重复发群。"""
+    guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        guard.bind(("127.0.0.1", INSTANCE_LOCK_PORT))
+        guard.listen(1)
+        return guard
+    except OSError:
+        guard.close()
+        return None
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="许昌站点告警微信群推送 agent")
+    parser.add_argument("--once", action="store_true", help="只跑一轮后退出")
+    parser.add_argument("--dry-run", action="store_true", help="只打印不实发、不回执")
+    parser.add_argument("--test", metavar="TEXT", help="手动发一条文本到配置的群后退出")
+    parser.add_argument(
+        "--test-file", metavar="PATH", help="手动向配置的群发送一份文件后退出（验收文件发送链路）"
+    )
+    args = parser.parse_args()
+
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+
+    guard: socket.socket | None = None
+    if not args.dry_run:
+        guard = acquire_instance_lock()
+        if guard is None:
+            log("[error] 已有 agent 实例在运行（端口 47615 被占用），本进程退出")
+            return 3
+
+    try:
+        cfg = load_config()
+    except ConfigError as exc:
+        print(f"[错误] {exc}", file=sys.stderr)
+        return 1
+
+    log(
+        f"agent 启动：backend={cfg['base_url']} group=「{cfg['group_name']}」 "
+        f"poll={cfg['poll_interval_seconds']}s agent_id={cfg['agent_id']}"
+    )
+
+    if args.test:
+        try:
+            sender = WeChatSender()
+            sender.send_text(cfg["group_name"], args.test)
+        except RuntimeError as exc:
+            print(f"[错误] {exc}", file=sys.stderr)
+            return 1
+        log(f"测试消息已发送到「{cfg['group_name']}」，请在微信里确认")
+        return 0
+
+    if args.test_file:
+        file_path = Path(args.test_file).expanduser().resolve()
+        if not file_path.is_file():
+            print(f"[错误] 文件不存在：{file_path}", file=sys.stderr)
+            return 1
+        try:
+            sender = WeChatSender()
+            sender.send_file(cfg["group_name"], str(file_path))
+        except (RuntimeError, OSError) as exc:
+            print(f"[错误] {exc}", file=sys.stderr)
+            return 1
+        log(f"测试文件已发送到「{cfg['group_name']}」：{file_path.name}")
+        return 0
+
+    markers = load_markers()
+    sender: WeChatSender | None = None
+    while True:
+        touch_liveness()
+        if not args.dry_run:
+            sender = ensure_sender(cfg, sender)
+        try:
+            run_cycle(cfg, markers, sender, args.dry_run)
+        except Exception:
+            log("[warn] 本轮执行异常，继续下一轮")
+            log_exception()
+        if args.once or args.dry_run:
+            return 0
+        time.sleep(cfg["poll_interval_seconds"])
+
+
+def log_exception() -> None:
+    import traceback
+
+    for line in traceback.format_exc().splitlines():
+        log(f"    {line}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

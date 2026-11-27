@@ -1,0 +1,21 @@
+# 微信 4.x 适配：wechatauto-replica 主包在 install.bat 中以 --no-deps 安装，
+# 以跳过 winsdk（仅 OCR 兜底通道使用，Python 3.13 无预编译 wheel 且不影响发送）。
+# 本文件列出其运行依赖，供 pip 高级用法/install.bat 使用。
+uiautomation>=2.0.18
+pywin32>=305
+pyperclip>=1.8.2
+Pillow>=9.0.0
+psutil>=5.9.0
+colorama>=0.4.6
+cryptography>=41.0.0
+imageio-ffmpeg>=0.4.9
+zstandard>=0.19.0
+pyautogui>=0.9.53
+opencv-python>=4.8.0
+httpx>=0.27,<1.0
+# winsdk 替代（winsdk 在 py3.11+ 无 wheel）：wechatauto 的 OCR 兜底经
+# winsdk_shim/ 转发到以下 winrt 包（pywinrt 现代命名）
+winrt-runtime
+winrt-Windows.Media.Ocr
+winrt-Windows.Graphics.Imaging
+winrt-Windows.Storage

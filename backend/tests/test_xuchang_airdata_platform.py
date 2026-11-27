@@ -34,6 +34,7 @@ def captured(monkeypatch):
     def fake_post(url, json=None, headers=None, timeout=None):
         state["url"] = url
         state["payload"] = json
+        state["headers"] = headers
         state["timeout"] = timeout
         return httpx.Response(200, json=state.get("response", _envelope({})))
 
@@ -240,6 +241,48 @@ async def test_report_summary_tool_does_not_block_event_loop(monkeypatch):
     assert result["success"] is True
 
 
+async def test_report_summary_tool_passes_year_source_params(captured):
+    captured["response"] = _envelope([{"PM2_5_Curr": "42"}])
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2026-11-01",
+        end_time="2026-11-07",
+        input_table_name="view_dat_city_day_substitutionback_pantype155",
+        year=2025,
+        area_type=2,
+        report_time_type=8,
+        is_same_as_time_ranges=False,
+        year_input_table_name="view_dat_city_day_substitutionback_pantype145",
+    )
+
+    assert result["success"] is True
+    payload = captured["payload"]
+    assert payload["isSameAsTimeRanges"] is False
+    assert payload["yearInputTableName"] == "DataCrawler.view_dat_city_day_substitutionback_pantype145"
+    assert payload["yearInputDataDBSource"] == "DataCrawler"
+    assert result["metadata"]["year_input_table_name"] == (
+        "view_dat_city_day_substitutionback_pantype145"
+    )
+    assert result["metadata"]["is_same_as_time_ranges"] is False
+
+
+async def test_report_summary_tool_omits_year_source_params_by_default(captured):
+    captured["response"] = _envelope([{"PM2_5_Curr": "42"}])
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2026-11-01",
+        end_time="2026-11-07",
+        input_table_name="view_dat_city_day_substitutionback_pantype155",
+        year=2026,
+        area_type=2,
+        report_time_type=8,
+    )
+
+    assert result["success"] is True
+    payload = captured["payload"]
+    assert "isSameAsTimeRanges" not in payload
+    assert "yearInputTableName" not in payload
+    assert "yearInputTableName" not in result["metadata"]
+
+
 def test_business_error_raises_with_platform_message(captured):
     captured["response"] = {
         "success": False,
@@ -300,13 +343,80 @@ def test_calc_report_summary_rejects_invalid_area_type():
         )
 
 
+def test_post_sends_auth_headers_and_local_default_base_url(captured):
+    captured["response"] = _envelope({})
+    client = AirDataPlatformClient()
+    client.query_page("region")
+
+    assert client.base_url == client_module.DEFAULT_BASE_URL
+    assert client_module.DEFAULT_BASE_URL == "http://127.0.0.1:5287"
+    assert captured["headers"]["SysCode"] == "SJZT"
+    assert captured["headers"]["UserId"]
+    assert captured["headers"]["UserName"]
+    assert captured["headers"]["Content-Type"].startswith("application/json")
+
+
+def test_calc_report_summary_payload_rank_and_year_input(captured):
+    captured["response"] = _envelope([{"Rank_CompositeIndex_338": "1"}])
+    client = AirDataPlatformClient(base_url="http://example.test")
+
+    data = client.calc_report_summary(
+        start_time="2025-01-01",
+        end_time="2025-12-31",
+        input_table_name="view_dat_city_day_substitutionback_pantype145",
+        year=2024,
+        area_type=2,
+        report_time_type=8,
+        is_rank=True,
+        show_other_cities=True,
+        is_same_as_time_ranges=False,
+        year_input_table_name="view_dat_city_day_substitutionback_pantype145",
+        year_input_db_source="DataCrawler",
+    )
+
+    assert data == [{"Rank_CompositeIndex_338": "1"}]
+    payload = captured["payload"]
+    assert payload["isRank"] is True
+    assert payload["showOtherCities"] is True
+    assert payload["isSameAsTimeRanges"] is False
+    assert payload["yearInputTableName"] == (
+        "DataCrawler.view_dat_city_day_substitutionback_pantype145"
+    )
+    assert payload["yearInputDataDBSource"] == "DataCrawler"
+    assert "rankData" not in payload
+
+
+def test_calc_report_summary_omits_optional_rank_keys_by_default(captured):
+    captured["response"] = _envelope([])
+    client = AirDataPlatformClient(base_url="http://example.test")
+
+    client.calc_report_summary(
+        start_time="2026-08-01",
+        end_time="2026-08-31",
+        input_table_name="view_dat_station_day_app_pantype145",
+        year=2025,
+        area_type=0,
+        report_time_type=4,
+    )
+
+    payload = captured["payload"]
+    assert payload["isRank"] is False
+    assert payload["showOtherCities"] is False
+    assert "isSameAsTimeRanges" not in payload
+    assert "yearInputTableName" not in payload
+    assert "yearInputDataDBSource" not in payload
+
+
 def test_tool_schemas():
     query_tool = QueryAirDataPlatformTool()
     report_tool = AirDataCalcReportSummaryTool()
 
     assert query_tool.name == "query_airdata_platform"
     assert query_tool.function_schema["parameters"]["required"] == ["api_code"]
-    assert "v_t_h_src" in query_tool.function_schema["parameters"]["properties"]["api_code"]["enum"]
+    # 乡镇视图已下线（数据走本地语义层 TownHour/TownDay），不在工具 enum 中
+    town_views = {"v_t_d_app", "v_t_d_src", "v_t_h_app", "v_t_h_src"}
+    enum_codes = set(query_tool.function_schema["parameters"]["properties"]["api_code"]["enum"])
+    assert enum_codes.isdisjoint(town_views)
 
     assert report_tool.name == "airdata_calc_report_summary"
     assert set(report_tool.function_schema["parameters"]["required"]) == {
@@ -318,6 +428,7 @@ def test_tool_schemas():
         "report_time_type",
     }
     assert "include_compare" in report_tool.function_schema["parameters"]["properties"]
+    assert "is_rank" in report_tool.function_schema["parameters"]["properties"]
 
 
 def test_query_tool_schema_documents_data_source_priority_and_new_standard_default():
@@ -338,9 +449,9 @@ def test_query_tool_schema_documents_data_source_priority_and_new_standard_defau
 def test_query_tool_schema_forbids_aggregating_hourly_daily_into_monthly_annual():
     description = QueryAirDataPlatformTool().function_schema["description"]
 
-    assert "禁止用小时数据、日数据自行汇总或计算月度、季度、半年、年度统计值" in description
+    assert "月度及以上统计禁止从小时/日明细自算" in description
     assert "airdata_calc_report_summary" in description
-    assert "不得自行汇总代替报表" in description
+    assert "必须改用该接口" in description
 
 
 def test_report_tool_schema_states_official_caliber_no_cross_check():
@@ -357,9 +468,8 @@ def test_report_tool_schema_forbids_aggregating_hourly_daily_into_monthly_annual
     description = tool.function_schema["description"]
 
     assert "本接口是许昌月度及以上统计的唯一来源" in description
-    assert "禁止用小时数据、日数据自行汇总或计算月度、季度、半年、年度统计值" in description
-    assert "不得用自行汇总的结果代替或修正平台报表" in description
-    assert "不得改用明细数据自行计算" in description
+    assert "禁止用小时/日明细自算或修正平台报表" in description
+    assert "不得明细手算" in description
     assert (
         "月报用 4、年报用 7"
         in tool.function_schema["parameters"]["properties"]["report_time_type"]["description"]
@@ -374,7 +484,7 @@ def test_report_tool_schema_documents_data_source_priority_and_new_standard_defa
     assert "长历史采集库" in description
     assert "中大国发平台" in description
     assert "第一优先级" in description
-    assert "ns_type 默认 2（国标二/新国标）" in description
+    assert "ns_type 默认 2（新国标）" in description
     assert "数据源声明" in description
     assert "唯一权威来源" in description
     assert (

@@ -168,6 +168,38 @@
         </div>
       </section>
 
+      <section v-if="showBigScreenEntry" class="portal-section task-portal" aria-labelledby="bigscreen-title">
+        <header class="section-heading">
+          <span class="heading-bar task-bar" aria-hidden="true"></span>
+          <div>
+            <h2 id="bigscreen-title">现场巡查快报</h2>
+            <p>面向现场巡查管控人员的移动端实时态势，数据与平台大屏同源</p>
+          </div>
+        </header>
+
+        <div class="scheduled-task-grid">
+          <a class="scheduled-task-card bigscreen-card" :href="fieldwatchUrl" target="_blank" rel="noopener">
+            <span class="task-ambient" aria-hidden="true"></span>
+            <span class="task-badge">移动巡查</span>
+            <span class="task-card-top">
+              <span class="task-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M11 18.5h2" /></svg>
+              </span>
+              <span class="task-title-wrap">
+                <strong>现场巡查快报</strong>
+                <small>手机查看 · 适合现场管控人员</small>
+              </span>
+            </span>
+            <span class="card-description">实时告警、区县实况与任务播报，与平台侧边栏「数据大屏」共用同一份同源数据。</span>
+            <span class="task-meta"><span>告警实时推送</span><span>免安装 · 手机浏览器直达</span></span>
+            <span class="card-action task-action">
+              打开快报
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
+            </span>
+          </a>
+        </div>
+      </section>
+
     </div>
   </main>
 </template>
@@ -176,6 +208,7 @@
 import { computed } from 'vue'
 import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
+import { useAuthStore } from '@/auth/authStore.js'
 import { filterPlatformAgentCards } from './platformCardPolicy.js'
 
 const props = defineProps({
@@ -199,7 +232,16 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select', 'select-task'])
+const auth = useAuthStore()
+const isSuperAdmin =
+  auth.user?.isAdmin === true ||
+  auth.user?.admin === true ||
+  (Array.isArray(auth.user?.roleCodes) && auth.user.roleCodes.includes('SUYUAN_ADMIN'))
 const isSceneLayout = computed(() => props.layout === 'scenes')
+// 现场巡查快报开发阶段：仅超级管理员可见入口
+const showBigScreenEntry =
+  projectConfig.hasModule('xuchang-air-quality') && isSuperAdmin
+const fieldwatchUrl = `${import.meta.env.BASE_URL}fieldwatch`
 // 助手模式入口统一收敛到浮球/浮窗，平台卡片按共享策略隐藏（仅 assistant_floating 项目生效）。
 const platformAgents = computed(() => filterPlatformAgentCards(
   props.agents,

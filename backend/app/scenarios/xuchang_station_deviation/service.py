@@ -23,9 +23,28 @@ import pyodbc
 import structlog
 
 from app.integrations.xcai_station_sql import xcai_connection_string
+from app.scenarios.xuchang_city_exceedance.station_catalog import (
+    NATIONAL_STATION_CODES,
+    NATIONAL_STATION_META,
+)
 from app.utils.path_config import format_agent_path, get_data_registry
+from app.scenarios.xuchang_station_deviation.push_control import (
+    AlertStateStore,
+    PushLogStore,
+    apply_push_chain,
+)
+from app.scenarios.xuchang_station_deviation.rule_config import load_air_alert_config
+from app.scenarios.xuchang_station_deviation.rule_engine import (
+    evaluate_five_minute_cycle,
+    evaluate_pm25_hourly_cycle,
+)
 from app.scenarios.xuchang_station_deviation.source_features import calculate_pollutant_source_features
 from app.scenarios.xuchang_station_deviation.dispatch import resolve_station
+from app.scenarios.xuchang_station_deviation.watchkeeping import (
+    WatchkeepingAgent,
+    _enabled as watchkeeping_shadow_enabled,
+    collect_boundary_observations,
+)
 
 logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -422,10 +441,17 @@ class XuchangStationDeviationAlertService:
     # dispatchers enough lead-in context without turning a minute alert into
     # a daily trend chart.
     MINUTE_TREND_LOOKBACK_MINUTES = 60
+    # PM2.5 hourly alert charts span the past six hours (alert hour
+    # inclusive), mirroring the minute charts' "lead-in + alert slot" shape.
+    HOUR_TREND_LOOKBACK_HOURS = 6
 
     def __init__(self, config: StationDeviationConfig | None = None, output_root: Path | None = None) -> None:
         self.config = config or StationDeviationConfig(city_area_code=os.getenv("XUCHANG_STATION_CITY_AREA_CODE", "411000"))
         self.output_root = output_root or get_data_registry() / "xuchang_station_deviation_alerts"
+        # 分级告警（R1-R4 + 推送管控）的状态与推送流水存储（文档 §2.4/§2.5）。
+        self.alert_state_store = AlertStateStore(self.output_root)
+        self.push_log_store = PushLogStore(self.output_root)
+        self.watchkeeping_agent = WatchkeepingAgent(self.output_root)
 
     def _query(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
@@ -441,27 +467,52 @@ class XuchangStationDeviationAlertService:
         start = _hour(timestamp) - timedelta(hours=1)
         end = start + timedelta(hours=1)
         source_start = _hour(timestamp) - timedelta(hours=24)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         expected_hour = self._query(
-            """
+            f"""
             SELECT MAX(station_count) AS count FROM (
-                SELECT COUNT(DISTINCT station_id) AS station_count
-                FROM dbo.dat_station_hour
-                WHERE city_area_code = ? AND data_time >= DATEADD(hour, -24, ?) AND data_time < ?
-                GROUP BY data_time
+                SELECT COUNT(DISTINCT station_code) AS station_count
+                FROM dbo.dat_zhongda_station_hour
+                WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                  AND station_code IN ({placeholders})
+                  AND time_point >= DATEADD(hour, -24, ?) AND time_point < ?
+                GROUP BY time_point
             ) AS hourly_counts
             """,
-            [self.config.city_area_code, start.replace(tzinfo=None), end.replace(tzinfo=None)],
+            [*NATIONAL_STATION_CODES, start.replace(tzinfo=None), end.replace(tzinfo=None)],
         )
         expected_hour_count = int(expected_hour[0]["count"] or 0) if expected_hour else 0
         hour_rows = self._query(
-            """
-            SELECT station_id, name, lon, lat, pm25, pm10, o3, no2, so2, co, data_time
-            FROM dbo.dat_station_hour
-            WHERE city_area_code = ? AND data_time >= ? AND data_time < ?
-            ORDER BY data_time, station_id
+            f"""
+            SELECT station_code, station_name, aqi, pm25, pm10, o3, no2, so2, co,
+                   so2_mark, no2_mark, o3_mark, co_mark, pm10_mark, pm25_mark, time_point
+            FROM dbo.dat_zhongda_station_hour
+            WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+              AND station_code IN ({placeholders})
+              AND time_point >= ? AND time_point < ?
+            ORDER BY time_point, station_code
             """,
-            [self.config.city_area_code, source_start.replace(tzinfo=None), end.replace(tzinfo=None)],
+            [*NATIONAL_STATION_CODES, source_start.replace(tzinfo=None), end.replace(tzinfo=None)],
         )
+        hour_rows = [
+            {
+                "station_id": str(row["station_code"]),
+                "name": row["station_name"],
+                "station_name": row["station_name"],
+                "lon": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lon"),
+                "lat": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lat"),
+                "aqi": row["aqi"],
+                "pm25": row["pm25"], "pm10": row["pm10"], "o3": row["o3"],
+                "no2": row["no2"], "so2": row["so2"], "co": row["co"],
+                # 小时表同样带质控标记列：标记时段按无效值处理（不参与基线
+                # 与判定，图表留空断线），与分钟表口径一致。
+                "so2_mark": row["so2_mark"], "no2_mark": row["no2_mark"],
+                "o3_mark": row["o3_mark"], "co_mark": row["co_mark"],
+                "pm10_mark": row["pm10_mark"], "pm25_mark": row["pm25_mark"],
+                "data_time": row["time_point"],
+            }
+            for row in hour_rows
+        ]
         for row in hour_rows:
             row["data_source"] = "hour"
             normalize_station_row(row)
@@ -524,6 +575,17 @@ class XuchangStationDeviationAlertService:
             and window_start <= _slot(row["data_time"], "minute") < window_end
         ]
 
+    def _hour_trend_rows(self, rows: list[dict[str, Any]], target_hour: datetime) -> list[dict[str, Any]]:
+        """Return the six-hour hourly window used by PM2.5 alert charts."""
+        window_start = target_hour - timedelta(hours=self.HOUR_TREND_LOOKBACK_HOURS)
+        window_end = target_hour + timedelta(hours=1)
+        return [
+            row for row in rows
+            if row.get("data_source") == "hour"
+            and row.get("data_time") is not None
+            and window_start <= _slot(row["data_time"], "hour") < window_end
+        ]
+
     def write_timeseries_chart(self, alert: dict[str, Any], rows: list[dict[str, Any]]) -> Path | None:
         """Render a station-comparison trend chart for an alert evidence package."""
         try:
@@ -541,23 +603,29 @@ class XuchangStationDeviationAlertService:
         if not field:
             return None
         station_id = str(alert.get("station_id") or "")
-        points: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
+        # 值为 None 的点表示该槽数据无效（带质控标识）：保留时间轴位置但
+        # 不画值，matplotlib 在 None 处断开折线，避免跨无效段连线。
+        points: dict[str, list[tuple[datetime, float | None]]] = defaultdict(list)
         station_names: dict[str, str] = {}
         for row in rows:
             current_id = str(row.get("station_id") or "")
             name = row.get("name") or row.get("station_name")
             if current_id and name:
                 station_names[current_id] = str(name)
-            value = _float(row.get(field))
             timestamp = row.get("data_time")
-            if value is None or not isinstance(timestamp, datetime):
+            if not isinstance(timestamp, datetime):
                 continue
             if row.get("data_source") != ("hour" if alert.get("measurement_granularity") == "hour" else "minute"):
                 continue
-            if row.get("data_source") == "minute" and _has_mark(row.get(f"{field}_mark")):
+            if _has_mark(row.get(f"{field}_mark")):
+                # 分钟表与小时表的质控标识均视为无效：该槽留空，折线断开。
+                points[current_id].append((timestamp, None))
                 continue
-            points[str(row.get("station_id") or "")].append((timestamp, value))
-        if not points:
+            value = _float(row.get(field))
+            if value is None:
+                continue
+            points[current_id].append((timestamp, value))
+        if not any(value is not None for values in points.values() for _timestamp, value in values):
             return None
         # The chart is for dispatch use: resolve every legend entry through
         # the station name returned by the monitoring tables and never expose
@@ -574,7 +642,7 @@ class XuchangStationDeviationAlertService:
         padding = max(timedelta(minutes=2.5), span * 0.05)
         ax.set_xlim(chart_start - padding, chart_end + padding)
         for current_id, values in sorted(points.items()):
-            values.sort()
+            values.sort(key=lambda item: item[0])
             ax.plot([item[0] for item in values], [item[1] for item in values], marker="o" if len(values) < 20 else None,
                     linewidth=2.2 if current_id == station_id else 1.0,
                     color="#d62728" if current_id == station_id else None,
@@ -596,17 +664,26 @@ class XuchangStationDeviationAlertService:
             except ValueError:
                 pass
         peer_mean = _float(alert.get("peer_mean"))
+        rule_type = str(alert.get("rule_type") or "")
         if peer_mean is not None:
             ax.axhline(peer_mean, color="#777777", linestyle=":", linewidth=1.2, label="其余站点均值")
             threshold = _float(alert.get("threshold"))
             absolute_threshold = _float(alert.get("absolute_delta_threshold")) or 0.0
+            if threshold is None and rule_type == "spatial_outlier":
+                detail = alert.get("detail") or {}
+                threshold = _float((detail.get("multiples_effective") or {}).get(3))
+                absolute_threshold = _float(detail.get("diff_floor")) or 0.0
             if threshold is not None:
                 trigger_line = max(peer_mean * (1 + threshold), peer_mean + absolute_threshold)
                 ax.axhline(trigger_line, color="#ff7f0e", linestyle="-.", linewidth=1.1, label="相对/绝对触发线")
         signal_labels = []
-        if alert.get("rule", "").startswith("six_consecutive"):
+        if rule_type == "continuous_rise" or str(alert.get("rule", "")).startswith("six_consecutive"):
             signal_labels.append("单站持续快速上升")
-        elif alert.get("peer_mean") is not None:
+        elif rule_type == "sudden_rise":
+            signal_labels.append("单站快速抬升")
+        elif rule_type == "limit_breach":
+            signal_labels.append("限值突破")
+        elif rule_type == "spatial_outlier" or peer_mean is not None:
             signal_labels.append("单站相对区域偏高")
         if alert.get("granularity") == "hour" or alert.get("measurement_granularity") == "hour":
             signal_labels.append("小时数据")
@@ -719,8 +796,7 @@ class XuchangStationDeviationAlertService:
         if not station_ids:
             return None
         cell_text = [[names.get(sid, "未命名站点")] + [
-            f"{latest[sid][p][1]:.2f}*" if p in latest[sid] and marked[sid][p] else
-            f"{latest[sid][p][1]:.2f}" if p in latest[sid] else "—"
+            f"{latest[sid][p][1]:.2f}" if p in latest[sid] and not marked[sid][p] else "—"
             for p in pollutants
         ] for sid in station_ids]
         fig, ax = plt.subplots(figsize=(11, max(2.8, 0.55 * len(cell_text) + 1.5)), dpi=160)
@@ -738,11 +814,8 @@ class XuchangStationDeviationAlertService:
                 if (sid, pollutant) in alerted:
                     cell.set_facecolor("#ffe0e0")
                     cell.set_edgecolor("#d62728"); cell.set_linewidth(2.0)
-                if marked[sid][pollutant]:
-                    cell.get_text().set_color("#888888")
-                    cell.get_text().set_fontstyle("italic")
         ax.set_title(
-            f"多因子污染物浓度综合表（{slot_key:%m-%d %H:%M} 快照，PM2.5 为上一小时值；红框为告警因子，灰色斜体*为带标识数据）",
+            f"多因子污染物浓度综合表（{slot_key:%m-%d %H:%M} 快照，PM2.5 为上一小时值；红框为告警因子，—为缺测或带标识（无效）数据）",
             fontproperties=font, pad=16)
         apply_font_to_figure(fig)
         event_id = alerts[0].get("event_id", "multifactor")
@@ -812,64 +885,119 @@ class XuchangStationDeviationAlertService:
         granularity: str = "5min",
         meteorology_summary: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # Run after the source five-minute slot closes; PM2.5 is still read
-        # from the most recently completed hourly record for that hour.
+        """分级告警主流程（算法文档 §10）：数据加载 → R1-R4 判定 → 区域豁免
+        → 推送管控链（冷却/防抖/限额/免打扰/合并）→ 证据产物 → 状态落盘。
+
+        PM10/SO2/NO2/CO/O3 逐 5 分钟槽判定；PM2.5 按小时版在整点槽触发
+        （§8、§10）。``result["alerts"]`` 只含通过推送管控的告警，被抑制的
+        候选在 ``result["suppressed_alerts"]`` 中给出原因。
+        """
         if granularity not in {"5min", "hour"}:
             raise ValueError("granularity must be '5min' or 'hour'")
-        target_slot = _slot(
-            target_time or datetime.now(TZ_SHANGHAI),
-            "hour" if granularity == "hour" else "minute",
-        )
+        now = target_time or datetime.now(TZ_SHANGHAI)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=TZ_SHANGHAI)
+        target_slot = _slot(now, "hour" if granularity == "hour" else "minute")
         rows, expected_station_count = self.load_station_rows(target_slot)
-        target_hour = _hour(target_slot).replace(tzinfo=None)
-        if granularity == "hour":
-            detection_rows = [
-                row for row in rows
-                if row.get("data_source") == "hour"
-                and _hour(row.get("data_time")) == target_hour - timedelta(hours=1)
-            ]
-        else:
-            detection_rows = [
-                row for row in rows
-                if (
-                    row.get("data_source") == "minute"
-                    and _slot(row.get("data_time"), "minute") == target_slot
-                )
-                or (
-                    row.get("data_source") == "hour"
-                    and _hour(row.get("data_time")) == target_hour - timedelta(hours=1)
-                )
-            ]
-        minute_trend_rows = self._minute_trend_rows(rows, target_slot) if granularity == "5min" else []
-        aqi_values = [row.get("aqi") for row in detection_rows if row.get("aqi") is not None]
-        air_quality_level = air_quality_level_from_aqi(max(aqi_values)) if aqi_values else None
-        result = detect_station_deviations(
-            detection_rows,
-            expected_station_count=expected_station_count.get("hour", 0),
-            expected_station_counts=expected_station_count,
-            config=self.config,
-            air_quality_level=air_quality_level,
-        )
+        config = load_air_alert_config(self.output_root)
+        allowlist = set(NATIONAL_STATION_CODES)
+
+        # 污染等级按站点 × 污染物 1h IAQI 定档，在规则引擎内部计算；
+        # 不利气象仅作为观测结论随结果输出，不再缩放规则阈值。
+        meteo_decision = evaluate_adverse_meteorology(meteorology_summary)
+
+        candidates: list[dict[str, Any]] = []
+        recovery_metrics: dict[tuple[str, str, str, str], float] = {}
+        checks: list[dict[str, Any]] = []
+        region_merged: list[dict[str, Any]] = []
         if granularity == "5min":
-            meteo_decision = evaluate_adverse_meteorology(meteorology_summary)
-            sensitivity = meteo_decision["sensitivity"]
-            result["alerts"].extend(
-                detect_continuous_rises(minute_trend_rows, config=self.config, sensitivity=sensitivity)
+            outcome = evaluate_five_minute_cycle(
+                rows,
+                target_slot=target_slot,
+                config=config,
+                states=self.alert_state_store,
+                expected_minute_count=expected_station_count.get("minute") or None,
+                station_allowlist=allowlist,
             )
-            unique: dict[str, dict[str, Any]] = {}
-            for alert in result["alerts"]:
-                unique[alert["event_id"]] = alert
-            result["alerts"] = list(unique.values())
+            candidates.extend(outcome.candidates)
+            recovery_metrics.update(outcome.recovery_metrics)
+            checks.extend(outcome.checks)
+            region_merged.extend(outcome.region_merged)
+            if target_slot.minute == 0:
+                # §10：整点槽追加触发 PM2.5 小时规则（上一完整小时）。
+                pm25_outcome = evaluate_pm25_hourly_cycle(
+                    rows,
+                    target_hour=_hour(target_slot) - timedelta(hours=1),
+                    config=config,
+                    states=self.alert_state_store,
+                    expected_hour_count=expected_station_count.get("hour") or None,
+                    station_allowlist=allowlist,
+                )
+                candidates.extend(pm25_outcome.candidates)
+                recovery_metrics.update(pm25_outcome.recovery_metrics)
+                checks.extend(pm25_outcome.checks)
+                region_merged.extend(pm25_outcome.region_merged)
+        else:
+            pm25_outcome = evaluate_pm25_hourly_cycle(
+                rows,
+                target_hour=_hour(target_slot) - timedelta(hours=1),
+                config=config,
+                states=self.alert_state_store,
+                expected_hour_count=expected_station_count.get("hour") or None,
+                station_allowlist=allowlist,
+            )
+            candidates.extend(pm25_outcome.candidates)
+            recovery_metrics.update(pm25_outcome.recovery_metrics)
+            checks.extend(pm25_outcome.checks)
+            region_merged.extend(pm25_outcome.region_merged)
+        # CL 区域合并的其余站点：以 regional_merge 抑制留痕（不推送、不占
+        # 冷却），其通报内容已由主告警（region_stations 清单）承载——流水里
+        # 用 merged_into_event_id 指回主告警，保证事后可审计。
+        merged_into: dict[tuple[str, str, str], str] = {}
+        for alert in candidates:
+            stations = (alert.get("detail") or {}).get("region_stations") or []
+            for item in stations:
+                merged_into[(
+                    str(alert.get("measurement_granularity")),
+                    str(item.get("station_id")),
+                    str(alert.get("target_pollutant")),
+                )] = str(alert.get("event_id"))
+        for alert in region_merged:
+            alert["suppress_reason"] = "regional_merge"
+            # MR 覆盖的单站候选在引擎层已直接指回 MR 事件（其站点不在主告警
+            # region_stations 清单内），这里只在映射命中时回填，不覆盖引擎值。
+            alert["merged_into_event_id"] = (
+                merged_into.get((
+                    str(alert.get("measurement_granularity")),
+                    str(alert.get("station_id")),
+                    str(alert.get("target_pollutant")),
+                ))
+                or alert.get("merged_into_event_id")
+            )
+        suppressed_pre = [{"alert": alert, "reason": "regional_merge"} for alert in region_merged]
+
+        pushed, suppressed, window_summary = apply_push_chain(
+            candidates,
+            store=self.alert_state_store,
+            config=config,
+            now=now,
+            log_store=self.push_log_store,
+            recovery_metrics=recovery_metrics,
+            pre_suppressed=suppressed_pre,
+        )
+
+        minute_trend_rows = self._minute_trend_rows(rows, target_slot) if granularity == "5min" else []
+        hour_trend_rows = self._hour_trend_rows(rows, _hour(target_slot) - timedelta(hours=1))
         events = []
         alerts_by_station: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for alert in result["alerts"]:
+        for alert in pushed:
             alerts_by_station[str(alert.get("station_id") or "")].append(alert)
         multifactor_paths = {
             sid: self.write_multifactor_table(items, rows)
             for sid, items in alerts_by_station.items()
             if len({_observed_indicator(a.get("target_pollutant")) for a in items}) >= 2
         }
-        for alert in result["alerts"]:
+        for alert in pushed:
             # Reuse the daily review's composition model. It selects minute
             # pollutants with the matching hourly PM2.5 value when available.
             alert["pollutant_source_features"] = calculate_pollutant_source_features(
@@ -884,6 +1012,8 @@ class XuchangStationDeviationAlertService:
             chart_rows = rows
             if granularity == "5min" and alert.get("measurement_granularity") == "5min":
                 chart_rows = minute_trend_rows
+            elif alert.get("measurement_granularity") == "hour":
+                chart_rows = hour_trend_rows
             chart_path = self.write_timeseries_chart(alert, chart_rows)
             if chart_path is not None:
                 alert["timeseries_chart_path"] = format_agent_path(chart_path)
@@ -900,15 +1030,36 @@ class XuchangStationDeviationAlertService:
                 alert["multifactor_table"] = {"path": alert["multifactor_table_path"], "pollutants": ["PM2.5", "PM10", "SO2", "NO2", "CO", "O3"]}
             path = self._write_event(alert)
             events.append({**alert, "event_json_path": format_agent_path(path)})
-        return {
+        watch_observations = (
+            collect_boundary_observations(rows, target_slot=target_slot, config=config)
+            if granularity == "5min" and watchkeeping_shadow_enabled()
+            else []
+        )
+        result = {
             "city": self.config.city,
             "target_slot": target_slot.isoformat(),
             "target_hour": target_slot.isoformat(),
             "expected_station_count": expected_station_count,
             "rows": len(rows),
             "alerts": events,
-            "checks": result["checks"],
+            "suppressed_alerts": [
+                {
+                    "event_id": item["alert"].get("event_id"),
+                    "station_id": item["alert"].get("station_id"),
+                    "target_pollutant": item["alert"].get("target_pollutant"),
+                    "rule_type": item["alert"].get("rule_type"),
+                    "air_quality_level": item["alert"].get("air_quality_level"),
+                    "reason": item["reason"],
+                }
+                for item in suppressed
+            ],
+            "window_summary": window_summary,
+            "checks": checks,
             "granularity": granularity,
-            "air_quality_level": air_quality_level,
-            "meteorology_decision": evaluate_adverse_meteorology(meteorology_summary),
+            "meteorology_decision": meteo_decision,
+            "watch_observations": watch_observations,
         }
+        if watch_observations:
+            # 第一阶段只记录值守判断；正式告警及所有实际推送保持原链路。
+            result["watchkeeping"] = await self.watchkeeping_agent.observe(result, self.output_root)
+        return result

@@ -24,6 +24,38 @@ const routes = [
       meta: { public: true, title: '平台免登录' }
     },
     {
+      path: '/bigscreen',
+      name: 'bigscreen',
+      component: () => import('@/views/xuchang/BigScreenView.vue'),
+      meta: {
+        requiredModule: 'xuchang-air-quality',
+        title: '数据大屏',
+        allowDashboardToken: true
+      }
+    },
+    {
+      path: '/mobile-map',
+      name: 'mobile-map',
+      component: () => import('@/views/xuchang/MobileMapView.vue'),
+      meta: {
+        requiredModule: 'xuchang-air-quality',
+        title: '实时地图',
+        allowDashboardToken: true,
+        adminOnly: true
+      }
+    },
+    {
+      path: '/fieldwatch',
+      name: 'fieldwatch',
+      component: () => import('@/views/xuchang/FieldWatchView.vue'),
+      meta: {
+        requiredModule: 'xuchang-air-quality',
+        title: '现场巡查快报（测试）',
+        allowDashboardToken: true,
+        adminOnly: true
+      }
+    },
+    {
       path: '/',
       name: 'analysis',
       component: ReactAnalysisView

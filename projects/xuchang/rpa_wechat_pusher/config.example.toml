@@ -1,0 +1,23 @@
+# 许昌站点告警微信群推送 agent 配置
+# 复制为 config.toml 后填写；config.toml 含令牌，已列入 .gitignore，勿提交。
+
+[backend]
+# 后端部署地址（结尾不带斜杠）
+base_url = "http://127.0.0.1:8000"
+# 与后端 .env 的 XUCHANG_WECHAT_PUSH_TOKEN 保持一致
+token = "change-me"
+
+[wechat]
+# 目标微信群名（会话列表显示的名字，建议在微信里置顶该群并确保群名唯一）
+group_name = "许昌大气管控群"
+# 加在每条消息前的前缀；留空则原样发送
+message_prefix = "【站点告警】"
+
+[agent]
+# 轮询间隔（秒）。告警每 5 分钟一批，15 秒延迟足够；最小建议不低于 5
+poll_interval_seconds = 15
+# 单条消息发送失败后本轮内重试次数（重试仍失败则回执 failed，
+# 后端累计 3 次失败后归档停发，等人工处理）
+send_retry = 2
+send_retry_delay_seconds = 3
+http_timeout_seconds = 10

@@ -57,6 +57,19 @@
           </div>
         </button>
         <button
+          v-if="showBigScreen"
+          class="module-card"
+          :class="{ active: isActive('big-screen') }"
+          type="button"
+          @click="handleModuleSelect('big-screen')"
+          :title="isCollapsed ? '数据大屏' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('big-screen')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">数据大屏</p>
+          </div>
+        </button>
+        <button
           class="module-card"
           :class="{ active: isActive('knowledge-base') }"
           type="button"
@@ -507,6 +520,15 @@ const allModules = [
     isAction: true
   },
   {
+    id: 'big-screen',
+    name: '数据大屏',
+    abbr: '大屏',
+    desc: '大气环境管控实时态势大屏',
+    badge: '大屏',
+    isAction: true,
+    requiredModule: 'xuchang-air-quality'
+  },
+  {
     id: 'query-dashboard',
     name: '智能问数',
     abbr: '问数',
@@ -621,6 +643,10 @@ const modules = filterSidebarModules(allModules, projectConfig.hasModule)
 
 // 共享对话按项目模块声明显隐：project.yaml modules 含 shared-conversations 才展示。
 const showSharedConversations = projectConfig.hasModule('shared-conversations')
+
+// 数据大屏按项目模块声明显隐：project.yaml modules 含 xuchang-air-quality 才展示。
+// 已开放给全部登录用户，不再限超级管理员。
+const showBigScreen = projectConfig.hasModule('xuchang-air-quality')
 
 const SIDEBAR_AGENT_MODE_ENTRIES = {
   query: { action: 'query-dashboard', title: '智能问数', icon: 'query-dashboard' },
@@ -754,6 +780,12 @@ const moduleIcons = {
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 11v5" />
       <path d="M12 7.5h.01" />
+    </svg>
+  `,
+  'big-screen': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="2.5" y="4.5" width="19" height="13" rx="1.5" />
+      <path d="M8 20.5h8M12 17.5v3" />
     </svg>
   `
 }

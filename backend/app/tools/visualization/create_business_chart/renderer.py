@@ -64,6 +64,8 @@ SPECIALIZED_CHART_TYPES = {
     "city_boundary_map",
     # 许昌项目专用：河南省城市级 AQI/污染物地图（xuchang 分支叠加）。
     "henan_city_map",
+    # 许昌项目专用：许昌市 9 区县 AQI/污染物地图（xuchang 分支叠加）。
+    "xuchang_district_map",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
 

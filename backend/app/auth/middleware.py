@@ -100,6 +100,10 @@ class GatewayAuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
+        if method in {"GET", "POST"} and self._valid_wechat_push_access(scope, path):
+            await self.app(scope, receive, send)
+            return
+
         if method in {"GET", "POST"} and self._valid_wecom_callback(path):
             await self.app(scope, receive, send)
             return
@@ -245,6 +249,27 @@ class GatewayAuthenticationMiddleware:
         query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
         supplied = (query.get("access_token") or [""])[0]
         return bool(supplied) and hmac.compare_digest(supplied, configured)
+
+    def _valid_wechat_push_access(self, scope: Scope, path: str) -> bool:
+        """部署级机器令牌：放行配置前缀（xuchang_wechat_push_api_prefix）的
+        GET/POST，供微信群 RPA 推送 agent 免网关登录取消息/回执。
+
+        令牌或前缀为空（默认）时整体禁用；启用前缀的路由层仍需复核
+        同一令牌，中间件放行不会绕过鉴权语义。
+        """
+        configured = getattr(self.settings, "xuchang_wechat_push_token", "")
+        prefix = getattr(self.settings, "xuchang_wechat_push_api_prefix", "")
+        if not configured or not prefix or not path.startswith(prefix):
+            return False
+        scheme, separator, token = Headers(scope=scope).get(
+            "authorization", ""
+        ).partition(" ")
+        return (
+            scheme.lower() == "bearer"
+            and bool(separator)
+            and bool(token.strip())
+            and hmac.compare_digest(token.strip(), configured)
+        )
 
     def _valid_wecom_callback(self, path: str) -> bool:
         """Exact-match whitelist for the WeCom (企业微信) server callback.

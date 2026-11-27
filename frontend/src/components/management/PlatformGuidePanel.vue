@@ -6,16 +6,29 @@
     </div>
 
     <div class="guide-body">
-      <section v-if="usageModes.length" class="guide-section">
+      <p v-if="guideIntro" class="guide-intro">{{ guideIntro }}</p>
+
+      <section v-if="modeGroups.length || usageModes.length" class="guide-section">
         <h4 class="guide-title">如何选择使用模式</h4>
-        <div class="mode-grid">
+        <div v-for="group in modeGroups" :key="group.scene || group.sceneName" class="mode-group">
+          <h5 class="mode-group-title">{{ group.sceneName }}</h5>
+          <div class="mode-grid">
+            <div v-for="mode in group.modes" :key="mode.name" class="mode-card">
+              <p class="mode-name">{{ mode.name }}</p>
+              <p class="mode-desc">{{ mode.desc }}</p>
+              <p class="mode-example">"{{ mode.example }}"</p>
+            </div>
+          </div>
+        </div>
+        <div v-if="!modeGroups.length" class="mode-grid">
           <div v-for="mode in usageModes" :key="mode.name" class="mode-card">
             <p class="mode-name">{{ mode.name }}</p>
             <p class="mode-desc">{{ mode.desc }}</p>
             <p class="mode-example">"{{ mode.example }}"</p>
           </div>
         </div>
-        <p v-if="modeMotto" class="mode-motto">{{ modeMotto }}</p>      </section>
+        <p v-if="modeMotto" class="mode-motto">{{ modeMotto }}</p>
+      </section>
 
       <section v-if="dataSourceGroups.length" class="guide-section">
         <h4 class="guide-title">数据接入情况</h4>
@@ -31,9 +44,10 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width: 24%">数据类别</th>
+                  <th style="width: 22%">数据类别</th>
                   <th style="width: 10%">粒度</th>
                   <th style="width: 18%">实际可用时间范围</th>
+                  <th v-if="group.hasSync" style="width: 16%">更新频次</th>
                   <th>说明</th>
                 </tr>
               </thead>
@@ -42,6 +56,7 @@
                   <td class="cell-name">{{ row.name }}</td>
                   <td>{{ row.granularity }}</td>
                   <td class="cell-range">{{ row.range }}</td>
+                  <td v-if="group.hasSync" class="cell-sync">{{ row.sync }}</td>
                   <td class="cell-desc">{{ row.desc }}</td>
                 </tr>
               </tbody>
@@ -50,7 +65,14 @@
         </div>
       </section>
 
-      <p v-if="!usageModes.length && !dataSourceGroups.length" class="guide-empty">
+      <section v-if="notices.length" class="guide-section">
+        <h4 class="guide-title">使用须知</h4>
+        <ul class="notice-list">
+          <li v-for="notice in notices" :key="notice">{{ notice }}</li>
+        </ul>
+      </section>
+
+      <p v-if="isEmpty" class="guide-empty">
         共享版本不内置使用说明，内容由各项目分支按实际模式与数据接入情况维护。
       </p>
     </div>
@@ -58,12 +80,39 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+
+import { projectConfig } from '@/config/projectConfig'
+import { AGENT_SCENES } from '@/config/agentModes'
+
 defineEmits(['close'])
 
-// 共享段不内置任何项目定制内容：模式介绍、口诀与数据接入表由各项目分支维护。
-const usageModes = []
-const dataSourceGroups = []
-const modeMotto = ''
+// 面板只负责渲染：模式介绍、数据接入表与使用须知由各项目分支在
+// projects/<id>/project.yaml 的 frontend.platform_guide 下维护。
+const guide = projectConfig.platformGuide
+
+const guideIntro = computed(() => guide?.intro || '')
+const modeMotto = computed(() => guide?.modeMotto || '')
+const modeGroups = computed(() => (guide?.modeGroups || []).map(group => ({
+  ...group,
+  sceneName: group.sceneName
+    || AGENT_SCENES.find(scene => scene.id === group.scene)?.name
+    || group.scene
+})))
+const usageModes = computed(() => guide?.usageModes || [])
+const dataSourceGroups = computed(() => (guide?.dataGroups || []).map(group => ({
+  ...group,
+  hasSync: group.rows.some(row => Boolean(row.sync))
+})))
+const notices = computed(() => guide?.notices || [])
+
+const isEmpty = computed(() => (
+  !guideIntro.value
+  && !modeGroups.value.length
+  && !usageModes.value.length
+  && !dataSourceGroups.value.length
+  && !notices.value.length
+))
 </script>
 
 <style scoped>
@@ -112,6 +161,16 @@ const modeMotto = ''
   gap: 24px;
 }
 
+.guide-intro {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgba(64, 128, 255, 0.06);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-1);
+}
+
 .guide-section {
   margin-bottom: 8px;
 }
@@ -134,6 +193,19 @@ const modeMotto = ''
   text-align: center;
   font-size: 13px;
   color: var(--text-2);
+}
+
+.mode-group {
+  margin-bottom: 18px;
+}
+
+.mode-group-title {
+  margin: 0 0 10px;
+  padding-left: 8px;
+  border-left: 3px solid var(--color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
 }
 
 .mode-grid {
@@ -237,8 +309,27 @@ const modeMotto = ''
   color: var(--text-1);
 }
 
+.cell-sync {
+  color: var(--text-1);
+  line-height: 1.5;
+}
+
 .cell-desc {
   color: var(--text-2);
   line-height: 1.5;
+}
+
+.notice-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notice-list li {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-1);
 }
 </style>

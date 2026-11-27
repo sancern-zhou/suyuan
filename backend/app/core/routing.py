@@ -105,6 +105,16 @@ ROUTER_REGISTRY = [
         description="Xuchang hourly air quality forecast",
         owner="xuchang-air-quality",
     ),
+    RouterSpec(
+        "app.api.xuchang_dashboard_routes",
+        description="Xuchang big-screen dashboard snapshot",
+        owner="xuchang-air-quality",
+    ),
+    RouterSpec(
+        "app.api.xuchang_wechat_push_routes",
+        description="Xuchang WeChat-group RPA push queue (agent pull/ack)",
+        owner="xuchang-air-quality",
+    ),
     # System routes are registered last to preserve app/main.py route ordering.
     RouterSpec("app.api.system", description="System routes", owner="core"),
 ]

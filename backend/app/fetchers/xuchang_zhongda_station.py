@@ -35,6 +35,10 @@ from Crypto.PublicKey import RSA
 
 from config.settings import settings
 from app.fetchers.base.fetcher_interface import DataFetcher
+from app.integrations.xuchang.town_cloud_client import (
+    CAPTCHA_VISION_CANDIDATES,
+    _vision_endpoint,
+)
 from app.integrations.xcai_station_sql import xcai_connection_string
 
 logger = structlog.get_logger()
@@ -116,6 +120,25 @@ _LOCKOUT_PATTERN = re.compile(r"连续登录失败|10分钟")
 # 直接换图重读，不提交登录（避免消耗平台的连续失败计数）。
 _CAPTCHA_SHAPE = re.compile(r"[0-9A-Za-z]{4}")
 LOCKOUT_SECONDS = 630  # 10.5 分钟，留少量余量
+# 连续锁定退避：第 n 次锁定在 LOCKOUT_SECONDS 基础上每次加 2 分钟，
+# 封顶 +50 分钟。防止"锁解除→OCR 又错→再锁"循环锤击；若平台实际锁定
+# 长于宣传的 10 分钟，尝试间隔会逐步拉长，登录成功后计数清零自动恢复。
+_LOCK_BACKOFF_STEP_SECONDS = 120
+_LOCK_BACKOFF_MAX_STEPS = 25
+_LOCK_COUNT_TTL_SECONDS = 7200  # 连续锁定计数 2 小时无锁定即归零
+
+# 跨进程（web x3 + worker）共享的登录锁定/互斥水位：worker 单例只覆盖
+# 本进程，2026-11-15 的 24h+ 持续锁定表明多 fetcher 轮番锤击会把平台
+# 10 分钟锁无限续期；Redis 水位让所有进程在锁定窗口内直接跳过。
+_ZHONGDA_LOCK_KEY = "suyuan:fetcher:zhongda_login_locked_until"
+_ZHONGDA_LOCK_COUNT_KEY = "suyuan:fetcher:zhongda_login_lock_count"
+_ZHONGDA_ATTEMPT_KEY = "suyuan:fetcher:zhongda_login_attempt"
+_ATTEMPT_LOCK_TTL_SECONDS = 180  # 覆盖 3 次重试 × (30s 超时 + 1s 间隔)
+
+_VISION_CAPTCHA_PROMPT = (
+    "识别图中的验证码，只输出图中全部字符（4位字母或数字），"
+    "不要思考过程，不要其他文字。"
+)
 
 # 城市接口的 DataTypePlan 按规划期互斥：查询窗口落在哪个规划期就必须用哪个
 # 参数，用错返回空数组（实测 145th 查 2026 年为空，155th 查 2025-12 也为空）。
@@ -150,7 +173,15 @@ def split_window_by_plan(start: datetime, end: datetime) -> list[tuple[str, date
 class ZhongdaSession:
     """Authenticate against the 中大 platform and issue authenticated requests."""
 
-    def __init__(self, base_url: str, username: str, password: str, timeout: float, retries: int) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        username: str,
+        password: str,
+        timeout: float,
+        retries: int,
+        redis_client: Any | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
@@ -159,6 +190,10 @@ class ZhongdaSession:
         self._session: requests.Session | None = None
         self._ocr = None
         self._locked_until = 0.0
+        self._redis_client = redis_client
+        self._attempt_token: str | None = None
+        # OCR 答错后置位：后续 login() 调用直接走视觉候选链（跨调用记忆）
+        self._prefer_vision = False
 
     def _get_ocr(self):
         if self._ocr is None:
@@ -166,6 +201,84 @@ class ZhongdaSession:
 
             self._ocr = ddddocr.DdddOcr(show_ad=False)
         return self._ocr
+
+    # ---- 跨进程锁定水位（Redis，挂了降级进程内） ---------------------------
+    def _redis(self):
+        if self._redis_client is None:
+            import redis as redis_lib
+
+            self._redis_client = redis_lib.Redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
+        return self._redis_client
+
+    def _locked_until_shared(self) -> float:
+        """读取当前锁定截止时刻；Redis 优先，失败回退进程内水位。"""
+        try:
+            value = self._redis().get(_ZHONGDA_LOCK_KEY)
+            if value is not None:
+                return float(value)
+        except Exception:  # noqa: BLE001 - Redis 不可用时降级进程内
+            pass
+        return self._locked_until
+
+    def _set_shared_lock(self) -> float:
+        """登记一次平台锁定；返回本次锁定截止时刻（含连续锁定退避）。"""
+        backoff = LOCKOUT_SECONDS
+        try:
+            count = int(self._redis().incr(_ZHONGDA_LOCK_COUNT_KEY) or 1)
+            self._redis().expire(_ZHONGDA_LOCK_COUNT_KEY, _LOCK_COUNT_TTL_SECONDS)
+            backoff += min(count - 1, _LOCK_BACKOFF_MAX_STEPS) * _LOCK_BACKOFF_STEP_SECONDS
+        except Exception:  # noqa: BLE001 - Redis 不可用时退回固定窗口
+            pass
+        until = time.time() + backoff
+        self._locked_until = until
+        try:
+            self._redis().set(
+                _ZHONGDA_LOCK_KEY,
+                f"{until:.3f}",
+                ex=max(int(backoff) + 60, 60),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return until
+
+    def _clear_shared_lock(self) -> None:
+        """登录成功：清除锁定水位与连续锁定计数。"""
+        self._locked_until = 0.0
+        try:
+            self._redis().delete(_ZHONGDA_LOCK_KEY, _ZHONGDA_LOCK_COUNT_KEY)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _acquire_attempt_lock(self) -> bool:
+        """登录互斥：同一时刻只允许一个进程实际发起登录，避免多进程叠锤。"""
+        token = f"{time.time():.3f}"
+        try:
+            acquired = bool(
+                self._redis().set(
+                    _ZHONGDA_ATTEMPT_KEY, token, nx=True, ex=_ATTEMPT_LOCK_TTL_SECONDS
+                )
+            )
+        except Exception:  # noqa: BLE001 - Redis 不可用时 fail-open
+            return True
+        if acquired:
+            self._attempt_token = token
+        return acquired
+
+    def _release_attempt_lock(self) -> None:
+        token = self._attempt_token
+        self._attempt_token = None
+        if not token:
+            return
+        try:
+            if self._redis().get(_ZHONGDA_ATTEMPT_KEY) == token:
+                self._redis().delete(_ZHONGDA_ATTEMPT_KEY)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _extract_public_key(self, html: str) -> str:
         m = re.search(
@@ -181,66 +294,153 @@ class ZhongdaSession:
         cipher = PKCS1_v1_5.new(key)
         return base64.b64encode(cipher.encrypt(value.encode("utf-8"))).decode()
 
-    def _read_captcha(self, session: requests.Session) -> str:
-        """读取并识别验证码；形态明显异常时换图重读（最多3次），不提交明显误读。"""
+    def _query_vision_model(
+        self, base_url: str, api_key: str, model: str, image_b64: str
+    ) -> str | None:
+        """调用单个视觉模型识别字符验证码，返回原始文本；失败返回 None。"""
+        try:
+            resp = requests.post(
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{image_b64}"
+                                    },
+                                },
+                                {"type": "text", "text": _VISION_CAPTCHA_PROMPT},
+                            ],
+                        }
+                    ],
+                    "max_tokens": 1024,
+                    "temperature": 0,
+                    "thinking": {"type": "disabled"},
+                },
+                timeout=60,
+            )
+            resp.raise_for_status()
+            choice = (resp.json().get("choices") or [{}])[0]
+            return (choice.get("message") or {}).get("content") or ""
+        except Exception as exc:  # noqa: BLE001 - 视觉服务异常按该候选失败处理
+            logger.warning("zhongda_vision_captcha_failed", model=model, error=str(exc))
+            return None
+
+    def _read_captcha_with_vision(self, image_bytes: bytes) -> str | None:
+        """遍历视觉候选链识别字符验证码；全部失败返回 None。"""
+        image_b64 = base64.b64encode(image_bytes).decode()
+        for provider, model in CAPTCHA_VISION_CANDIDATES:
+            endpoint = _vision_endpoint(provider)
+            if endpoint is None:
+                continue
+            base_url, api_key = endpoint
+            code = (self._query_vision_model(base_url, api_key, model, image_b64) or "").strip()
+            if _CAPTCHA_SHAPE.fullmatch(code):
+                return code
+            logger.warning("zhongda_captcha_candidate_missed", model=model, read=code)
+        return None
+
+    def _read_captcha(self, session: requests.Session, use_vision: bool = False) -> str:
+        """读取并识别验证码；形态明显异常时换图重读（最多4次），不提交明显误读。"""
         code = ""
         for _ in range(4):
             vc_resp = session.get(
                 f"{self.base_url}/Img/GetImgVerifyChars", timeout=self.timeout
             )
             vc_resp.raise_for_status()
-            code = (self._get_ocr().classification(vc_resp.content) or "").strip()
+            if use_vision:
+                code = self._read_captcha_with_vision(vc_resp.content) or ""
+            else:
+                code = (self._get_ocr().classification(vc_resp.content) or "").strip()
             if _CAPTCHA_SHAPE.fullmatch(code):
                 return code
-            logger.warning("zhongda_captcha_shape_retry", read=code)
+            logger.warning(
+                "zhongda_captcha_shape_retry", mode="vision" if use_vision else "ocr", read=code
+            )
         return code
 
     def login(self) -> requests.Session:
         """Login (solving captcha, retrying on failure) and return an authed session."""
-        wait = self._locked_until - time.time()
+        wait = self._locked_until_shared() - time.time()
         if wait > 0:
             raise RuntimeError(f"中大平台登录锁定中，约 {int(wait)}s 后解除，本次跳过")
+        if not self._acquire_attempt_lock():
+            raise RuntimeError("其他进程正在登录中大平台，本次跳过，等下一轮")
+        attempts_made = 0
         last_err = None
-        for attempt in range(1, self.retries + 1):
-            session = requests.Session()
-            session.headers.update({"User-Agent": "suyuan-xuchang-zhongda-fetcher/1.0"})
-            try:
-                page = session.get(
-                    f"{self.base_url}/Account/Login?ReturnUrl=/", timeout=self.timeout
-                )
-                page.raise_for_status()
-                pem = self._extract_public_key(page.text)
-
-                code = self._read_captcha(session)
-
-                payload = {
-                    "b": self._rsa_encrypt(self.username, pem),
-                    "a": self._rsa_encrypt(self.password, pem),
-                    "VcCode": self._rsa_encrypt(code, pem),
-                }
-                result = session.post(
-                    f"{self.base_url}/Account/Login", data=payload, timeout=self.timeout
-                ).json()
-                if result.get("isSucceed"):
-                    logger.info("zhongda_login_ok", attempt=attempt, username=self.username)
-                    self._session = session
-                    return session
-                msg = str(result.get("msg") or "")
-                last_err = f"登录失败 msg={msg} code={code}"
-                if _LOCKOUT_PATTERN.search(msg):
-                    # 平台已锁定：停止重试，避免锤击延长锁定窗口。
-                    self._locked_until = time.time() + LOCKOUT_SECONDS
-                    logger.warning(
-                        "zhongda_login_locked_out",
-                        unlock_in_seconds=LOCKOUT_SECONDS,
-                        msg=msg,
+        use_vision = self._prefer_vision
+        try:
+            for attempt in range(1, self.retries + 1):
+                attempts_made = attempt
+                session = requests.Session()
+                session.headers.update({"User-Agent": "suyuan-xuchang-zhongda-fetcher/1.0"})
+                try:
+                    page = session.get(
+                        f"{self.base_url}/Account/Login?ReturnUrl=/", timeout=self.timeout
                     )
-                    break
-            except Exception as exc:  # noqa: BLE001 - 验证码识别失败需重试
-                last_err = f"{type(exc).__name__}: {exc}"
-            logger.warning("zhongda_login_retry", attempt=attempt, reason=last_err)
-            time.sleep(1)
-        raise RuntimeError(f"中大平台登录失败（已重试 {self.retries} 次）: {last_err}")
+                    page.raise_for_status()
+                    pem = self._extract_public_key(page.text)
+
+                    code = self._read_captcha(session, use_vision=use_vision)
+                    if not _CAPTCHA_SHAPE.fullmatch(code):
+                        # 识别失败不提交：提交错误验证码会消耗平台连续失败计数
+                        last_err = f"验证码识别失败（mode={'vision' if use_vision else 'ocr'}），跳过提交"
+                        logger.warning("zhongda_captcha_unsolvable", reason=last_err)
+                        continue
+
+                    payload = {
+                        "b": self._rsa_encrypt(self.username, pem),
+                        "a": self._rsa_encrypt(self.password, pem),
+                        "VcCode": self._rsa_encrypt(code, pem),
+                    }
+                    result = session.post(
+                        f"{self.base_url}/Account/Login", data=payload, timeout=self.timeout
+                    ).json()
+                    if result.get("isSucceed"):
+                        logger.info(
+                            "zhongda_login_ok",
+                            attempt=attempt,
+                            mode="vision" if use_vision else "ocr",
+                            username=self.username,
+                        )
+                        self._session = session
+                        self._prefer_vision = False
+                        self._clear_shared_lock()
+                        return session
+                    msg = str(result.get("msg") or "")
+                    last_err = f"登录失败 msg={msg} code={code}"
+                    if "验证码" in msg or _LOCKOUT_PATTERN.search(msg):
+                        # OCR 答错（含撞上锁定：窗口内已有失败计数，本次答案
+                        # 大概率也错）：置位视觉偏好并持久化到实例，让下一次
+                        # login()（可能是锁定解除后的第一轮）直接走视觉候选链。
+                        use_vision = True
+                        self._prefer_vision = True
+                    if _LOCKOUT_PATTERN.search(msg):
+                        # 平台已锁定：停止重试，登记共享水位并带退避，避免锤击延长锁定。
+                        until = self._set_shared_lock()
+                        logger.warning(
+                            "zhongda_login_locked_out",
+                            unlock_in_seconds=max(int(until - time.time()), 0),
+                            msg=msg,
+                        )
+                        break
+                except Exception as exc:  # noqa: BLE001 - 验证码识别失败需重试
+                    last_err = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "zhongda_login_retry",
+                    attempt=attempt,
+                    mode="vision" if use_vision else "ocr",
+                    reason=last_err,
+                )
+                time.sleep(1)
+        finally:
+            self._release_attempt_lock()
+        raise RuntimeError(f"中大平台登录失败（尝试 {attempts_made} 次）: {last_err}")
 
     def get_session(self) -> requests.Session:
         if self._session is None:

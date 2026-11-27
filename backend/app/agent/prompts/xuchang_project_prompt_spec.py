@@ -31,6 +31,16 @@ def test_xuchang_query_prompt_combines_query_and_chart_workflows():
     assert "网页交互查看的 ECharts 图表" in prompt
 
 
+def test_xuchang_query_prompt_defaults_to_actual_state_data():
+    prompt = load_project_mode_prompt("query", load_project_context("xuchang"))
+
+    assert prompt is not None
+    assert "默认只查询并回答实况数据" in prompt
+    assert "仅在用户明确要求标况或实况/标况对比时才查询标况" in prompt
+    assert "状态口径与原始/审核、实时/定版、考核口径不是同一维度" in prompt
+    assert "数据源未说明差异原因时不得自行解释" in prompt
+
+
 def test_xuchang_report_prompt_uses_dynamic_workflow_contract():
     context = load_project_context("xuchang")
     prompt = load_project_mode_prompt("report", context)
@@ -46,36 +56,39 @@ def test_xuchang_report_prompt_uses_dynamic_workflow_contract():
     assert "template_options" not in prompt
 
 
-def test_xuchang_social_prompt_targets_mobile_query_workflow():
+def test_xuchang_social_prompt_coordinates_office_and_unified_schedules():
     context = load_project_context("xuchang")
-    prompt = load_project_mode_prompt("social", context)
+    prompt = load_project_mode_prompt("assistant", context)
 
     assert prompt is not None
-    assert "许昌市问数分析助理" in prompt
-    assert "## 项目长期地理信息" in prompt
-    assert "中国河南省许昌市" in prompt
-    assert "`411000`" in prompt
-    assert "## 数据源选择" in prompt
-    assert "`get_weather_data`" in prompt
-    assert "`XuchangNmcHourlyWeatherForecast`" in prompt
-    assert "不得凭记忆或猜测补数" in prompt
-    assert "微信端没有右侧面板预览" in prompt
-    assert "`schedule_task`" in prompt
-    assert "`send_notification`" in prompt
+    assert "助手模式" in prompt
+    assert "411000" in prompt
+    assert 'target_mode="office"' in prompt
+    assert "不直接查询业务或气象数据" in prompt
+    assert "manage_assistant_schedule" in prompt
+    assert "manage_assistant_memory" in prompt
+    assert "manage_assistant_runs" in prompt
+    assert "plan_id/revision" in prompt
 
 
 def test_xuchang_social_tool_whitelist_matches_prompt_intent():
     context = load_project_context("xuchang")
-    tools = context.manifest.backend.agent_mode_tools.get("social", [])
+    tools = context.manifest.backend.agent_mode_tools.get("assistant", [])
 
-    assert "execute_sql_query" in tools
-    assert "get_weather_data" in tools
-    assert "get_weather_forecast" in tools
-    assert "knowledge_qa_workflow" in tools
-    assert "schedule_task" in tools
+    assert "execute_sql_query" not in tools
+    assert "get_weather_data" not in tools
+    assert "get_weather_forecast" not in tools
+    assert "knowledge_qa_workflow" not in tools
+    assert "schedule_task" not in tools
+    assert "create_scheduled_task" not in tools
+    assert "manage_scheduled_tasks" not in tools
+    assert "manage_assistant_schedule" in tools
+    assert {"read_file", "edit_file"}.issubset(tools)
+    assert "wait_task" not in tools
+    assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(tools)
     assert "send_notification" in tools
     assert "bash" not in tools
-    assert "call_sub_agent" not in tools
+    assert "call_sub_agent" in tools
     assert "cli_session" not in tools
 
 
@@ -97,7 +110,7 @@ def test_xuchang_expert_mode_exposes_project_data_query_tools():
         "airdata_calc_report_summary",
         "xuchang_station_catalog",
         "query_national_province_air_quality",
-        "query_national_city_air_quality",
+        # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
         "resolve_station_geo",
     }.issubset(expert_tools)
 

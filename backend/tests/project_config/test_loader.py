@@ -98,7 +98,6 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "nmc_weather_chart",
         "xuchang_daily_attainment_forecast_fetcher",
         "xuchang_annual_attainment_forecast_fetcher",
-        "xuchang_cnemc_station_hour_fetcher",
         "xuchang_city_exceedance_fetcher",
         "xuchang_henan_month_year_accumulate_fetcher",
         "xuchang_nmc_hourly_forecast_fetcher",

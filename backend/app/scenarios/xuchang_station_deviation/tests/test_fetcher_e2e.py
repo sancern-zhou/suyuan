@@ -9,29 +9,36 @@ from app.scenarios.xuchang_station_deviation.episodes import (
 )
 
 
+def _alert(**overrides):
+    alert = {
+        "event_id": "scenario-1-e2e",
+        "event_type": "xuchang.station_deviation.alert_created",
+        "occurred_at": "2026-08-05T01:00:00+08:00",
+        "city": "许昌市",
+        "target_pollutant": "PM2.5",
+        "station_id": "test-station",
+        "station_name": "测试站",
+        "lat": 34.07,
+        "lon": 113.92,
+        "station_value": 100.0,
+        "peer_mean": 40.0,
+        "deviation_percent": 150.0,
+        "threshold": 0.5,
+        "available_station_count": 6,
+    }
+    alert.update(overrides)
+    return alert
+
+
 class _ScenarioService:
-    def __init__(self, output_root: Path):
+    def __init__(self, output_root: Path, alerts: list | None = None):
         self.output_root = output_root
+        self._alerts = alerts
 
     async def run(self):
         return {
             "target_hour": "2026-08-05T01:00:00+08:00",
-            "alerts": [{
-                "event_id": "scenario-1-e2e",
-                "event_type": "xuchang.station_deviation.alert_created",
-                "occurred_at": "2026-08-05T01:00:00+08:00",
-                "city": "许昌市",
-                "target_pollutant": "PM2.5",
-                "station_id": "test-station",
-                "station_name": "测试站",
-                "lat": 34.07,
-                "lon": 113.92,
-                "station_value": 100.0,
-                "peer_mean": 40.0,
-                "deviation_percent": 150.0,
-                "threshold": 0.5,
-                "available_station_count": 6,
-            }],
+            "alerts": self._alerts if self._alerts is not None else [_alert()],
         }
 
     def write_scenario_output(self, alert, output):
@@ -121,6 +128,34 @@ async def test_trigger_runs_analysis_persists_output_and_publishes_event(tmp_pat
     assert payload["evidence_package_path"].endswith("test-station.evidence.json")
     assert payload["station_episode_alerts"][0]["event_id"] == "scenario-1-e2e"
     assert payload["target_pollutant"] == "PM2.5"
+    # 快照按事件属性里的 episode_ids 把通报正文回挂到告警行
+    assert task_service.events[0].attributes["episode_ids"] == [
+        alert["scenario_1_episode"]["episode_id"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_event_attributes_carry_every_episode_of_the_station_batch(tmp_path, monkeypatch):
+    """同站多因子共用一条通报：episode_ids 须覆盖整批，漏掉的因子回挂不上通报。"""
+    task_service = _TaskService()
+    monkeypatch.setattr("app.scheduled_tasks.get_scheduled_task_service", lambda: task_service)
+    fetcher = XuchangStationDeviationAlertFetcher(
+        service=_ScenarioService(tmp_path, alerts=[
+            _alert(),
+            _alert(event_id="scenario-1-e2e-pm10", target_pollutant="PM10"),
+        ]),
+        episode_service=XuchangStationDeviationEpisodeService(output_root=tmp_path),
+        evidence_collector=_EvidenceCollector(),
+    )
+
+    result = await fetcher.fetch_and_store()
+
+    assert len(task_service.events) == 1
+    episode_ids = task_service.events[0].attributes["episode_ids"]
+    assert episode_ids == [
+        item["scenario_1_episode"]["episode_id"] for item in result["alerts"]
+    ]
+    assert len(set(episode_ids)) == 2
 
 
 @pytest.mark.asyncio

@@ -161,21 +161,20 @@ def test_report_peak_includes_start_hour_when_source_timestamp_is_naive():
     assert "连续小时发布AQI≥101" in report
 
 
-def test_national_hour_loader_normalizes_historical_station_codes(monkeypatch, tmp_path):
-    columns = ("station_id", "name", "lon", "lat", "aqi", "pollutant",
-               "pm25", "pm10", "o3", "no2", "so2", "co", "data_time")
+def test_national_hour_loader_reads_zhongda_table_with_canonical_codes(monkeypatch, tmp_path):
+    columns = ("station_code", "station_name", "aqi",
+               "pm25", "pm10", "o3", "no2", "so2", "co", "time_point")
     hour = datetime(2026, 9, 26, 10)
 
     class Cursor:
         description = [(column,) for column in columns]
 
         def execute(self, query, params):
-            assert "2398A" in params and "1003A" in params
-            assert params[0] == "411000"
+            assert "dat_zhongda_station_hour" in query
+            assert "1003A" in params and "2398A" not in params
 
         def fetchall(self):
-            return [("2398A", "开发区", 113.79, 33.99, 105, "PM2.5",
-                     82, 100, 50, 20, 5, 0.7, hour)]
+            return [("1003A", "开发区", 105, 82, 100, 50, 20, 5, 0.7, hour)]
 
     class Connection:
         def cursor(self):
@@ -191,7 +190,11 @@ def test_national_hour_loader_normalizes_historical_station_codes(monkeypatch, t
     rows = fetcher.load_national(hour, hour)
     assert len(rows) == 1
     assert rows[0]["station_id"] == "1003A"
-    assert rows[0]["source_station_id"] == "2398A"
+    assert rows[0]["name"] == "开发区"
+    assert rows[0]["lon"] == pytest.approx(113.7906)
+    assert rows[0]["aqi"] == 105
+    assert rows[0]["pollutant"] == "PM2.5"
+    assert rows[0]["data_time"] == hour
 
 
 @pytest.mark.asyncio

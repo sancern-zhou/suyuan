@@ -1164,12 +1164,19 @@ class AgentRuntime:
         # 只存在于本 executor 的注册表，不在 global_tool_registry，
         # get_tool_schemas 拿不到其 schema；这里从注册表补齐，否则模型
         # 函数调用列表里看不到交付工具，永远无法结构化交付。
+        # 边界工具无条件旁路补齐：不依赖 allowed_tool_names 的传播链
+        # （无工作流模式的兜底名单可能为 None），只要在本 executor
+        # 注册表里就必须进入函数列表。
         present = {
             (schema.get("name") or schema.get("function", {}).get("name"))
             for schema in tool_schemas
         }
         executor_registry = getattr(self.executor, "tool_registry", None) or {}
-        for name in allowed_tool_names or []:
+        boundary_candidates = list(allowed_tool_names or []) + [
+            name for name in ("submit_result", "escalate", "report_finding")
+            if name not in (allowed_tool_names or [])
+        ]
+        for name in boundary_candidates:
             if not name or name in present or name not in executor_registry:
                 continue
             dynamic_tool = executor_registry[name]
@@ -1948,7 +1955,7 @@ class AgentRuntime:
         logger.warning(
             "agent_runtime_truncated_tool_call_recovered",
             iteration=state.iteration,
-            tool_name=tool_name,
+            tool_name=error.tool_name,
             tool_call_id=tool_use_id,
             received_chars=received_chars,
             recovery_count=state.truncated_tool_call_recoveries,

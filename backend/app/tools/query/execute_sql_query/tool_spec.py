@@ -22,14 +22,14 @@ def test_execute_sql_query_default_description_contract():
     # 高频表索引
     assert "【常用表索引】XcAiDb：WeatherForecast7Day(7天预报)" in description
     assert "XuchangNmcHourlyWeatherForecast(NMC逐3小时气象)" in description
-    assert "dat_zhongda_station_minute·hour·city_hour(中大平台)" in description
+    assert "dat_zhongda_station_minute(国控站5分钟)·hour(国控站小时)·city_hour(城市小时，中大平台)" in description
     assert "city_168_statistics_*·province_statistics_*(全国省级统计)" in description
 
     # 口径硬规则（AIR_QUALITY_SCHEMA_GUIDE）
     assert "【高频表口径规则】字段清单用 describe_table 获取，此处只列硬规则。" in description
     assert "不得把 {city_name}/{city_code} 模板变量原样写进 SQL" in description
     assert "城市小时优先中大审核表 dat_zhongda_city_hour（滞后约1天）" in description
-    assert "站点5分钟数据中大独有" in description
+    assert "国控站 5 分钟=dat_zhongda_station_minute" in description
     assert "未来逐3小时气象预报优先 XuchangNmcHourlyWeatherForecast（NMC 官方，7天）" in description
     assert "PM2.5 列名=PM2_5（非 PM25）" in description
     assert "无效值站点表 -99 / 城市表 -999" in description

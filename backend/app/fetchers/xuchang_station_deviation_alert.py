@@ -87,7 +87,9 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
 
     async def fetch_and_store(self) -> dict[str, Any]:
         await asyncio.sleep(30)
-        result = await self.service.run()
+        # service.run() is fully synchronous (no awaits) but slow; keep the
+        # event loop responsive while it works in a worker thread.
+        result = await asyncio.to_thread(asyncio.run, self.service.run())
         target_hour = datetime.fromisoformat(result["target_hour"])
         closed_episodes = self.episode_service.close_stale(target_hour)
         if result["alerts"] or closed_episodes:
@@ -108,14 +110,20 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                 ))
             analyzable_by_station: dict[str, list[dict[str, Any]]] = {}
             for alert in result["alerts"]:
+                # 推送管控（算法文档 §9：冷却升级/防抖恢复/限额/免打扰/合并）
+                # 已在 service 推送链完成，能到达这里的告警都是本周期应当
+                # 通报的。episode 服务只保留两件事：同一 event_id 重放去重、
+                # episode 生命周期记录（含关闭事件）；其自带的 30/60 分钟
+                # 通知冷却不再参与通报决策（升级穿透由推送闸门保证）。
                 episode_result = self.episode_service.record(alert)
+                should_analyze = episode_result["status"] != "duplicate"
                 alert["scenario_1_episode"] = {
                     "episode_id": episode_result["episode"]["episode_id"],
                     "status": episode_result["status"],
                     "reason": episode_result.get("reason"),
-                    "should_analyze": episode_result["should_analyze"],
+                    "should_analyze": should_analyze,
                 }
-                if not episode_result["should_analyze"]:
+                if not should_analyze:
                     continue
                 analyzable_by_station.setdefault(str(alert["station_id"]), []).append(alert)
 
@@ -164,6 +172,11 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                         "target_pollutant": primary["target_pollutant"],
                         "station_id": station_id,
                         "station_name": primary.get("station_name") or station_id,
+                        # 本批通报覆盖的全部 episode（同站多因子共用一条通报）。
+                        # 事件属性随任务结果 extra 原样落库，快照按它把通报正文回挂到告警行。
+                        "episode_ids": [
+                            item["scenario_1_episode"]["episode_id"] for item in alerts
+                        ],
                     },
                     payload=payload,
                 ))

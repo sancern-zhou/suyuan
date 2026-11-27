@@ -1,0 +1,1 @@
+- 许昌本市数据不走城市发布历史（query_xcai_city_history 已屏蔽许昌）：许昌口径统一走中台 query_airdata_platform（城市日 v_c_d_sb_145/v_c_d_sb_155）、统计报表 airdata_calc_report_summary 或采集库 CityHour/CityDay。

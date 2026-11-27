@@ -39,23 +39,47 @@ from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
 from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
-from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
 from app.fetchers.xuchang_city_exceedance import XuchangCityExceedanceFetcher
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_henan_county_publish import XuchangHenanCountyPublishFetcher
 from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
+from app.fetchers.xuchang_henan_ranking_recalc import XuchangHenanRankingRecalcFetcher
+from app.fetchers.xuchang_henan_ssfb_publish import (
+    XuchangHenanSsfbCityPublishFetcher,
+    XuchangHenanSsfbSitePublishFetcher,
+)
 from app.fetchers.xuchang_nmc_hourly_forecast import XuchangNmcHourlyForecastFetcher
 from app.fetchers.xuchang_station_daily_exceedance import XuchangStationDailyExceedanceFetcher
 from app.fetchers.xuchang_station_daily_pollution import XuchangStationDailyPollutionFetcher
 from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_screen_snapshot import XuchangScreenSnapshotFetcher
 from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
 from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDailyForecastFetcher
 from app.fetchers.xuchang_weather_situation import (
     XuchangAirQualityForecastFetcher, XuchangWeatherSituationEvidenceFetcher,
 )
 try:
+    from app.fetchers.xuchang_pollution_cause_trigger import XuchangPollutionCauseTriggerFetcher
+    from app.fetchers.xuchang_monthly_review_evidence import XuchangMonthlyReviewEvidenceFetcher
+    from app.fetchers.xuchang_enterprise_clue_weekly import XuchangEnterpriseClueWeeklyFetcher
     from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+    from app.fetchers.xuchang_town_hour_day import XuchangTownAirDataFetcher
+    from app.fetchers.xuchang_oldcloud_extra_stations import (
+        XuchangOfficeFiveMinuteFetcher,
+        XuchangOfficeHourFetcher,
+        XuchangShengkongStationFetcher,
+    )
+    from app.fetchers.xuchang_town_high_value_alert import XuchangTownHighValueAlertFetcher
 except ImportError:  # xuchang 分支专属模块，main 工作树上不存在（可选导入）
+    XuchangPollutionCauseTriggerFetcher = None
+    XuchangMonthlyReviewEvidenceFetcher = None
+    XuchangEnterpriseClueWeeklyFetcher = None
     XuchangTownFiveMinuteFetcher = None
+    XuchangTownAirDataFetcher = None
+    XuchangOfficeFiveMinuteFetcher = None
+    XuchangOfficeHourFetcher = None
+    XuchangShengkongStationFetcher = None
+    XuchangTownHighValueAlertFetcher = None
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -137,9 +161,12 @@ def _configured_fetchers(project_context):
         "fault_diagnosis": FaultDiagnosisFetcher,
         "xuchang_daily_attainment_forecast_fetcher": XuchangDailyAttainmentForecastFetcher,
         "xuchang_annual_attainment_forecast_fetcher": XuchangAnnualAttainmentForecastFetcher,
-        "xuchang_cnemc_station_hour_fetcher": XuchangCnemcStationHourFetcher,
         "xuchang_city_exceedance_fetcher": XuchangCityExceedanceFetcher,
         "xuchang_henan_month_year_accumulate_fetcher": XuchangHenanMonthYearAccumulateFetcher,
+        "xuchang_henan_ranking_recalc_fetcher": XuchangHenanRankingRecalcFetcher,
+        "xuchang_henan_ssfb_city_publish_fetcher": XuchangHenanSsfbCityPublishFetcher,
+        "xuchang_henan_ssfb_site_publish_fetcher": XuchangHenanSsfbSitePublishFetcher,
+        "xuchang_henan_county_publish_fetcher": XuchangHenanCountyPublishFetcher,
         "xuchang_nmc_hourly_forecast_fetcher": XuchangNmcHourlyForecastFetcher,
         "xuchang_weather_com_daily_forecast_fetcher": XuchangWeatherComDailyForecastFetcher,
         "xuchang_air_quality_forecast_fetcher": XuchangAirQualityForecastFetcher,
@@ -152,15 +179,33 @@ def _configured_fetchers(project_context):
         "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,
         "xuchang_station_daily_exceedance_fetcher": XuchangStationDailyExceedanceFetcher,
         "xuchang_transport_analysis_fetcher": XuchangTransportAnalysisFetcher,
+        "xuchang_screen_snapshot_fetcher": XuchangScreenSnapshotFetcher,
         "xuchang_zhongda_station_minute_fetcher": XuchangZhongdaStationFetcher,
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
+    # xuchang 分支专属 fetcher：仅 xuchang 工作树提供模块；main 工作树跳过注册。
     if XuchangTownFiveMinuteFetcher is not None:
-        # 仅 xuchang 分支工作树提供该模块；main 工作树跳过注册。
         factories["xuchang_town_five_minute_fetcher"] = XuchangTownFiveMinuteFetcher
+    if XuchangTownAirDataFetcher is not None:
+        factories["xuchang_town_hour_fetcher"] = lambda: XuchangTownAirDataFetcher(data_kind="hour")
+        factories["xuchang_town_day_fetcher"] = lambda: XuchangTownAirDataFetcher(data_kind="day")
+    if XuchangOfficeFiveMinuteFetcher is not None:
+        factories["xuchang_office_five_minute_fetcher"] = XuchangOfficeFiveMinuteFetcher
+    if XuchangOfficeHourFetcher is not None:
+        factories["xuchang_office_hour_fetcher"] = XuchangOfficeHourFetcher
+    if XuchangShengkongStationFetcher is not None:
+        factories["xuchang_shengkong_station_fetcher"] = XuchangShengkongStationFetcher
+    if XuchangPollutionCauseTriggerFetcher is not None:
+        factories["xuchang_pollution_cause_trigger_fetcher"] = XuchangPollutionCauseTriggerFetcher
+    if XuchangMonthlyReviewEvidenceFetcher is not None:
+        factories["xuchang_monthly_review_evidence_fetcher"] = XuchangMonthlyReviewEvidenceFetcher
+    if XuchangEnterpriseClueWeeklyFetcher is not None:
+        factories["xuchang_enterprise_clue_weekly_fetcher"] = XuchangEnterpriseClueWeeklyFetcher
+    if XuchangTownHighValueAlertFetcher is not None:
+        factories["xuchang_town_high_value_alert_fetcher"] = XuchangTownHighValueAlertFetcher
     from app.services.station_operation_monitor.runtime import config_path
     if config_path().is_file():
         from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher
@@ -188,6 +233,30 @@ def _configured_fetchers(project_context):
             factories["gems_hcho_data"] = GemsHchoDataFetcher
     else:
         selected = configured
+
+    # 许昌场景三 NOAA 后向轨迹 fetcher 运行开关（默认开启保持既有行为；部署侧可在
+    # .env 设 XUCHANG_TRANSPORT_ANALYSIS_ENABLED=false 关闭）。2026-11-11 该任务因
+    # NOAA 证书链错误全天空转（约 2.1 万次失败/日），且单轮拖到 15+ 分钟与下一轮
+    # 重叠、挤占 ssfb/Crawler MySQL 错峰窗口，先停调度止血，SSL 修复后再开启。
+    if os.getenv("XUCHANG_TRANSPORT_ANALYSIS_ENABLED", "true").lower() != "true":
+        selected = [name for name in selected if name != "xuchang_transport_analysis_fetcher"]
+        logger.info("xuchang_transport_analysis_fetcher_disabled_by_env")
+
+    # 中大平台三 fetcher 运行开关（默认开启保持既有行为）。2026-11-16 平台侧
+    # 账号被长锁（密码更新前 36h+ 失败登录触发，远超宣传的 10 分钟），部署侧
+    # 在 .env 设 XUCHANG_ZHONGDA_FETCH_ENABLED=false 停止自动重试，避免继续
+    # 刷平台登录计数延长锁定；平台方确认解锁后再改回 true 并重启 worker。
+    if os.getenv("XUCHANG_ZHONGDA_FETCH_ENABLED", "true").lower() != "true":
+        zhongda_names = {
+            "xuchang_zhongda_station_minute_fetcher",
+            "xuchang_zhongda_station_hour_fetcher",
+            "xuchang_zhongda_city_hour_fetcher",
+        }
+        selected = [name for name in selected if name not in zhongda_names]
+        logger.info(
+            "xuchang_zhongda_fetchers_disabled_by_env",
+            disabled=sorted(zhongda_names),
+        )
 
     unknown = [name for name in selected if name not in factories]
     if unknown:
