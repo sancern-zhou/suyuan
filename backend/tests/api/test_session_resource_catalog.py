@@ -149,6 +149,40 @@ def test_business_chart_catalog_defaults_to_static_resource():
     assert item["interactive"] is False
 
 
+def test_catalog_exposes_visual_id_by_visual_identity_not_resource_key():
+    image_product = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(resource_key="primary:png", format="png", media_type="image/png",
+                        renderer="image", tool_name="execute_python",
+                        metadata={"visual_id": "matplotlib_fig1", "size": 2048}),
+    )
+    chart_image = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(resource_key="chart-image", format="png", media_type="image/png",
+                        renderer="image", tool_name="save_chart",
+                        metadata={"visual_id": "echarts_fig2_0"}),
+    )
+    plain_image = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(resource_key="primary:png", format="png", media_type="image/png",
+                        renderer="image", tool_name="download_image",
+                        metadata={"size": 10}),
+    )
+    data_file = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(resource_key="primary:data", format="json",
+                        media_type="application/json", renderer="file",
+                        tool_name="execute_sql_query",
+                        metadata={"data_shape": {"row_count": 3}}),
+    )
+
+    assert image_product["visual_id"] == "matplotlib_fig1"
+    assert chart_image["visual_id"] == "echarts_fig2_0"
+    assert "interactive" not in image_product
+    assert plain_image.get("visual_id") is None
+    assert data_file.get("visual_id") is None
+
+
 def test_directory_artifact_content_url_carries_ticket_in_path():
     item = session_resource_routes.resource_dto(
         "session-1",
