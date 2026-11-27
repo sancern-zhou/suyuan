@@ -1,9 +1,46 @@
+import { ENTRY_DES_KEYS, ENTRY_OAUTH_KEYS, ENTRY_TOKEN_KEYS } from './entryToken.js'
+
+
 export function safeRedirect(value, fallback = '/') {
   if (typeof value !== 'string') return fallback
   if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) {
     return fallback
   }
   return value
+}
+
+
+// 入口 token / OAuth 授权码只服务于首次握手；跳转登录页等重定向目标里不携带，
+// 避免失效凭证残留在地址栏与跳转链中。
+export function queryWithoutEntryCredentials(query = {}) {
+  const cleaned = { ...query }
+  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS, ...ENTRY_DES_KEYS]
+  let changed = false
+  for (const key of sensitiveKeys) {
+    if (key in cleaned) {
+      delete cleaned[key]
+      changed = true
+    }
+  }
+  return changed ? cleaned : null
+}
+
+
+export function fullPathWithoutEntryToken(to) {
+  const query = { ...(to?.query || {}) }
+  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS, ...ENTRY_DES_KEYS]
+  const hasEntryCredential = sensitiveKeys.some(key => key in query)
+  if (!hasEntryCredential) return to?.fullPath || to?.path || '/'
+  for (const key of sensitiveKeys) delete query[key]
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value === null || value === undefined) continue
+    for (const item of Array.isArray(value) ? value : [value]) {
+      search.append(key, String(item))
+    }
+  }
+  const queryString = search.toString()
+  return `${to?.path || '/'}${queryString ? `?${queryString}` : ''}`
 }
 
 
@@ -46,10 +83,18 @@ export function createAuthGuard(authStore) {
       if (!isAdmin) return { path: '/' }
     }
 
-    if (authStore.isAuthenticated) return true
+    if (authStore.isAuthenticated) {
+      // 入口 token/授权码已消费：通过一次 replace 导航让地址栏与路由状态
+      // 同步收敛（仅 history.replaceState 会让 vue-router 后续找回旧 query）
+      const cleanedQuery = queryWithoutEntryCredentials(to.query || {})
+      if (cleanedQuery) {
+        return { path: to.path, query: cleanedQuery, hash: to.hash || '', replace: true }
+      }
+      return true
+    }
     return {
       path: '/login',
-      query: { redirect: safeRedirect(to.fullPath) }
+      query: { redirect: safeRedirect(fullPathWithoutEntryToken(to)) }
     }
   }
 }

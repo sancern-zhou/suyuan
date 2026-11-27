@@ -2,15 +2,30 @@ import { defineStore } from 'pinia'
 import { setAccountIdentity } from './accountSession.js'
 
 import { createAuthApi } from './authApi.js'
+import {
+  extractDesToken,
+  extractEntryToken,
+  extractOAuthCode,
+  oauthRedirectUri,
+  stripEntryToken,
+} from './entryToken.js'
+import { createOAuthApi, createSessionApi, isJwtShape } from './oauthApi.js'
 import { browserAuthStorage } from './storage.js'
 
+
+const hasBrowserHistory = typeof globalThis.history !== 'undefined' &&
+  typeof globalThis.history.replaceState === 'function'
 
 export function createAuthSession({
   api,
   storage,
   sysCode = 'SUYUAN',
   authMode = 'company',
-  mockUser = null
+  mockUser = null,
+  oauthApi = createOAuthApi(),
+  sessionApi = { me: token => api.currentUser(token) },
+  entryLocation = typeof globalThis.location !== 'undefined' ? globalThis.location : null,
+  entryHistory = hasBrowserHistory ? globalThis.history : null
 }) {
   const persisted = storage.readSession()
   const isMock = authMode === 'mock' && Boolean(mockUser?.id)
@@ -24,6 +39,59 @@ export function createAuthSession({
     loading: false,
     initialized: false,
 
+    // 统一鉴权平台入口握手：入口 URL 带 token 直连，或 OAuth2.0 授权码回跳
+    // （directAuthorize ?code=xxx），都在此换取登录会话实现免二次登录；
+    // 失效则回落既有本地会话或登录页。
+    async bootstrapWithEntryToken() {
+      const entryToken = extractEntryToken(entryLocation)
+      const oauthCode = extractOAuthCode(entryLocation)
+      const desToken = !entryToken && !oauthCode && !this.token
+        ? extractDesToken(entryLocation)
+        : ''
+      if (!entryToken && !oauthCode && !desToken) return undefined
+
+      let token = ''
+      try {
+        if (entryToken && entryToken !== this.token) {
+          token = isJwtShape(entryToken)
+            ? (await oauthApi.jwtLogin(entryToken)).accessToken
+            : entryToken
+        }
+        if (!token && oauthCode) {
+          token = (await oauthApi.exchangeCode(oauthCode, oauthRedirectUri(entryLocation))).accessToken
+        }
+        if (!token) {
+          // 总系统"需单点登录"菜单：dockingThirdUrl 生成的 des 加密串
+          if (desToken) {
+            token = (await oauthApi.desLogin(desToken)).accessToken
+          }
+        }
+        if (!token) {
+          stripEntryToken(entryLocation, entryHistory)
+          return undefined
+        }
+        return await this.establishEntryIdentity(token)
+      } finally {
+        // 任何失败路径都清洗入口参数，避免 token/授权码残留于地址与历史记录
+        if (!this.token) stripEntryToken(entryLocation, entryHistory)
+      }
+    },
+
+    async establishEntryIdentity(token) {
+      this.loading = true
+      try {
+        const response = await sessionApi.me(token)
+        this.token = token
+        this.user = response.result
+        storage.writeSession({ token: this.token, sysCode, user: this.user })
+        return this.user
+      } finally {
+        // 成功与否都清洗入口参数，避免 token/授权码残留于地址与历史记录
+        stripEntryToken(entryLocation, entryHistory)
+        this.loading = false
+      }
+    },
+
     async bootstrap() {
       if (this.initialized) return this.user
       if (this.authMode === 'mock') {
@@ -32,10 +100,18 @@ export function createAuthSession({
         return this.user
       }
       this.initialized = true
+      let entryUser
+      try {
+        entryUser = await this.bootstrapWithEntryToken()
+      } catch (error) {
+        // 入口 token 无效：回落既有会话或登录页
+        entryUser = undefined
+      }
+      if (entryUser) return entryUser
       if (!this.token) return null
       this.loading = true
       try {
-        const response = await api.currentUser(this.token)
+        const response = await sessionApi.me(this.token)
         this.user = response.result
         storage.writeSession({ token: this.token, sysCode, user: this.user })
         return this.user
@@ -58,7 +134,7 @@ export function createAuthSession({
         const response = await api.login(credentials)
         this.token = response?.result?.accessToken || ''
         if (!this.token) throw new Error('Company login returned no access token')
-        const current = await api.currentUser(this.token)
+        const current = await sessionApi.me(this.token)
         this.user = current.result
         this.initialized = true
         storage.writeSession({ token: this.token, sysCode, user: this.user })
@@ -129,10 +205,13 @@ function configureBrowserSession(runtimeConfig) {
 function getBrowserSession() {
   if (!browserSession) {
     const storage = browserAuthStorage()
+    const sysCode = browserRuntimeConfig.sysCode || 'SUYUAN'
     browserSession = createAuthSession({
       storage,
       api: createAuthApi({ storage }),
-      sysCode: browserRuntimeConfig.sysCode || 'SUYUAN',
+      oauthApi: createOAuthApi(),
+      sessionApi: createSessionApi({ sysCode }),
+      sysCode,
       authMode: browserRuntimeConfig.authMode,
       mockUser: browserRuntimeConfig.mockUser
     })

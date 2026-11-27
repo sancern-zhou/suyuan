@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
+import structlog
 
 from app.auth.identity_cache import IdentityCache
 from app.auth.middleware import GatewayAuthenticationMiddleware
@@ -80,6 +81,14 @@ def configure_middleware(app: FastAPI) -> None:
     app.state.auth_redis = auth_redis
     app.state.auth_service = auth_service
     app.state.sso_session_store = sso_session_store
+    from ..auth.oauth_client import PlatformOAuthClient
+
+    app.state.oauth_client = PlatformOAuthClient(
+        base_url=settings.auth_service_url,
+        client_id=settings.auth_oauth_client_id,
+        client_secret=settings.auth_oauth_client_secret,
+        logger=structlog.get_logger("auth.oauth_client"),
+    )
     app.state.ws_ticket_service = WebSocketTicketService(
         auth_redis,
         key_prefix=settings.auth_identity_cache_key_prefix,
