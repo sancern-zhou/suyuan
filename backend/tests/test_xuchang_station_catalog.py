@@ -169,6 +169,12 @@ def fake_catalog(monkeypatch, tmp_path):
         catalog_module, "load_station_coordinates", lambda: STATION_COORDINATES
     )
     monkeypatch.setattr(catalog_module, "HenanSsfbClient", FakeSsfbClient)
+    monkeypatch.setattr(catalog_module, "load_oldcloud_station_directory", lambda tstype: (
+        [{"tsno": "411002003", "name": "魏都区东大街道办事处", "networkingStatusStr": "在线"}]
+        if tstype == "9" else
+        [{"tsno": "41102403", "name": "鄢陵县梅园", "networkingStatusStr": "在线"}]
+        if tstype == "3" else []
+    ))
     monkeypatch.setattr(catalog_module, "load_oldcloud_township_directory", lambda: [
         {"tsno": "411082113", "name": "长葛市和尚桥镇", "networkingStatusStr": "在线"},
         {"tsno": "411023114", "name": "示范区尚集镇", "networkingStatusStr": "在线"},
@@ -187,13 +193,22 @@ def test_split_township_name_supports_zone_alias():
     assert split_township_name("未知站点", DISTRICT_NAMES) == ("", "未知站点")
 
 
-def test_hidden_stations_manifest_has_september_street_stations():
+def test_hidden_stations_manifest_does_not_hide_active_oldcloud_offices():
     hidden = catalog_module.load_hidden_stations()
 
-    assert len(hidden) == 31
-    assert all(code.upper().endswith("B") for code in hidden)
-    assert hidden["1015B"] == "建安区昌盛街道办事处"
-    assert hidden["1001B"] == "魏都区丁庄街道办事处"
+    assert hidden == {}
+
+
+def test_oldcloud_extra_station_directory_uses_verified_county_fallback():
+    offices = catalog_module.normalize_oldcloud_extra_stations(
+        [{"tsno": "411002003", "name": "魏都区东大街道办事处", "networkingStatusStr": "在线"}],
+        "office",
+    )
+
+    assert offices[0]["district"] == "魏都区"
+    assert offices[0]["station_type"] == "office"
+    assert offices[0]["platform_networking_status"] == "在线"
+    assert offices[0]["longitude"] == pytest.approx(113.82808)
 
 
 def test_build_catalog_excludes_hidden_townships(fake_catalog, monkeypatch):
@@ -223,13 +238,21 @@ def test_resolve_stations_skips_hidden_township(fake_catalog, monkeypatch):
     assert resolve_stations(catalog, station_codes=["1037B"]) == []
 
 
+def test_cached_catalog_reads_current_hidden_manifest(fake_catalog, monkeypatch):
+    cached = load_catalog()
+    assert cached["hidden_station_count"] == 0
+
+    monkeypatch.setattr(catalog_module, "load_hidden_stations", lambda: {"1001B": "测试站"})
+    assert load_catalog()["hidden_station_count"] == 1
+
+
 def test_render_station_directory_notes_hidden_stations(fake_catalog):
     catalog = load_catalog()
-    catalog["hidden_station_count"] = 31
+    catalog["hidden_station_count"] = 2
 
     markdown = render_station_directory(catalog)
 
-    assert "31 个已登记但长期无数据上报的街道站" in markdown
+    assert "2 个已登记但长期无数据上报的街道站" in markdown
     assert "暂未列入本目录" in markdown
 
 
@@ -244,6 +267,8 @@ def test_build_catalog_with_fake_client(fake_catalog):
     assert townships["1107B"]["district"] == "长葛市"
     assert townships["1037B"]["district"] == "示范区"
     assert townships["1050B"]["district"] == "襄城县"
+    assert catalog["office_stations"][0]["district"] == "魏都区"
+    assert catalog["shengkong_stations"][0]["district"] == "鄢陵县"
 
 
 def test_oldcloud_codes_merge_into_formal_catalog(fake_catalog):
@@ -342,6 +367,12 @@ def test_resolve_stations_type_filter(fake_catalog):
 
     regular_only = resolve_stations(catalog, station_type="regular")
     assert [item["station_code"] for item in regular_only] == ["1009A", "1011A"]
+
+    offices = resolve_stations(catalog, districts=["魏都"], station_type="office")
+    assert [item["station_name"] for item in offices] == ["魏都区东大街道办事处"]
+    assert resolve_stations(catalog, station_names=["东大街道"], station_type="all") == offices
+    shengkong = resolve_stations(catalog, districts=["鄢陵"], station_type="shengkong")
+    assert [item["station_name"] for item in shengkong] == ["鄢陵县梅园"]
 
 
 @pytest.mark.asyncio
