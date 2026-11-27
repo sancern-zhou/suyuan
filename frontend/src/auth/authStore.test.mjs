@@ -146,3 +146,234 @@ test('mock mode clears persisted company state and bootstraps the in-memory admi
   assert.deepEqual(calls, [])
   assert.deepEqual(raw.dump(), {})
 })
+
+
+function fakeEntryEnvironment(href) {
+  const url = new URL(href)
+  const location = {
+    get href() { return url.href },
+    get origin() { return url.origin },
+    get search() { return url.search },
+    get hash() { return url.hash }
+  }
+  const history = {
+    state: null,
+    replaceState(state, title, newUrl) { url.href = new URL(newUrl, url.href).href }
+  }
+  return { location, history }
+}
+
+
+test('an entry token from the unified platform establishes a session without login', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const calls = []
+  const api = {
+    currentUser: async token => {
+      calls.push(token)
+      return { result: { id: 'u9', userName: 'zhangsan', name: '张三' } }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=portal-token&from=portal')
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', entryLocation: location, entryHistory: history })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u9')
+  assert.equal(session.token, 'portal-token')
+  assert.deepEqual(raw.dump()['Access-Token'], 'portal-token')
+  assert.deepEqual(calls, ['portal-token'])
+  // 地址栏中的 token 已被清洗
+  assert.equal(location.href, 'http://11.54.200.200:5175/?from=portal')
+})
+
+
+test('a rejected entry token falls back to the persisted session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  storage.writeSession({ token: 'local-token', sysCode: 'SUYUAN', user: { id: 'u1' } })
+  const calls = []
+  const api = {
+    currentUser: async token => {
+      calls.push(token)
+      if (token === 'stale-entry-token') throw new Error('company authentication rejected')
+      return { result: { id: 'u1' } }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=stale-entry-token')
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', entryLocation: location, entryHistory: history })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u1')
+  assert.equal(session.token, 'local-token')
+  assert.deepEqual(calls, ['stale-entry-token', 'local-token'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('a rejected entry token without a local session lands on the login route', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    currentUser: async () => { throw new Error('rejected') }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=bad-token')
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', entryLocation: location, entryHistory: history })
+
+  assert.equal(await session.bootstrap(), null)
+  assert.equal(session.token, '')
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('an oauth authorization code is exchanged and establishes the session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const userCalls = []
+  const exchangeCalls = []
+  const api = {
+    currentUser: async token => {
+      userCalls.push(token)
+      return { result: { id: 'u7', userName: 'zhangsan', name: '张三' } }
+    }
+  }
+  const oauthApi = {
+    exchangeCode: async (code, redirectUri) => {
+      exchangeCalls.push([code, redirectUri])
+      return { accessToken: 'oauth-access-token', refreshToken: 'refresh-1', expiresIn: 3600 }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment(
+    'http://11.54.200.200:5175/?code=one-time-code&state=portal'
+  )
+  const session = createAuthSession({
+    api,
+    storage,
+    sysCode: 'SUYUAN',
+    oauthApi,
+    entryLocation: location,
+    entryHistory: history
+  })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u7')
+  assert.equal(session.token, 'oauth-access-token')
+  assert.deepEqual(raw.dump()['Access-Token'], 'oauth-access-token')
+  assert.deepEqual(exchangeCalls, [['one-time-code', 'http://11.54.200.200:5175/']])
+  assert.deepEqual(userCalls, ['oauth-access-token'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('a failed oauth exchange without a local session lands on the login route', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    currentUser: async () => { throw new Error('should not be called') }
+  }
+  const oauthApi = {
+    exchangeCode: async () => { throw new Error('oauth_not_configured') }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?code=bad-code')
+  const session = createAuthSession({
+    api,
+    storage,
+    sysCode: 'SUYUAN',
+    oauthApi,
+    entryLocation: location,
+    entryHistory: history
+  })
+
+  assert.equal(await session.bootstrap(), null)
+  assert.equal(session.token, '')
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('session identity is resolved through the gateway session api', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  storage.writeSession({ token: 'oauth-access-token', sysCode: 'SUYUAN', user: null })
+  const platformCalls = []
+  const api = {
+    currentUser: async token => {
+      platformCalls.push(token)
+      throw new Error('platform direct call must not be used')
+    }
+  }
+  const meCalls = []
+  const sessionApi = {
+    me: async token => {
+      meCalls.push(token)
+      return { result: { id: 'u1', userName: 'zhangsan', name: '张三' } }
+    }
+  }
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', sessionApi })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u1')
+  assert.deepEqual(meCalls, ['oauth-access-token'])
+  assert.deepEqual(platformCalls, [])
+})
+
+
+test('a jwt-shaped entry token is exchanged before establishing the session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const jwtLoginCalls = []
+  const api = {
+    currentUser: async () => ({ result: { id: 'u3', userName: 'lisi', name: '李四' } })
+  }
+  const oauthApi = {
+    jwtLogin: async token => {
+      jwtLoginCalls.push(token)
+      return { accessToken: 'minted-access-token', refreshToken: 'refresh-1', expiresIn: 3600 }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=eyJhbGciOiJIUzI1NiJ9.a.b')
+  const session = createAuthSession({
+    api, storage, sysCode: 'SUYUAN', oauthApi,
+    entryLocation: location, entryHistory: history
+  })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u3')
+  assert.equal(session.token, 'minted-access-token')
+  assert.deepEqual(jwtLoginCalls, ['eyJhbGciOiJIUzI1NiJ9.a.b'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('a des entry token is decrypted into the gateway session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    currentUser: async () => ({ result: { id: '1', userName: 'ScGuanLy', name: '超级管理员' } })
+  }
+  const oauthApi = {}
+  const desLoginCalls = []
+  const oauthApiWithDes = {
+    desLogin: async des => {
+      desLoginCalls.push(des)
+      return { accessToken: 'des-access-token', refreshToken: '', expiresIn: 3600 }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment(
+    'http://11.54.200.200:5175/?des=' + encodeURIComponent('e9+SraTzUfqX7qMmtgRekLi3sATWgNi5tyEX')
+  )
+  const session = createAuthSession({
+    api, storage, sysCode: 'SUYUAN', oauthApi: oauthApiWithDes,
+    entryLocation: location, entryHistory: history
+  })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, '1')
+  assert.equal(session.token, 'des-access-token')
+  assert.deepEqual(desLoginCalls, ['e9+SraTzUfqX7qMmtgRekLi3sATWgNi5tyEX'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
