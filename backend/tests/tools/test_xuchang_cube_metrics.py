@@ -100,6 +100,40 @@ def test_validate_rejects_unknown_members_and_operators():
         [{"member": "SsfbCityRanking.period", "operator": "regex", "values": ["x"]}],
     )
     assert "不支持的过滤操作符" in err
+    _, err = tool._validate(
+        ["SsfbCountyHour.avgPm25"], [], "SsfbCountyHour.dataTime",
+        [{"member": "SsfbCountyHour.dataTime", "operator": "between", "values": ["2026-11-27", "2026-11-27"]}],
+    )
+    assert "date_range=['YYYY-MM-DD','YYYY-MM-DD']" in err
+    assert "granularity='hour'" in err
+
+
+def test_unknown_member_error_carries_cube_member_digest():
+    """错误即目录：未知成员报错附带该 Cube 紧凑成员清单，下一轮即可修对。"""
+    tool = XuchangCubeMetricsTool()
+    _, err = tool._validate(["HenanPlatformAqAccumulate.nonsense"], [], None, [])
+    assert "成员速查" in err
+    assert "standard" in err and "periodType" in err
+    _, err = tool._validate(["TotallyUnknownCube.x"], [], None, [])
+    assert "成员速查" not in err
+
+
+def test_related_member_hint_surfaces_official_yoy():
+    """成功结果提示未查询的官方同比成员，避免手算同比。"""
+    tool = XuchangCubeMetricsTool()
+    hint = tool._related_member_hint("HenanPlatformAqAccumulate", ["HenanPlatformAqAccumulate.pm25"])
+    assert "同比" in hint and "pm25YoY" in hint
+    assert tool._related_member_hint(
+        "HenanPlatformAqAccumulate", ["HenanPlatformAqAccumulate.pm25YoY"]
+    ) == ""
+    assert tool._related_member_hint("TownHour", ["TownHour.avgPm25"]) == ""
+
+
+def test_tool_description_routes_function_zones_and_office_hour():
+    description = XuchangCubeMetricsTool().function_schema["description"]
+    assert "OfficeFiveMinute/OfficeHour" in description
+    assert "示范区/开发区/东城区" in description
+    assert "SsfbCountyHour/Day" in description
 
 
 def test_validate_accepts_single_cube_query():
@@ -115,6 +149,59 @@ def test_validate_accepts_single_cube_query():
     )
     assert cube == "SsfbCityRanking"
     assert err is None
+
+
+def test_henan_platform_requires_single_standard_and_accumulation_period():
+    tool = XuchangCubeMetricsTool()
+    _, err = tool._validate(["HenanPlatformAqMonth.pm25"], [], None, [])
+    assert "standard" in err
+    cube, err = tool._validate(
+        ["HenanPlatformAqMonth.pm25", "HenanPlatformAqMonth.pm25YoY"],
+        ["HenanPlatformAqMonth.region"], None,
+        [{"member": "HenanPlatformAqMonth.standard", "operator": "equals", "values": ["new"]}],
+    )
+    assert cube == "HenanPlatformAqMonth" and err is None
+    _, err = tool._validate(
+        ["HenanPlatformAqAccumulate.pm25"], [], None,
+        [{"member": "HenanPlatformAqAccumulate.standard", "operator": "equals", "values": ["new"]}],
+    )
+    assert "periodType" in err
+
+
+def test_henan_platform_routing_excludes_unsupported_county_middle_platform():
+    description = XuchangCubeMetricsTool().function_schema["description"]
+    assert "许昌市及县市区当月MTD、当年截至某日YTD、完整月/年及官方报表缺期一律用" in description
+    assert "中台airdata_calc_report_summary不支持区县市统计" in description
+    assert "禁止调用或改查城市/站点结果替代" in description
+
+
+@pytest.mark.asyncio
+async def test_describe_with_query_params_serves_query_intent():
+    """混合调用按查询执行：校验器给具体纠错，不再硬拒绝参数形态。"""
+    result = await XuchangCubeMetricsTool().execute(
+        describe_cube="SsfbCountyHour",
+        measures=["SsfbCountyHour.pm25"],
+    )
+    assert result["success"] is False
+    assert "未知度量" in result["summary"]
+    assert "avgPm25" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_describe_without_query_params_still_returns_catalog():
+    result = await XuchangCubeMetricsTool().execute(describe_cube="SsfbCountyHour")
+    assert result["success"] is True
+    assert "成员目录" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_henan_platform_describe_identifies_source_and_supplemental_role():
+    result = await XuchangCubeMetricsTool().execute(describe_cube="HenanPlatformAqAccumulate")
+    assert result["success"] is True
+    context = result["semantic_context"]
+    assert context["dataset"] == "DataCrawler.HenanPlatformAqAccumulateStat"
+    assert "河南省城市空气质量大数据综合应用系统" in context["applicability"]
+    assert any("standard" in item for item in context["limitations"])
 
 
 def test_validate_requires_town_caliber_filter():

@@ -152,10 +152,10 @@ OFFICIAL_CALIBER_NOTE = (
 
 # 禁止用时/日数据自行汇总月度和年度统计
 AGGREGATION_RULE_NOTE = (
-    "【统计口径硬规则】本接口与采集库均为明细通道：月均/季/半年/年、达标率、重污染天、"
-    "月度同比等月度及以上统计禁止从小时/日明细自算，一律调 airdata_calc_report_summary"
-    "（report_time_type 定粒度：4 月/5 季/6 半年/7 年/8 任意段）。"
-    "用户问“这个月/今年怎么样”等月度及以上问题时必须改用该接口。"
+    "【统计口径硬规则】本接口与采集库均为明细通道，月度及以上统计禁止从小时/日明细自算。"
+    "许昌市及县市区当月MTD、当年截至某日YTD、完整月/年及官方月报缺期数据，一律用"
+    "xuchang_cube_metrics 的 HenanPlatformAqMonth/Year/Accumulate（Accumulate过滤periodType=mtd/ytd，"
+    "三表均须过滤单一standard）；中台报表不支持区县市统计，不得调用或改查站点替代。"
 )
 
 # 城市日数据按 timepoint 互斥分区，新国标默认口径
@@ -583,7 +583,10 @@ class AirDataCalcReportSummaryTool(LLMTool):
         function_schema = {
             "name": "airdata_calc_report_summary",
             "description": (
-                "按时间范围对站点/区县/城市/区域做空气质量报表统计，并与 year 同期同比（中台，许昌）。"
+                "按时间范围对站点/乡镇/城市做空气质量报表统计，并与 year 同期同比（中台，许昌）。"
+                "【不适用区县市】本接口不支持区县、县级市统计，area_type=1不可用；许昌市及县市区"
+                "当月MTD、当年截至某日YTD、完整月/年及官方月报缺期数据，一律改用xuchang_cube_metrics的"
+                "HenanPlatformAqMonth/Year/Accumulate，不得改查城市或站点结果替代。"
                 "返回扁平字典（PascalCase 键，值为字符串，无效值 —）。默认仅投影：标识列+六参数浓度"
                 "（*_Curr 取整/*_Curr_ForNow 全精度）；PM2.5 一律用 PM2_5_Curr_ForNow_R1"
                 "（银行家修约 1 位小数），其原始双口径与同比只存落盘视图；"
@@ -599,9 +602,9 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 f"{DATA_SOURCE_NOTE}"
                 f"{STATE_CALIBER_NOTE}"
                 f"{OFFICIAL_CALIBER_NOTE}"
-                "【统计口径硬规则】本接口是许昌月度及以上统计的唯一来源（中大平台与长历史采集库均为明细通道）："
-                "月均/季/半年/年、达标率、重污染天、月度同比等一律调本接口并按 report_time_type 定粒度，"
-                "禁止用小时/日明细自算或修正平台报表；报表未含字段用 need_keys 取，"
+                "【统计口径硬规则】禁止用小时/日明细自算或修正统计结果。许昌市及县市区当月/当年累计、"
+                "完整月/年和官方报表缺期一律走HenanPlatformAqMonth/Year/Accumulate；本接口不支持区县市，"
+                "不得作为上述问题的调用或失败重试路径。站点/乡镇/城市报表未含字段用need_keys取，"
                 "仍取不到才说明平台无该口径，不得明细手算。"
                 "【国标口径】ns_type 默认 2（新国标），用户未指定时不要传 1；"
                 "input_table_name 必须匹配规划期分段（pantype145=2021-2025，pantype155=2026 起），"
@@ -634,7 +637,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
                     "area_type": {
                         "type": "integer",
                         "enum": [0, 1, 2, 3],
-                        "description": "区域类型：0 站点、1 区县、2 城市、3 区域",
+                        "description": "区域类型：0 站点、2 城市、3 区域；1区县市不受支持，禁止传1，县市区统计改用HenanPlatformAq* Cube",
                     },
                     "report_time_type": {
                         "type": "integer",
