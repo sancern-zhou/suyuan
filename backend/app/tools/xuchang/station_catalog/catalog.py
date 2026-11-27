@@ -9,6 +9,8 @@
 - 河南省实时发布系统（ssfb）：许昌县级站（市控/省控，剔除国控）与
   全省城市/区县目录（含济源），用于 SsfbCityHour/SsfbSiteHour 等采集
   表的编码解析。
+- 许昌市空气质量管控平台：办事处站（tstype=9）与省控站（tstype=3），
+  含归属、坐标和在线状态；中台隐藏清单只约束中台乡镇目录，不屏蔽这些来源。
 
 目录构建结果缓存到 data registry，TTL 默认 7 天。
 """
@@ -59,6 +61,7 @@ ZONE_NAME_ALIASES = ("示范区",)
 CACHE_DIR_NAME = "xuchang_station_catalog"
 CACHE_FILE_NAME = "catalog_cache.json"
 CACHE_TTL_HOURS = 168.0
+CATALOG_SCHEMA_VERSION = 2
 TOWNSHIP_COORDINATES_FILE = Path(__file__).with_name("township_coordinates.tsv")
 OFFICE_COORDINATES_FILE = Path(__file__).with_name("office_coordinates.tsv")
 SHENGKONG_COORDINATES_FILE = Path(__file__).with_name("shengkong_coordinates.tsv")
@@ -176,6 +179,7 @@ def load_hidden_stations() -> dict[str, str]:
 
     用于排除中台已登记但长期无数据上报的街道站；清单文件带注释说明
     隐藏原因与恢复办法，站点恢复上报后删除对应行即可恢复展示。
+    此清单只作用于中台乡镇目录，不屏蔽旧云平台已恢复采集的同名站点。
     """
     hidden: dict[str, str] = {}
     try:
@@ -400,13 +404,54 @@ def load_ssfb_directory(
 
 
 def load_oldcloud_township_directory() -> list[dict[str, Any]]:
-    """许昌市空气质量管控平台乡镇目录；失败时保留中台目录，不阻断整个目录构建。"""
+    """许昌市空气质量管控平台乡镇目录；失败时保留中台目录，不阻断建目录。"""
+    return load_oldcloud_station_directory("4")
+
+
+def load_oldcloud_station_directory(tstype: str) -> list[dict[str, Any]]:
+    """按平台类型读取目录，失败只降级该来源，不影响其他站网。"""
     try:
         from app.integrations.xuchang.town_cloud_client import TownCloudClient
-        return TownCloudClient().fetch_station_directory("4")
+        return TownCloudClient().fetch_station_directory(tstype)
     except Exception as exc:  # 平台验证码/网络故障不应拖垮既有中台目录
-        logger.warning("xuchang_station_catalog_oldcloud_unavailable", error=str(exc))
+        logger.warning("xuchang_station_catalog_oldcloud_unavailable", tstype=tstype, error=str(exc))
         return []
+
+
+def normalize_oldcloud_extra_stations(
+    rows: list[dict[str, Any]], station_type: str
+) -> list[dict[str, Any]]:
+    """办事处/省控目录归一化；平台缺区县时用已核实的坐标 TSV 按站名补全。"""
+    if station_type not in {"office", "shengkong"}:
+        raise ValueError(f"unsupported oldcloud station type: {station_type}")
+    coordinates = load_office_coordinates() if station_type == "office" else load_shengkong_coordinates()
+    type_name = "办事处站" if station_type == "office" else "省控站"
+    stations = []
+    for row in rows:
+        code = str(row.get("tsno") or "").strip()
+        name = str(row.get("name") or "").strip()
+        if not code or not name:
+            continue
+        coordinate = coordinates.get(_normalize_station_name(name)) or {}
+        district = str(row.get("countyIdStr") or "").strip() or str(coordinate.get("district") or "")
+        stations.append({
+            "station_code": code,
+            "station_name": name,
+            "district": district,
+            "city": CITY_NAME,
+            "station_type": station_type,
+            "type_name": type_name,
+            "longitude": coordinate.get("longitude"),
+            "latitude": coordinate.get("latitude"),
+            "address": str(row.get("address") or "").strip(),
+            "coordinate_source": f"oldcloud:{station_type}_coordinates.tsv" if coordinate else None,
+            "data_source": "oldcloud:airNetwork/page",
+            "platform_station_code": code,
+            "platform_data_source": "oldcloud:airNetwork/page",
+            "platform_networking_status": row.get("networkingStatusStr"),
+            "platform_collection_time": row.get("collectionTime"),
+        })
+    return sorted(stations, key=lambda item: (item["district"], item["station_name"]))
 
 
 def merge_oldcloud_townships(
@@ -473,12 +518,19 @@ def build_catalog() -> dict[str, Any]:
         townships, load_oldcloud_township_directory(), district_names
     )
     return {
+        "schema_version": CATALOG_SCHEMA_VERSION,
         "generated_at": time.time(),
         "city": {"name": CITY_NAME, "areacode": CITY_CODE},
         "districts": districts,
         "townships": townships,
         "regular_stations": normalize_regular_stations(
             station_rows, districts, station_coordinates
+        ),
+        "office_stations": normalize_oldcloud_extra_stations(
+            load_oldcloud_station_directory("9"), "office"
+        ),
+        "shengkong_stations": normalize_oldcloud_extra_stations(
+            load_oldcloud_station_directory("3"), "shengkong"
         ),
         "hidden_station_count": len(load_hidden_stations()),
         **load_ssfb_directory(),
@@ -500,17 +552,22 @@ def load_catalog(force_refresh: bool = False) -> dict[str, Any]:
                 item.get("platform_station_code") for item in payload.get("townships") or []
             )
             if (
-                has_stations
+                payload.get("schema_version") == CATALOG_SCHEMA_VERSION
+                and has_stations
                 and has_henan_directory
                 and has_platform_codes
                 and time.time() - generated_at < CACHE_TTL_HOURS * 3600
             ):
+                payload["hidden_station_count"] = len(load_hidden_stations())
                 payload["from_cache"] = True
                 return payload
         except (OSError, ValueError, TypeError) as exc:
             logger.warning("xuchang_station_catalog_cache_read_failed", error=str(exc))
 
     catalog = build_catalog()
+    # 清单可能在不重建目录时被运维修改；以当前文件为准，避免陈旧元数据
+    # 继续暗示有效旧云平台站点仍被隐藏。
+    catalog["hidden_station_count"] = len(load_hidden_stations())
     catalog["from_cache"] = False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -530,6 +587,10 @@ def iter_stations(catalog: dict[str, Any], station_type: str = "all") -> list[di
         stations.extend(catalog.get("regular_stations") or [])
     if station_type in ("all", "county"):
         stations.extend(catalog.get("county_stations") or [])
+    if station_type in ("all", "office"):
+        stations.extend(catalog.get("office_stations") or [])
+    if station_type in ("all", "shengkong"):
+        stations.extend(catalog.get("shengkong_stations") or [])
     return stations
 
 

@@ -10,6 +10,7 @@ from app.fetchers.xuchang_oldcloud_extra_stations import (
     XuchangOfficeFiveMinuteFetcher,
     XuchangOfficeHourFetcher,
     XuchangShengkongStationFetcher,
+    normalize_oldcloud_extra_stations,
     office_record_from_row,
     shengkong_record_from_row,
 )
@@ -84,6 +85,9 @@ def test_fetcher_protocol_and_windows():
     assert (shengkong.platform_tstype, shengkong.factor_type, shengkong.time_step) == ("3", "4", 2)
     assert office.schedule == "4,9,15,25,35,45 * * * *"
     assert shengkong.schedule == "17 * * * *"
+    assert normalize_oldcloud_extra_stations([
+        {"tsno": "411002003", "name": "魏都区东大街道办事处"}
+    ], "office")[0]["district"] == "魏都区"
     start, end = office._window(datetime(2026, 11, 23, 15, 0))
     assert (end - start).total_seconds() == 180 * 60
     start, end = shengkong._window(datetime(2026, 11, 23, 15, 0))

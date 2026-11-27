@@ -3,7 +3,8 @@
 
 解决站点"记不住名称与编码、不知道归属"的问题：
 - 按名称模糊搜索站点，返回站点编码与归属区县
-- 按区县展开下辖站点（乡镇站/国控站/县级站）
+- 按区县展开下辖站点（乡镇站/国控站/县级站/办事处站/省控站）
+- 功能区区域浓度优先查 SsfbCountyHour/Day，本目录用于空间细化选站
 - 站点编码与名称双向解析，作为 query_airdata_platform 与
   SsfbSiteHour（execute_crawler_sql_query）的查询参数依据
 - lookup_henan_cities / lookup_henan_districts 返回河南全省城市组
@@ -27,7 +28,7 @@ from .provider import XuchangStationCatalogProvider
 
 logger = structlog.get_logger()
 
-STATION_TYPE_CHOICES = ("township", "regular", "county", "all")
+STATION_TYPE_CHOICES = ("township", "regular", "county", "office", "shengkong", "all")
 HENAN_ACTIONS = ("lookup_henan_cities", "lookup_henan_districts")
 
 
@@ -48,7 +49,11 @@ class XuchangStationCatalogTool(LLMTool):
                 "用于 execute_crawler_sql_query 查 SsfbSiteHour/SsfbSiteDay（SiteID 过滤）；"
                 "不要凭猜测把名称直接当编码使用。"
                 "station_type=township 乡镇站（含坐标），regular 国控站（含唯一编码），"
-                "county 县级站（河南实时发布系统，市控/省控），all 全部。"
+                "county 县级站（河南实时发布系统，市控/省控），office 办事处站（旧云平台，"
+                "仅PM2.5/PM10），shengkong 省控站（旧云平台六参数），all 覆盖以上五类。"
+                "示范区、开发区、东城区等功能区的区域浓度/过程查询优先 SsfbCountyHour/Day，"
+                 "本目录只用于选择空间佐证站点，不能用单站替代区县聚合值；区县过程先查Cube，"
+                 "无需先调用本目录，仅在确需站点下钻时按目标区县/站网查询，避免全量目录。"
                 "action=lookup_henan_cities 返回河南 18 城市组清单（含济源市，group_id 用于 "
                 "SsfbCityHour 的 GroupID 过滤）；action=lookup_henan_districts 返回全省区县清单，"
                 "可用 cities 参数按所属城市过滤（如 [\"许昌市\",\"郑州市\"]）。"
@@ -81,7 +86,7 @@ class XuchangStationCatalogTool(LLMTool):
                     "station_type": {
                         "type": "string",
                         "enum": list(STATION_TYPE_CHOICES),
-                        "description": "站点类别：township 乡镇站、regular 国控站、county 县级站、all 全部，默认 all",
+                        "description": "站点类别：township 乡镇站、regular 国控站、county 县级站、office 办事处站、shengkong 省控站、all 五类全覆盖，默认 all",
                     },
                     "refresh": {
                         "type": "boolean",
@@ -152,6 +157,7 @@ class XuchangStationCatalogTool(LLMTool):
             "from_cache": bool(catalog.get("from_cache")),
             "districts": district_names,
             "hidden_station_count": int(catalog.get("hidden_station_count") or 0),
+            "coverage": "township/regular/county/office/shengkong；功能区区域值优先 SsfbCountyHour/Day",
         }
 
         if not stations_payload:
@@ -167,7 +173,8 @@ class XuchangStationCatalogTool(LLMTool):
                 },
                 "summary": (
                     f"未匹配到站点 {requested}；可用区县：{'、'.join(district_names)}。"
-                    "可只用名称简称重试或按区县展开。"
+                    "可只用名称简称重试或按区县展开。若查示范区/开发区/东城区等区域浓度，"
+                    "应直接查 SsfbCountyHour/SsfbCountyDay，不要求存在同名站点。"
                 ),
             }
 
@@ -184,6 +191,11 @@ class XuchangStationCatalogTool(LLMTool):
         if "county" in station_types:
             summary_parts.append(
                 "（县级站编码用于 execute_crawler_sql_query 查 SsfbSiteHour/SsfbSiteDay 的 SiteID 过滤）"
+            )
+        if "office" in station_types or "shengkong" in station_types:
+            summary_parts.append(
+                "（办事处/省控站来自旧云平台；查 OfficeFiveMinute/OfficeHour 或 ShengkongHour，"
+                "在线状态与最新平台时间见各站字段）"
             )
         return {
             "status": "success",
