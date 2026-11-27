@@ -150,6 +150,10 @@ def rows_for(high_pm25=(), high_pm10=()):
     return rows
 
 
+def persistent_rows(high_pm25=(), high_pm10=()):
+    return rows_for(high_pm25, high_pm10) + hourly_rows(high_pm25, high_pm10, hour=HOUR - timedelta(hours=1))
+
+
 def build(monkeypatch, tmp_path, rows, weather=None, capture=None):
     sent = []
     fetcher = XuchangTownHighValueAlertFetcher(
@@ -177,7 +181,7 @@ def build(monkeypatch, tmp_path, rows, weather=None, capture=None):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("count", [1, 2, 3, 4])
 async def test_one_to_four_stations_share_one_message(monkeypatch, tmp_path, count):
-    rows = rows_for(high_pm25=[90] * count)
+    rows = persistent_rows(high_pm25=[90] * count)
     for row in rows:
         row["PM10"] = 40
     fetcher, sent = build(monkeypatch, tmp_path, rows)
@@ -190,7 +194,7 @@ async def test_one_to_four_stations_share_one_message(monkeypatch, tmp_path, cou
 
 @pytest.mark.asyncio
 async def test_five_stations_are_regional_pollution_and_not_sent(monkeypatch, tmp_path):
-    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[90] * 5, high_pm10=[170]))
+    fetcher, sent = build(monkeypatch, tmp_path, persistent_rows(high_pm25=[90] * 5, high_pm10=[170]))
     result = await fetcher.fetch_and_store()
     assert result["sent"] == 1 and len(sent) == 1
     assert "PM10" in sent[0][0][1] and "PM2.5" not in sent[0][0][1]
@@ -200,7 +204,7 @@ async def test_five_stations_are_regional_pollution_and_not_sent(monkeypatch, tm
 
 @pytest.mark.asyncio
 async def test_pollutants_are_counted_and_grouped_independently(monkeypatch, tmp_path):
-    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[90], high_pm10=[170, 180, 190]))
+    fetcher, sent = build(monkeypatch, tmp_path, persistent_rows(high_pm25=[90], high_pm10=[170, 180, 190]))
     result = await fetcher.fetch_and_store()
     assert result["sent"] == 2
     messages = [call[0][1] for call in sent]
@@ -219,7 +223,7 @@ async def test_equipment_extremes_send_fixed_message_with_map(monkeypatch, tmp_p
     fetcher, sent = build(monkeypatch, tmp_path, rows)
     result = await fetcher.fetch_and_store()
     assert result["sent"] == 0 and result["equipment_sent"] == 1
-    assert sent[0][0][1] == "【乡镇高值提醒】鄢陵县彭店镇站点PM10浓度显示异常，请鄢陵县核实数据异常原因，并及时反馈。"
+    assert sent[0][0][1] == "【乡镇高值提醒】鄢陵县彭店镇站点PM10实时小时浓度为965.84微克/立方米，浓度显示异常，请鄢陵县核实数据异常原因，并及时反馈。"
     assert sent[0][1]["media"] == ["registry/map.png"]
     assert sent[0][1]["metadata"]["alert_kind"] == "equipment_anomaly"
     second = await fetcher.fetch_and_store()
@@ -247,14 +251,15 @@ def hourly_rows(high_pm25=(), high_pm10=(), *, hour=HOUR):
 
 
 @pytest.mark.asyncio
-async def test_high_value_same_station_and_pollutant_cools_down_for_six_hours(monkeypatch, tmp_path):
-    rows = hourly_rows([90]) + hourly_rows([105], hour=HOUR + timedelta(hours=1))
+async def test_high_value_same_station_and_pollutant_cools_down_for_two_hours(monkeypatch, tmp_path):
+    rows = persistent_rows([90])
     fetcher, sent = build(monkeypatch, tmp_path, rows)
     first = await fetcher.fetch_and_store()
+    rows.extend(hourly_rows([105], hour=HOUR + timedelta(hours=1)))
     fetcher.now_factory = lambda: NOW + timedelta(hours=1)
     second = await fetcher.fetch_and_store()
-    fetcher.now_factory = lambda: NOW + timedelta(hours=6)
-    rows.extend(hourly_rows([100], hour=HOUR + timedelta(hours=6)))
+    fetcher.now_factory = lambda: NOW + timedelta(hours=2)
+    rows.extend(hourly_rows([100], hour=HOUR + timedelta(hours=2)))
     third = await fetcher.fetch_and_store()
     assert first["sent"] == 1
     assert second["sent"] == 0 and second["cooled_down"] == 1
@@ -263,7 +268,7 @@ async def test_high_value_same_station_and_pollutant_cools_down_for_six_hours(mo
 
 @pytest.mark.asyncio
 async def test_high_value_cooldown_is_independent_for_other_station_and_pollutant(monkeypatch, tmp_path):
-    rows = hourly_rows([90], [170]) + hourly_rows([105], [180], hour=HOUR + timedelta(hours=1))
+    rows = persistent_rows([90], [170]) + hourly_rows([105], [180], hour=HOUR + timedelta(hours=1))
     fetcher, sent = build(monkeypatch, tmp_path, rows)
     await fetcher.fetch_and_store()
     assert len(sent) == 2
@@ -309,14 +314,58 @@ def regional_rows(extra=()):
     return rows
 
 
+def persistent_regional_rows(rows):
+    previous_hour = HOUR - timedelta(hours=1)
+    return rows + [{**row, "CollectionTime": previous_hour} for row in rows]
+
+
 def test_unique_polluted_station_survives_regional_candidate_group():
     rows = regional_rows([90.7, 59.7, 49.05, 48.96, 48.2, 44.8, 42.8])
-    _, groups = detect_high_value_groups(rows)
+    _, groups = detect_high_value_groups(persistent_regional_rows(rows))
     group = groups[0]
-    assert len(group["alerts"]) == 7
+    assert len(group["alerts"]) == 1
     assert not group["out_of_scope"]
     assert [item["value"] for item in group["stations"]] == [90.7]
     assert group["stations"][0]["level_name"] == "轻度污染"
+
+
+def test_reported_good_level_relative_outlier_is_not_an_alert():
+    # 2026-11-26 山头店实例：57.37 在新标准下仍为良，不能仅因县内相对突出告警。
+    rows = regional_rows([57.37])
+    assert detect_high_value_groups(persistent_regional_rows(rows))[1] == []
+
+
+@pytest.mark.parametrize("pollutant,value", [("PM2.5", 60.0), ("PM10", 120.0)])
+def test_new_standard_light_pollution_threshold_requires_iaqi_above_100(pollutant, value):
+    # 新折点浓度恰好等于二级限值时 IAQI=100，仍为良，不触发。
+    kwargs = {"high_pm25": [value]} if pollutant == "PM2.5" else {"high_pm10": [value]}
+    _, groups = detect_high_value_groups(persistent_rows(**kwargs))
+    assert groups == []
+
+
+def test_single_hour_spike_does_not_alert_but_persistent_high_value_does():
+    _, groups = detect_high_value_groups(rows_for(high_pm25=[90]))
+    assert groups == []
+    _, groups = detect_high_value_groups(persistent_rows(high_pm25=[90]))
+    assert len(groups) == 1
+    item = groups[0]["stations"][0]
+    assert item["minimum_concentration"] == 60 and item["consecutive_hours"] == 2
+
+
+def test_sparse_county_uses_stricter_relative_threshold():
+    rows = []
+    for index, value in enumerate([35, 37, 39, 41, 43, 45, 70]):
+        rows.append({"Tsno": f"sparse-{index}", "StationName": f"少站镇{index}",
+                     "CollectionTime": HOUR, "PM25": value, "PM10": 40,
+                     "CountyName": "鄢陵县"})
+    _, groups = detect_high_value_groups(persistent_regional_rows(rows))
+    assert groups == []
+    for row in rows:
+        if row["Tsno"] == "sparse-6":
+            row["PM25"] = 75
+    _, groups = detect_high_value_groups(persistent_regional_rows(rows))
+    assert len(groups) == 1
+    assert groups[0]["stations"][0]["relative_threshold"] == 0.8
 
 
 def test_county_wide_elevation_is_not_reported_as_single_station():
@@ -363,7 +412,7 @@ def test_central_urban_districts_share_one_baseline_and_keep_own_county():
     rows.append({"Tsno": "xd-spike", "StationName": "东城区半截河街道办事处",
                  "CollectionTime": HOUR, "PM25": 90.0, "PM10": 45,
                  "CountyName": "东城区"})
-    _, groups = detect_high_value_groups(rows)
+    _, groups = detect_high_value_groups(persistent_regional_rows(rows))
     assert len(groups) == 1 and groups[0]["pollutant"] == "PM2.5"
     assert [item["station_name"] for item in groups[0]["stations"]] == ["东城区半截河街道办事处"]
     assert groups[0]["stations"][0]["county_name"] == "东城区"
@@ -373,7 +422,7 @@ def test_central_urban_districts_share_one_baseline_and_keep_own_county():
 def test_structured_county_and_station_type_reach_detector_and_llm():
     rows = regional_rows([90.7])
     rows[-1]["StationType"] = "township"
-    _, groups = detect_high_value_groups(rows)
+    _, groups = detect_high_value_groups(persistent_regional_rows(rows))
     item = groups[0]["stations"][0]
     assert item["county_name"] == "鄢陵县" and item["station_type"] == "township"
     evidence = __import__("app.scenarios.xuchang_town_high_value.message", fromlist=["message_evidence"]).message_evidence(groups[0], {})
@@ -382,7 +431,7 @@ def test_structured_county_and_station_type_reach_detector_and_llm():
 
 def test_light_pollution_extreme_level_gap_is_not_equipment_anomaly():
     rows = regional_rows([111])
-    _, groups = detect_high_value_groups(rows)
+    _, groups = detect_high_value_groups(persistent_regional_rows(rows))
     item = groups[0]["stations"][0]
     assert item["level_name"] == "轻度污染"
     assert item["level_difference"] >= 2
@@ -390,7 +439,10 @@ def test_light_pollution_extreme_level_gap_is_not_equipment_anomaly():
 
 
 def test_moderate_extreme_is_filtered_but_does_not_hide_other_isolated_station():
-    rows = regional_rows([125.3, 90.7, 59.7, 49.05, 48.96, 48.2, 44.8, 42.8])
+    rows = persistent_regional_rows(regional_rows([125.3, 90.7, 59.7, 49.05, 48.96, 48.2, 44.8, 42.8]))
+    for row in rows:
+        if row["Tsno"] == "high-0" and row["CollectionTime"] < HOUR:
+            row["PM25"] = 20
     _, groups = detect_high_value_groups(rows)
     group = groups[0]
     assert any(item["equipment_reason"] == "moderate_or_worse_extreme_outlier" for item in group["alerts"])
@@ -398,9 +450,11 @@ def test_moderate_extreme_is_filtered_but_does_not_hide_other_isolated_station()
 
 
 def test_equipment_anomaly_requires_two_level_gap_even_at_extreme_z():
-    rows = rows_for(high_pm25=[130])
-    for index, row in enumerate(rows[:10]):
-        row["PM25"] = 80 + (index % 3) * 2
+    rows = persistent_rows(high_pm25=[130])
+    for row in rows:
+        if row["Tsno"].startswith("normal-"):
+            index = int(row["Tsno"].split("-")[-1])
+            row["PM25"] = 80 + (index % 3) * 2
     _, groups = detect_high_value_groups(rows)
     item = groups[0]["alerts"][0]
     assert item["level_name"] == "中度污染"
@@ -423,9 +477,11 @@ def test_equipment_anomaly_allows_two_level_gap_at_moderate_pollution():
 
 
 def test_modified_z_is_evidence_not_equipment_anomaly():
-    rows = rows_for(high_pm25=[95])
-    for index, row in enumerate(rows[:10]):
-        row["PM25"] = 20 + (index % 3) * 3
+    rows = persistent_rows(high_pm25=[95])
+    for row in rows:
+        if row["Tsno"].startswith("normal-"):
+            index = int(row["Tsno"].split("-")[-1])
+            row["PM25"] = 20 + (index % 3) * 3
     _, groups = detect_high_value_groups(rows)
     item = groups[0]["alerts"][0]
     assert item["modified_z"] >= 8
@@ -445,7 +501,7 @@ async def test_llm_receives_structured_evidence_and_organizes_text():
         def clean_thinking_tags(self, text):
             return text
 
-    rows = rows_for(high_pm25=[90])
+    rows = persistent_rows(high_pm25=[90])
     _, groups = detect_high_value_groups(rows)
     llm = LLM()
     message = await render_message(groups[0], {}, llm=llm)
@@ -456,9 +512,11 @@ async def test_llm_receives_structured_evidence_and_organizes_text():
 
 @pytest.mark.asyncio
 async def test_message_format_and_weather(monkeypatch, tmp_path):
-    rows = rows_for(high_pm25=[90])
-    rows[-1]["StationName"] = "魏都区颍昌街道办事处"
-    rows[-1]["PM25"] = 75.5
+    rows = persistent_rows(high_pm25=[90])
+    for row in rows:
+        if row["Tsno"] == "pm25-0":
+            row["StationName"] = "魏都区颍昌街道办事处"
+            row["PM25"] = 75.5
     fetcher, sent = build(monkeypatch, tmp_path, rows)
     await fetcher.fetch_and_store()
     message = sent[0][0][1]
@@ -470,14 +528,14 @@ async def test_message_format_and_weather(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_missing_weather_still_sends_with_explicit_clause(monkeypatch, tmp_path):
-    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[90]), weather=Weather(False))
+    fetcher, sent = build(monkeypatch, tmp_path, persistent_rows(high_pm25=[90]), weather=Weather(False))
     await fetcher.fetch_and_store()
     assert "当前气象情况：暂无可用气象观测。" in sent[0][0][1]
 
 
 @pytest.mark.asyncio
 async def test_same_hour_group_is_idempotent(monkeypatch, tmp_path):
-    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[90], high_pm10=[170]))
+    fetcher, sent = build(monkeypatch, tmp_path, persistent_rows(high_pm25=[90], high_pm10=[170]))
     first = await fetcher.fetch_and_store()
     second = await fetcher.fetch_and_store()
     assert first["sent"] == 2 and second["sent"] == 0
@@ -488,7 +546,7 @@ async def test_same_hour_group_is_idempotent(monkeypatch, tmp_path):
 async def test_screenshot_failure_never_sends(monkeypatch, tmp_path):
     def fail(*_args):
         raise RuntimeError("browser unavailable")
-    fetcher, sent = build(monkeypatch, tmp_path, rows_for(high_pm25=[90]), capture=fail)
+    fetcher, sent = build(monkeypatch, tmp_path, persistent_rows(high_pm25=[90]), capture=fail)
     result = await fetcher.fetch_and_store()
     assert result["status"] == "completed" and result["failed_groups"] == 1 and not sent
     assert fetcher.state._load()["history"][0]["status"] == "screenshot_failed"
@@ -498,7 +556,7 @@ async def test_screenshot_failure_never_sends(monkeypatch, tmp_path):
 async def test_no_data_and_stale_are_safe(monkeypatch, tmp_path):
     empty, sent = build(monkeypatch, tmp_path, [])
     assert (await empty.fetch_and_store())["status"] == "no_data"
-    stale, _ = build(monkeypatch, tmp_path, rows_for(high_pm25=[90]))
+    stale, _ = build(monkeypatch, tmp_path, persistent_rows(high_pm25=[90]))
     stale.now_factory = lambda: NOW + timedelta(hours=4)
     assert (await stale.fetch_and_store())["status"] == "stale"
     assert not sent
