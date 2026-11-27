@@ -1,4 +1,4 @@
-// Keep nested chart placeholders such as [[chart:echarts_...]] intact.
+// Keep nested chart reference brackets intact.
 export function wrapBracketMath(content) {
   // 【增强】识别方括号中的数学表达式 [公式内容]
   // ✅ 排除 Markdown 链接格式：[text](url)，避免误判

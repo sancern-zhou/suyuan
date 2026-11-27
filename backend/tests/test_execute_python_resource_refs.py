@@ -69,9 +69,8 @@ def test_execute_python_attach_resume_context_from_known_outputs(tmp_path):
             "Generated files have already been published to the unified session resource catalog. "
             "Do not call publish_session_file and do not construct a sessions/... path. "
             "Reuse the returned file_path exactly. "
-            "Generated images and files are delivered to the user automatically as reply outcome cards; "
-            "do NOT wrap their file names or resource IDs in [[chart:...]] placeholders — "
-            "[[chart:...]] is reserved for chart marker lines ([[chart:chart_N]]) returned by chart tools."
+            "Generated files are delivered as reply outcome cards. "
+            "For inline charts, copy the published marker supplied with the tool result."
         ),
         "file_paths": [str(data_file)],
     }

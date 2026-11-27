@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
+from app.agent.resources.chart_placeholders import redact_chart_paths
+
 from .types import RunState
 
 
@@ -45,12 +47,12 @@ class RuntimeEventBus:
     ) -> Dict[str, Any]:
         data = {
             "iteration": state.iteration,
-            "thought": thought,
+            "thought": redact_chart_paths(thought) if isinstance(thought, str) else thought,
             "session_id": state.session_id,
             "timestamp": datetime.now().isoformat(),
         }
         if text_content:
-            data["text_content"] = text_content
+            data["text_content"] = redact_chart_paths(text_content)
         if will_use_tool:
             data["will_use_tool"] = True
         return {

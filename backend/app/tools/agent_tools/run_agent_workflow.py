@@ -113,8 +113,7 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "禁止让子代理经 SQL 工具取原始明细后自行汇总计算统计值——自算必有口径与精度偏差，数据缺口如实上报，不得自行估算补齐。"
     "一个专家节点只回答一个独立问题，多个问题拆成多个并行节点。"
     "节点超时与迭代预算由系统按模式默认管理，编排无需配置。"
-    "节点视图 published_charts 列出子代理已产出并发布到本会话的图表（resource_id/label/path）："
-    "聊天答复中用 [[chart:<resource_id>]] 引用即可渲染；成稿作为 create_report_package 的 image assets。"
+    "节点视图 published_charts 列出已发布到本会话的图表。聊天答复原样复制 marker；静态图片路径可作为报告的 image assets。"
     "需要图表的分析节点，在 goal 的分工部分点名图表产出（图表属分工安排，不属于交付形态约束），"
     "禁止 DAG 完成后由父 Agent 重新绘制分析图表。"
     "DAG 禁止综合主模式子节点（query/expert/report，可用子模式以委派边界校验为准）；"
@@ -513,21 +512,6 @@ def compact_parent_node_result(
         elif item:
             artifacts_view.append({"kind": "artifact", "name": str(item)})
 
-    # D7：已发布到父会话的图表资源单独成列（统一资源目录的增量投影）——
-    # 父侧引用（[[chart:<resource_id>]]，finalizer 自动换 visual_id）与
-    # create_report_package 的 image assets 都以此为抓手。
-    published_charts = [
-        {
-            "resource_id": ref.get("resource_id"),
-            "label": ref.get("label"),
-            "path": (ref.get("locator") or {}).get("path"),
-        }
-        for ref in (data.get("resource_refs") or [])
-        if isinstance(ref, Mapping)
-        and str(ref.get("resource_key") or "") == "chart-image"
-        and ref.get("resource_id")
-    ][:10]
-
     return {
         "task_id": task_id,
         "target_mode": target_mode,
@@ -552,7 +536,6 @@ def compact_parent_node_result(
             ],
             "artifacts": artifacts_view,
         },
-        "published_charts": published_charts,
         "file_paths": [str(p) for p in (data.get("file_paths") or [])[:20]],
         "resource_ids": [
             str(ref.get("resource_id"))

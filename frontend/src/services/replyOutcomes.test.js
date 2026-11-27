@@ -13,9 +13,16 @@ test('groups multiple document formats into one card', () => {
   assert.equal(result.files[0].group.resources.length, 2)
 })
 test('referenced chart hides its whole group and unreferenced chart is folded', () => {
-  const resources = [{ ...resource('a','chart','json'), kind: 'visual', renderer: 'chart', visual_id: 'v1', interactive: true }, { ...resource('b','chart','png'), relation: 'rendition', renderer: 'image', visual_id: 'v1' }]
-  assert.equal(replyOutcomes(message, [message], resources).others.length, 1)
-  assert.deepEqual(replyOutcomes({ ...message, content: '[[chart:v1]]' }, [], resources), { reports: [], files: [], others: [] })
+  const id = 'a'.repeat(32)
+  const alias = 'c'.repeat(32)
+  const resources = [
+    { ...resource(id, 'chart', 'json'), kind: 'visual', renderer: 'chart', resource_key: 'chart-spec', visual_id: alias },
+    { ...resource('b'.repeat(32), 'chart', 'png'), relation: 'rendition', renderer: 'image' }
+  ]
+  for (const content of ['', `[[chart:${alias}]]`, '`[[chart:' + id + ']]`']) {
+    assert.equal(replyOutcomes({ ...message, content }, [], resources).others.length, 1)
+  }
+  assert.deepEqual(replyOutcomes({ ...message, content: `[[chart:${id}]]` }, [], resources), { reports: [], files: [], others: [] })
 })
 test('hides data and intermediate files', () => {
   assert.equal(replyOutcomes(message, [message], [resource('a','a','json'), { ...resource('b','b','csv'), kind: 'data' }]).files.length, 0)

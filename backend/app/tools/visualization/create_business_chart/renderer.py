@@ -1519,7 +1519,7 @@ def _validate_xy_lengths(chart_type: str, labels: Sequence[Any], values: Sequenc
 
 
 def _safe_chart_id(value: str) -> str:
-    # 收敛到 [[chart:<id>]] 协议字符集（见 app/utils/visual_ids.py，契约测试钉住）
+    # Keep internal renderer/cache keys compatible with the visualization payload.
     from app.utils.visual_ids import sanitize_visual_id
 
     safe = sanitize_visual_id(value)

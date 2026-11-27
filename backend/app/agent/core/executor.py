@@ -23,6 +23,7 @@ import structlog
 import traceback
 import asyncio
 import time
+from uuid import uuid4
 
 from app.agent.context.data_shape import compact_shape
 from app.utils.path_config import resolve_agent_path
@@ -300,11 +301,17 @@ class ToolExecutor:
         role: str,
         iteration: int,
         expand_directories: bool,
+        tool_call_id: str = "",
     ) -> Dict[str, Any]:
         if self.resource_service is None or self.memory_manager is None:
             return {}
         from app.agent.resources.normalizer import normalize_tool_resources
         from app.agent.resources.resource_map import project_agent_resource_map
+        from app.agent.resources.resource_service import (
+            chart_publication_identity,
+            project_inline_chart,
+            select_inline_chart_member,
+        )
 
         if role != "output":
             # Inputs are selected resource IDs resolved server-side. Never infer
@@ -324,7 +331,14 @@ class ToolExecutor:
             for declaration in declarations:
                 grouped.setdefault(declaration.group_key, []).append(declaration)
             publications = []
+            chart_index = 0
             for group_key, members in grouped.items():
+                publication_options = {}
+                if select_inline_chart_member(members) is not None:
+                    publication_options["publication_id"] = chart_publication_identity(
+                        self.resource_run_id, tool_name, iteration, tool_call_id, chart_index,
+                    )
+                    chart_index += 1
                 publications.append(
                     await self.resource_service.publish_group(
                         self.memory_manager.session_id,
@@ -332,6 +346,7 @@ class ToolExecutor:
                         group_key,
                         members,
                         turn_sequence=iteration,
+                        **publication_options,
                     )
                 )
             stored_resources = [
@@ -358,6 +373,15 @@ class ToolExecutor:
                     stored_resources,
                     query=self.resource_query,
                 )
+            from app.agent.workflow.resource_handoff import attach_published_node_charts
+
+            chart_references = [
+                reference for stored in stored_resources
+                if (reference := project_inline_chart(stored)) is not None
+            ]
+            if chart_references:
+                value["chart_references"] = chart_references
+                attach_published_node_charts(value, stored_resources)
             return {
                 "durable": True,
                 "version": max(
@@ -413,7 +437,9 @@ class ToolExecutor:
         self,
         tool_name: str,
         tool_args: Dict[str, Any],
-        iteration: int = 0
+        iteration: int = 0,
+        *,
+        tool_call_id: str | None = None,
     ) -> Dict[str, Any]:
         """
         执行工具调用（V2 with ExecutionContext support）
@@ -560,6 +586,7 @@ class ToolExecutor:
                 role="output",
                 iteration=iteration,
                 expand_directories=True,
+                tool_call_id=tool_call_id or uuid4().hex,
             )
             if tracking:
                 observation["resource_tracking"] = tracking
@@ -572,9 +599,7 @@ class ToolExecutor:
                         summary=f"{original_summary}，但资源发布失败，结果未交付到文件面板",
                     )
 
-            # 为本轮产出的图表绑定会话级短别名（[[chart:chart_N]]）：
-            # 模型原样复制短标记，Finalizer 落库/下发前统一还原为 visual_id。
-            await self._attach_visual_aliases(tool_name, observation)
+            self._append_chart_markers(observation)
 
             # ========================================
             # 详细调试信息：显示工具调用后
@@ -678,7 +703,7 @@ class ToolExecutor:
         # 检查是否有事件总线（工具生命周期事件）
         if not self.event_bus:
             # 降级到普通执行
-            return await self.execute_tool(tool_name, tool_args, iteration)
+            return await self.execute_tool(tool_name, tool_args, iteration, tool_call_id=tool_call_id)
 
         # 创建执行追踪器
         from app.agent.events.tool_lifecycle import ToolExecution, ToolState
@@ -704,7 +729,8 @@ class ToolExecutor:
             result = await self.execute_tool(
                 tool_name=tool_name,
                 tool_args=tool_args,
-                iteration=iteration
+                iteration=iteration,
+                tool_call_id=tool_call_id,
             )
 
             # 转换到完成状态
@@ -808,61 +834,17 @@ class ToolExecutor:
                     # 无法重试或已达最大重试次数
                     raise
 
-    async def _attach_visual_aliases(self, tool_name: str, observation: Dict[str, Any]) -> None:
-        """为工具结果里的 visuals 绑定会话级短别名（零抄写熵）。
-
-        visuals[].id 保持全串不变（SSE/资源目录/前端协议不受影响）；
-        别名映射写入 ``visual_refs``，并在 summary 末尾追加可直接复制的
-        ``[[chart:chart_N]]`` 标记行。解析由 Finalizer 统一完成
-        （见 app/agent/runtime/visual_alias.py）。
-        """
-        visuals = observation.get("visuals")
-        if not isinstance(visuals, list) or not visuals or not self.memory_manager:
+    def _append_chart_markers(self, observation: Dict[str, Any]) -> None:
+        references = observation.get("chart_references")
+        if not references or not (observation.get("resource_tracking") or {}).get("durable"):
             return
-        visual_ids = [
-            visual.get("id")
-            for visual in visuals
-            if isinstance(visual, dict) and isinstance(visual.get("id"), str) and visual.get("id")
+        lines = [
+            str(observation.get("summary") or "").rstrip(),
+            "已发布图表（在相关分析位置独立一行原样复制标记）：",
         ]
-        if not visual_ids:
-            return
-        from app.agent.runtime.visual_alias import visual_alias_registry
-
-        session_id = self.memory_manager.session_id
-        try:
-            mapping = await visual_alias_registry.bind(session_id, visual_ids)
-        except Exception as exc:
-            logger.warning(
-                "visual_alias_attach_failed",
-                tool_name=tool_name,
-                session_id=session_id,
-                error=str(exc),
-            )
-            return
-        if not mapping:
-            return
-        observation["visual_refs"] = mapping
-        titles = {
-            visual.get("id"): str(visual.get("title") or "").strip()
-            for visual in visuals
-            if isinstance(visual, dict)
-        }
-        marks = []
-        for alias, visual_id in mapping.items():
-            title = titles.get(visual_id, "")
-            marks.append(f"[[chart:{alias}]]（{title[:30]}）" if title else f"[[chart:{alias}]]")
-        refs_line = (
-            "图表标记（最终答复在对应分析位置独立一行原样复制标记，"
-            "禁止手抄 visuals.id 全串、禁止改动标记内容）：" + "、".join(marks) + "。"
-        )
-        base_summary = str(observation.get("summary") or "").rstrip()
-        observation["summary"] = (base_summary + "\n" + refs_line) if base_summary else refs_line
-        logger.info(
-            "visual_aliases_bound",
-            tool_name=tool_name,
-            session_id=session_id,
-            aliases=sorted(mapping),
-        )
+        for reference in references:
+            lines.extend((reference["label"][:80], reference["marker"]))
+        observation["summary"] = "\n".join(line for line in lines if line)
 
     def _normalize_result(
         self,
@@ -1175,7 +1157,8 @@ class ToolExecutor:
                 result = await self.execute_tool(
                     tool_name=tool_name,
                     tool_args=tool_args,
-                    iteration=iteration
+                    iteration=iteration,
+                    tool_call_id=tool_call.get("tool_call_id"),
                 )
                 return {
                     "tool": tool_name,

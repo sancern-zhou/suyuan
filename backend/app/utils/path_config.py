@@ -76,9 +76,17 @@ def is_agent_sensitive_path(path: str | Path) -> bool:
     return bool(parts & {".git", ".ssh", ".gnupg"})
 
 
+def get_chart_snapshots_dir() -> Path:
+    return get_sessions_dir() / "resource_content" / "chart_snapshots"
+
+
+def is_chart_snapshot_path(path: str | Path) -> bool:
+    return Path(path).expanduser().resolve().is_relative_to(get_chart_snapshots_dir().resolve())
+
+
 def is_agent_protected_write_path(path: str | Path) -> bool:
     """Source/config/deploy areas that agent file tools must never modify."""
-    if is_agent_sensitive_path(path):
+    if is_agent_sensitive_path(path) or is_chart_snapshot_path(path):
         return True
     resolved = Path(path).expanduser().resolve()
     protected_roots = [

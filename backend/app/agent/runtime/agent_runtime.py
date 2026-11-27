@@ -27,6 +27,7 @@ from .ownership import run_ownership_registry
 from .steering import steering_registry
 from .time_budget import TimeBudget
 from ..context.context_diagnostics import ContextDiagnostics
+from ..resources.chart_placeholders import ChartDraftFilter
 from ..workflow.mode_workflows import (
     allowed_tools as fixed_workflow_allowed_tools,
     can_complete as fixed_workflow_can_complete,
@@ -1267,9 +1268,8 @@ class AgentRuntime:
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
         usage_at_stream_start = state.last_context_usage
         buffer = AssistantStreamBuffer()
-        from .visual_alias import ChartAliasStreamFilter
-
-        chart_alias_filter = ChartAliasStreamFilter(state.session_id)
+        chart_draft = ChartDraftFilter()
+        thinking_draft = ChartDraftFilter()
         planner_result = PlannerResult()
         user_content = None
         attachments = self._effective_attachments(state)
@@ -1301,13 +1301,12 @@ class AgentRuntime:
             if event_type == "streaming_text":
                 chunk = event["data"].get("chunk", "")
                 is_complete = event["data"].get("is_complete", False)
-                visible = await chart_alias_filter.append(buffer.append(chunk))
+                visible = chart_draft.append(buffer.append(chunk))
                 if visible:
                     planner_result.streamed_assistant_text = True
                     yield self.events.assistant_delta(state, visible, is_complete=False)
                 if is_complete and not buffer.suppress_after_tool_use:
-                    flushed = await chart_alias_filter.append(buffer.flush())
-                    flushed += await chart_alias_filter.flush()
+                    flushed = chart_draft.append(buffer.flush()) + chart_draft.flush()
                     if flushed:
                         planner_result.streamed_assistant_text = True
                         yield self.events.assistant_delta(state, flushed, is_complete=False)
@@ -1324,7 +1323,7 @@ class AgentRuntime:
                 )
 
             elif event_type == "thinking_content":
-                content = event["data"].get("content", "")
+                content = thinking_draft.append(event["data"].get("content") or "")
                 if content:
                     yield self.events.thinking_content(state, content)
 
@@ -1855,7 +1854,9 @@ class AgentRuntime:
             if submitted
             else "结构化结果已提交"
         )
-        async for event in self._complete_response(state, planner_result, answer):
+        async for event in self._complete_response(
+            state, planner_result, answer, structured_result=True
+        ):
             yield event
 
     async def _handle_streamed_tools(
@@ -2114,6 +2115,8 @@ class AgentRuntime:
         state: RunState,
         planner_result: PlannerResult,
         answer: str,
+        *,
+        structured_result: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         late_steering_applied = False
         async for event in self._apply_steering_inputs(state, completion_boundary=True):
@@ -2135,17 +2138,13 @@ class AgentRuntime:
             answer = "本次回答未能生成有效内容（上游模型返回空响应），请重新提问或稍后重试。"
         completion_action = dict(planner_result.action or {"type": "PLAIN_TEXT_REPLY"})
         completion_action["type"] = "PLAIN_TEXT_REPLY"
-        completion_action["answer"] = answer
-        self.writer.add_iteration(
-            planner_result.thought,
-            completion_action,
-            {"success": True, "summary": "任务完成"},
-        )
         async for event in self.finalizer.complete(
             state,
             answer,
             planner_result=planner_result,
             thought=planner_result.thought,
+            completion_action=completion_action,
+            structured_result=structured_result,
         ):
             yield event
 

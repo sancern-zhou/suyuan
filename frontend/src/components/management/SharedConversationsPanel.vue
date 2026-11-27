@@ -112,22 +112,21 @@
             <div class="message-content">
             <template v-if="view.role === 'user'">{{ view.text }}</template>
             <template v-else>
-              <template v-for="(seg, si) in view.segments" :key="si">
-                <MarkdownRenderer v-if="seg.type === 'text'" :content="seg.value" />
-                <div
-                  v-else
-                  class="board-chart"
-                  @click="openChartLightbox(view, seg.attachment)"
-                >
-                  <img
-                    v-if="authedImageUrls[seg.attachment.url]"
-                    :src="authedImageUrls[seg.attachment.url]"
-                    :alt="mdImageLabel(seg.attachment)"
-                  />
-                  <span v-else-if="authedImageFailed[seg.attachment.url]" class="panel-hint">图表加载失败</span>
-                  <span v-else class="panel-hint">图表加载中…</span>
-                </div>
-              </template>
+              <MarkdownRenderer :content="view.text" :chart-resources="inlineCharts" />
+              <div
+                v-for="attachment in view.images"
+                :key="attachment.url"
+                class="board-chart"
+                @click="openImageLightbox(view, attachment)"
+              >
+                <img
+                  v-if="authedImageUrls[attachment.url]"
+                  :src="authedImageUrls[attachment.url]"
+                  :alt="imageLabel(attachment)"
+                />
+                <span v-else-if="authedImageFailed[attachment.url]" class="panel-hint">图片加载失败</span>
+                <span v-else class="panel-hint">图片加载中…</span>
+              </div>
               <div v-if="view.files.length" class="message-files">
                 <a
                   v-for="attachment in view.files"
@@ -159,6 +158,8 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
+import { chartReferenceIds } from '@/services/chartReferencePattern.js'
+import { indexInlineChartResources } from '@/services/inlineChartResources.js'
 import {
   deleteSharedConversation,
   getSharedConversation,
@@ -275,51 +276,28 @@ function fileAttachments(message) {
   )
 }
 
-// 回答正文用 [[chart:<visual_id>]] 标记图表位置（与历史对话一致）。
-// 图片走 authFetch blob 通道；样式对齐历史对话（居中、760px/58vh），
-// 点击复用 ImageLightbox 放大。blob: URL 会被 DOMPurify 从 markdown img
-// 里剥掉，因此不能走 MarkdownRenderer 的 markdown 图片路径。
-const CHART_REF_RE = /\[\[chart:([^\]]+)\]\]/g
-
-function mdImageLabel(attachment) {
-  return String(attachment?.filename || '图表').replace(/[[\]]/g, '') || '图表'
+function imageLabel(attachment) {
+  return attachment.filename || '图片'
 }
+
+// The share's own catalog also serves references to resources from earlier turns.
+const inlineCharts = computed(() => indexInlineChartResources(
+  activeShare.value?.resources, 'shared-conversations', activeShare.value?.share_id
+))
 
 const messageViews = computed(() => {
   const messages = activeShare.value?.messages || []
-  return messages.map((message) => {
+  return messages.map(message => {
     const role = messageRole(message)
-    if (role === 'user') {
-      return { role, text: messageText(message), segments: [], files: [] }
+    const text = messageText(message)
+    if (role === 'user') return { role, text, images: [], files: [] }
+    const inlineIds = new Set(chartReferenceIds(text).filter(id => inlineCharts.value.has(id)))
+    return {
+      role,
+      text,
+      images: imageAttachments(message).filter(attachment => !inlineIds.has(attachment.resource_id)),
+      files: fileAttachments(message)
     }
-    const attachments = visibleAttachments(message)
-    const byRef = new Map()
-    for (const attachment of attachments) {
-      for (const key of [attachment.visual_id, attachment.file_id, attachment.ref_id, attachment.resource_id]) {
-        const ref = key == null ? '' : String(key)
-        if (ref && !byRef.has(ref)) byRef.set(ref, attachment)
-      }
-    }
-    const content = messageText(message)
-    const segments = []
-    const inlineUrls = new Set()
-    let last = 0
-    for (const match of content.matchAll(CHART_REF_RE)) {
-      if (match.index > last) segments.push({ type: 'text', value: content.slice(last, match.index) })
-      const attachment = byRef.get(match[1])
-      if (attachment && String(attachment.mime_type || '').startsWith('image/') && attachment.url) {
-        segments.push({ type: 'chart', attachment })
-        inlineUrls.add(attachment.url)
-      }
-      // 交互图表（ECharts）面板不内联渲染，保留在附件区
-      last = match.index + match[0].length
-    }
-    if (last < content.length) segments.push({ type: 'text', value: content.slice(last) })
-    // 未被标记引用的静态图同样内联在文末（历史对话中图表均内联展示）
-    for (const attachment of imageAttachments(message)) {
-      if (!inlineUrls.has(attachment.url)) segments.push({ type: 'chart', attachment })
-    }
-    return { role, text: '', segments, files: fileAttachments(message) }
   })
 })
 
@@ -328,12 +306,12 @@ const lightboxImages = ref([])
 const lightboxStartIndex = ref(0)
 const reportFrameUrl = ref('')
 
-function openChartLightbox(view, attachment) {
+function openImageLightbox(view, attachment) {
   const src = authedImageUrls[attachment.url]
   if (!src) return
-  const images = view.segments
-    .filter(seg => seg.type === 'chart' && authedImageUrls[seg.attachment.url])
-    .map(seg => ({ src: authedImageUrls[seg.attachment.url], alt: mdImageLabel(seg.attachment) }))
+  const images = view.images
+    .filter(image => authedImageUrls[image.url])
+    .map(image => ({ src: authedImageUrls[image.url], alt: imageLabel(image) }))
   if (!images.length) return
   lightboxImages.value = images
   lightboxStartIndex.value = Math.max(0, images.findIndex(img => img.src === src))
@@ -381,21 +359,10 @@ const authedImageUrls = reactive({})
 const authedImageFailed = reactive({})
 let authedImageToken = 0
 
-function attachmentUrls(messages) {
-  const urls = new Set()
-  for (const message of messages || []) {
-    for (const attachment of visibleAttachments(message)) {
-      if (attachment?.url && String(attachment.mime_type || '').startsWith('image/')) {
-        urls.add(String(attachment.url))
-      }
-    }
-  }
-  return urls
-}
-
-async function loadAuthedImages(messages) {
-  const token = ++authedImageToken
-  for (const url of attachmentUrls(messages)) {
+async function loadAuthedImages(views) {
+  const token = authedImageToken
+  const urls = new Set(views.flatMap(view => view.images.map(attachment => attachment.url)))
+  for (const url of urls) {
     if (authedImageUrls[url] || authedImageFailed[url]) continue
     try {
       const response = await authFetch(url)
@@ -410,9 +377,9 @@ async function loadAuthedImages(messages) {
   }
 }
 
-watch(() => activeShare.value?.messages, (messages) => {
+watch(messageViews, (views) => {
   releaseAuthedImages()
-  if (messages?.length) loadAuthedImages(messages)
+  if (views.length) loadAuthedImages(views)
 })
 
 watch(activeShare, (share) => {

@@ -5,10 +5,14 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-from .resource_service import StoredResource
+from .resource_service import StoredResource, project_inline_chart
 
 
 _NON_CATALOG_INPUT_TOOLS = {"list_directory", "search_files", "grep", "web_search", "web_fetch"}
+
+
+def _locator_key(resource: StoredResource) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((str(key), str(value)) for key, value in resource.locator.items()))
 
 
 def _terms(query: str) -> set[str]:
@@ -63,7 +67,7 @@ def project_agent_resource_map(
     # line still reports every role represented by that locator.
     grouped: dict[tuple[tuple[str, str], ...], list[StoredResource]] = {}
     for item in active:
-        locator_key = tuple(sorted((str(key), str(value)) for key, value in (item.locator or {}).items()))
+        locator_key = _locator_key(item)
         grouped.setdefault(locator_key or (("resource_id", item.resource_id),), []).append(item)
 
     role_priority = {"attachment": 4, "primary": 3, "report": 3, "output": 2, "source": 1}
@@ -86,8 +90,8 @@ def project_agent_resource_map(
 
     projected_items.sort(key=score, reverse=True)
     lines = [
-        f"Resources: {len(active)} catalog rows, {len(projected_items)} unique locators; shown paths are tool-only.",
-        "Never place shown paths in final Markdown links or image URLs; users preview and download these outputs, including kind=data files, in the session resource panel.",
+        f"Resources: {len(active)} catalog rows, {len(projected_items)} unique locators.",
+        "Copy the supplied [[chart:…]] marker to place published charts inline. Other paths are tool-only; no server paths in Markdown links or image URLs.",
         "Search omitted items with list_session_resources; read_session_resource is fallback.",
     ]
     included = 0
@@ -97,8 +101,14 @@ def project_agent_resource_map(
         mime = str(metadata.get("mime_type") or "")
         details = "; ".join(part for part in (mime, summary) if part)
         line = f"- {item.resource_id} | roles={','.join(roles)} | {item.kind} | {item.label}"
-        access_path = resource_access_path(item)
-        if access_path:
+        charts = [
+            reference for candidate in grouped.get(_locator_key(item), [])
+            if (reference := project_inline_chart(candidate)) is not None
+        ]
+        chart = charts[0] if len(charts) == 1 else None
+        if chart:
+            line += f" | {chart['marker']}"
+        elif access_path := resource_access_path(item):
             line += f" | path={access_path}"
         if details:
             line += f" | {details}"

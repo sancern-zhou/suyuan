@@ -25,17 +25,91 @@ internal sealed class ReplyBlock {
     data class Image(val attachment: UploadedAttachment) : ReplyBlock()
 }
 
+private val chartMarker = Regex("\\[\\[chart:([0-9a-f]{32})\\]\\]")
+private val backtickRuns = Regex("`+")
+private val codeFence = Regex("^ {0,3}(`{3,}|~{3,})(.*)$")
+private val quotePrefix = Regex("^ {0,3}>[ \\t]?")
+
+private fun String.isMarkdownEscaped(index: Int): Boolean {
+    var start = index
+    while (start > 0 && this[start - 1] == '\\') start--
+    return (index - start) % 2 == 1
+}
+
+private fun chartMarkers(content: String): Sequence<MatchResult> = sequence {
+    // Collect ordinary Markdown ranges separately from fenced and indented code.
+    var fence: String? = null
+    var fenceQuoteDepth = 0
+    var start = 0
+    var offset = 0
+    val textRanges = mutableListOf<IntRange>()
+    for (line in content.lineSequence()) {
+        var markdown = line
+        var quoteDepth = 0
+        while (true) {
+            val quote = quotePrefix.find(markdown) ?: break
+            markdown = markdown.substring(quote.value.length)
+            quoteDepth++
+        }
+        if (fence != null && quoteDepth < fenceQuoteDepth) fence = null
+        val candidate = codeFence.find(markdown)
+        val delimiter = candidate?.groupValues?.get(1).orEmpty()
+        val suffix = candidate?.groupValues?.get(2).orEmpty()
+        val next = offset + line.length + when {
+            content.startsWith("\r\n", offset + line.length) -> 2
+            offset + line.length < content.length -> 1
+            else -> 0
+        }
+        val open = fence
+        if (open != null) {
+            if (delimiter.startsWith(open) && suffix.isBlank()) fence = null
+            start = next
+        } else if (delimiter.isNotEmpty() && (delimiter[0] == '~' || '`' !in suffix)) {
+            textRanges += start until offset
+            fence = delimiter
+            fenceQuoteDepth = quoteDepth
+            start = next
+        } else if (markdown.startsWith("    ") || markdown.startsWith("\t")) {
+            textRanges += start until offset
+            start = next
+        }
+        offset = next
+    }
+    textRanges += start until content.length
+
+    for (range in textRanges) {
+        if (range.isEmpty()) continue
+        val ticks = backtickRuns.findAll(content, range.first).takeWhile { it.range.last <= range.last }.toList()
+        var skipUntil = range.first
+        var tickIndex = 0
+        for (match in chartMarker.findAll(content, range.first).takeWhile { it.range.last <= range.last }) {
+            while (tickIndex < ticks.size && ticks[tickIndex].range.first < match.range.first) {
+                val opening = ticks[tickIndex++]
+                if (opening.range.first < skipUntil || content.isMarkdownEscaped(opening.range.first)) continue
+                val closing = (tickIndex until ticks.size).firstOrNull { ticks[it].value.length == opening.value.length }
+                if (closing != null) {
+                    skipUntil = ticks[closing].range.last + 1
+                    tickIndex = closing + 1
+                }
+            }
+            if (match.range.first >= skipUntil && !content.isMarkdownEscaped(match.range.first)) yield(match)
+        }
+    }
+}
+
 internal fun chartReplyBlocks(content: String, attachments: List<UploadedAttachment>): List<ReplyBlock> {
-    // Resolve images as well as ECharts; an interactive spec wins over its thumbnail.
-    val charts = attachments.filter { isInteractiveChart(it) || isImageAttachment(it) }
-        .sortedBy { if (isInteractiveChart(it)) 1 else 0 }
-        .flatMap { listOf(it.fileId to it, it.visualId to it) }.toMap()
+    val charts = attachments.filter { it.resourceId.isNotBlank() && (isInteractiveChart(it) || isImageAttachment(it)) }
+        .associateBy { it.resourceId }
     val blocks = mutableListOf<ReplyBlock>()
     var start = 0
-    Regex("\\[\\[chart:([A-Za-z0-9_.-]{1,100})\\]\\]").findAll(content).forEach { match ->
-        val chart = charts[match.groupValues[1]] ?: return@forEach
+    chartMarkers(content).forEach { match ->
         if (match.range.first > start) blocks += ReplyBlock.Text(content.substring(start, match.range.first))
-        blocks += if (isInteractiveChart(chart)) ReplyBlock.Chart(chart) else ReplyBlock.Image(chart)
+        val chart = charts[match.groupValues[1]]
+        blocks += when {
+            chart == null -> ReplyBlock.Text("【图表不可用】")
+            isInteractiveChart(chart) -> ReplyBlock.Chart(chart)
+            else -> ReplyBlock.Image(chart)
+        }
         start = match.range.last + 1
     }
     if (start < content.length || blocks.isEmpty()) blocks += ReplyBlock.Text(content.substring(start))

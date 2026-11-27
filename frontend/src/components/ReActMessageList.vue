@@ -183,17 +183,13 @@
         </div>
 
         <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
-          <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
-          <template v-for="(block, blockIndex) in messageLayoutBlocks(message)" :key="`${message.id}-${blockIndex}`">
-          <InlineChartCard v-if="block.kind === 'chart'" :resource="block.resource" />
-          <MarkdownRenderer v-else
-            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="renderedMessageContent({ ...message, content: block.content })"
+          <MarkdownRenderer
+            :content="contentToString(getMessageContent(message))"
             :streaming="message.streaming === true"
+            :chart-resources="inlineCharts"
           />
-          </template>
         </div>
-        <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ renderedMessageContent(message) }}</div>
+        <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ contentToString(getMessageContent(message)) }}</div>
         <ReplyOutcomeCards v-if="!message.streaming" :message="message" :messages="messages" :resources="currentSessionResources()"
           @preview="resourceId => emit('preview-message-attachment', { sessionId: props.sessionId, resourceId })" />
 
@@ -352,10 +348,8 @@ import {
   selectAgentProgressTip
 } from './agentPlatform/agentProgressPresentation.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import InlineChartCard from './InlineChartCard.vue'
 import ReplyOutcomeCards from './ReplyOutcomeCards.vue'
-import { inlineChartBlocks } from '@/services/inlineChartBlocks.js'
-import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
+import { indexInlineChartResources } from '@/services/inlineChartResources.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
   followsStructuredQuestion,
@@ -463,18 +457,9 @@ const sessionResourceStore = useSessionResourceStore()
 const currentSessionResources = () => sessionResourceStore.activeSessionId === props.sessionId
   ? sessionResourceStore.activeSessionState?.resources || []
   : []
-const chartResourcesForMessage = message => inlineChartImages(
-  message,
-  props.messages,
-  currentSessionResources(),
-  contentToString(getMessageContent(message))
-)
-const renderedMessageContent = message => {
-  const content = contentToString(getMessageContent(message))
-  if (!content.includes('[[chart:')) return content
-  return renderChartPlaceholders(content, chartResourcesForMessage(message), currentSessionResources()).content
-}
-const messageLayoutBlocks = message => inlineChartBlocks(contentToString(getMessageContent(message)), currentSessionResources())
+const inlineCharts = computed(() => indexInlineChartResources(
+  sessionResourceStore.sessionState(props.sessionId)?.resources, 'sessions', props.sessionId
+))
 
 const messagesContainer = ref(null)
 const messagesContent = ref(null)

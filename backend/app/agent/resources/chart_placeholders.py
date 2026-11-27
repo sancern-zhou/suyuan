@@ -1,55 +1,99 @@
-"""Normalize ``[[chart:...]]`` placeholders in final answers.
-
-The chat protocol requires ``[[chart:<visual_id>]]`` where ``visual_id`` is the
-``visuals[].id`` returned by chart tools. Models sometimes copy the catalog
-``resource_id`` instead (for example from ``list_session_resources`` output or
-an exported resource manifest). The frontend resolves chart placeholders by
-``visual_id`` only, so resource-id placeholders stay as literal text and the
-charts never render. This module rewrites resource-id placeholders into visual
-ids before the answer is persisted and emitted.
-"""
+"""Resolve published file references to session-scoped chart resource IDs."""
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import structlog
 
-from app.agent.resources.resource_service import SessionResourceService
+from app.agent.resources.resource_service import SessionResourceService, normalize_chart_path
 
 logger = structlog.get_logger(__name__)
 
-CHART_PLACEHOLDER_PATTERN = re.compile(r"\[\[chart:([A-Za-z0-9_.:-]{1,200})\]\]")
+CHART_PREFIX = "[[chart:"
+CHART_UNAVAILABLE = "【图表不可用】"
+RESOURCE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+_MAX_MARKER_LENGTH = 2048
+_QUOTE_PREFIX = r"(?: {0,3}>[ \t]?)*"
+_FENCE = re.compile(rf"(?m)^(?P<quote>{_QUOTE_PREFIX}) {{0,3}}(?P<delimiter>`{{3,}}|~{{3,}})[^\n]*(?:\n|$)")
+_QUOTE_LINE = re.compile(rf"^{_QUOTE_PREFIX}")
+_TOKEN = re.compile(r"`+|\\\\|\\\[|\[\[chart:([^\r\n]*?)(?:\]\]|(?=\r?$))", re.M)
 
-_MAX_SCAN_PAGES = 50
-_PAGE_SIZE = 100
+
+def _fence_end(text: str, fence: re.Match) -> int:
+    delimiter = fence["delimiter"]
+    quote_depth = fence["quote"].count(">")
+    close = re.compile(r" {0,3}" + delimiter[0] + r"{%d,}[ \t]*\r?$" % len(delimiter))
+    position = fence.end()
+    while position < len(text):
+        end = text.find("\n", position)
+        if end < 0:
+            end = len(text)
+        line = text[position:end]
+        prefix = _QUOTE_LINE.match(line)[0]
+        if prefix.count(">") < quote_depth:
+            return position
+        position = end + 1
+        if prefix.count(">") == quote_depth and close.fullmatch(line[len(prefix):]):
+            break
+    return position
+
+
+def _chart_markers(text: str):
+    """Yield markers outside escaped text, fenced code and matched code spans."""
+    if CHART_PREFIX not in text:
+        return
+    position = 0
+    fence = _FENCE.search(text)
+    while position < len(text):
+        token = _TOKEN.search(text, position)
+        if fence and (not token or fence.start() <= token.start()):
+            position = _fence_end(text, fence)
+            fence = _FENCE.search(text, position) if position < len(text) else None
+            continue
+        if not token:
+            break
+        position = token.end()
+        if token[0].startswith("`"):
+            close = re.compile(r"(?<!`)" + token[0] + r"(?!`)").search(
+                text, position, fence.start() if fence else len(text)
+            )
+            if close:
+                position = close.end()
+        elif token[1] is not None:
+            line_start = text.rfind("\n", 0, token.start()) + 1
+            prefix = text[line_start:token.start()]
+            quote = _QUOTE_LINE.match(prefix)[0]
+            indent = prefix[len(quote):]
+            if not indent.strip() and (len(indent) >= 4 or "\t" in indent):
+                continue
+            value = token[1] if token[0].endswith("]]") and len(token[0]) <= _MAX_MARKER_LENGTH else ""
+            yield token.start(), token.end(), value
 
 
 def collect_placeholder_ids(text: str) -> set[str]:
-    return {match.group(1) for match in CHART_PLACEHOLDER_PATTERN.finditer(text or "")}
+    return {value for _, _, value in _chart_markers(text or "") if RESOURCE_ID_PATTERN.fullmatch(value)}
 
 
-async def _resource_id_to_visual_id(
-    session_id: str,
-    candidate_ids: set[str],
-    service: SessionResourceService,
-) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-    cursor: Optional[str] = None
-    for _ in range(_MAX_SCAN_PAGES):
-        page = await service.list_resources(
-            session_id, status="active", limit=_PAGE_SIZE, cursor=cursor
-        )
-        for resource in page.resources:
-            if resource.resource_id not in candidate_ids:
-                continue
-            visual_id = str((resource.metadata or {}).get("visual_id") or "").strip()
-            if visual_id and visual_id != resource.resource_id:
-                mapping[resource.resource_id] = visual_id
-        cursor = page.next_cursor
-        if not cursor:
-            break
-    return mapping
+def _rewrite(text: str, markers, replacements: dict[str, str]) -> str:
+    parts = []
+    position = 0
+    for start, end, value in markers:
+        parts.append(text[position:start])
+        resource_id = replacements.get(value)
+        parts.append(f"{CHART_PREFIX}{resource_id}]]" if resource_id else CHART_UNAVAILABLE)
+        position = end
+    parts.append(text[position:])
+    return "".join(parts)
+
+
+def redact_chart_paths(text: str) -> str:
+    """Keep settled resource markers, redact unpublished path markers in display text."""
+    markers = list(_chart_markers(text or ""))
+    if not markers:
+        return text
+    return _rewrite(text, markers, {
+        value: value for _, _, value in markers if RESOURCE_ID_PATTERN.fullmatch(value)
+    })
 
 
 async def normalize_chart_placeholders(
@@ -57,35 +101,69 @@ async def normalize_chart_placeholders(
     session_id: str | None,
     service: SessionResourceService | None = None,
 ) -> str:
-    """Rewrite ``[[chart:<resource_id>]]`` to ``[[chart:<visual_id>]]``.
-
-    Placeholders that already use a visual id (or an unknown id) are kept
-    unchanged. Fail-open: any catalog lookup problem returns the original text.
-    """
-    if not text or "[[chart:" not in text or not session_id:
+    if not text or CHART_PREFIX not in text:
         return text
-    candidate_ids = collect_placeholder_ids(text)
-    if not candidate_ids:
+    markers = list(_chart_markers(text))
+    if not markers:
         return text
+    values = {value for _, _, value in markers if value}
+    path_keys = {
+        value: key for value in values
+        if not RESOURCE_ID_PATTERN.fullmatch(value) and (key := normalize_chart_path(value))
+    }
+    replacements = {}
     try:
-        active_service = service or SessionResourceService.database()
-        mapping = await _resource_id_to_visual_id(session_id, candidate_ids, active_service)
-    except Exception as exc:
-        logger.warning(
-            "chart_placeholder_normalize_lookup_failed",
-            session_id=session_id,
-            error=str(exc),
-        )
-        return text
-    if not mapping:
-        return text
-    normalized = CHART_PLACEHOLDER_PATTERN.sub(
-        lambda match: f"[[chart:{mapping.get(match.group(1), match.group(1))}]]",
-        text,
-    )
-    logger.info(
-        "chart_placeholder_normalized",
-        session_id=session_id,
-        rewritten=sorted(mapping),
-    )
-    return normalized
+        if session_id and path_keys:
+            catalog = service or SessionResourceService.database()
+            matches = await catalog.find_inline_charts_by_paths(session_id, path_keys)
+            for value, key in path_keys.items():
+                records = matches.get(key, [])
+                if len(records) == 1:
+                    replacements[value] = records[0].resource_id
+    except Exception:
+        logger.exception("chart_reference_lookup_failed", session_id=session_id)
+    if values - replacements.keys() or any(not value for _, _, value in markers):
+        logger.info("chart_reference_unresolved", session_id=session_id,
+                    missing=len(values - replacements.keys()), malformed=sum(not value for _, _, value in markers))
+    return _rewrite(text, markers, replacements)
+
+
+class ChartDraftFilter:
+    """Hide in-flight chart markers until the accepted terminal answer replaces the draft.
+
+    The original planner text is retained for final parsing, including literal code.
+    A chart reference may span arbitrary chunks. Once its prefix is recognized, only
+    its closing delimiter or newline is tracked, so long invalid input stays bounded.
+    """
+
+    def __init__(self) -> None:
+        self._prefix = ""
+        self._inside = False
+        self._close_pending = False
+
+    def append(self, chunk: str) -> str:
+        output = []
+        for char in chunk:
+            if self._inside:
+                if char in "\r\n" or (char == "]" and self._close_pending):
+                    self._inside = False
+                    self._close_pending = False
+                    if char in "\r\n":
+                        output.append(char)
+                else:
+                    self._close_pending = char == "]"
+                continue
+            self._prefix += char
+            while self._prefix and not CHART_PREFIX.startswith(self._prefix):
+                output.append(self._prefix[0])
+                self._prefix = self._prefix[1:]
+            if self._prefix == CHART_PREFIX:
+                output.append(CHART_UNAVAILABLE)
+                self._prefix = ""
+                self._inside = True
+        return "".join(output)
+
+    def flush(self) -> str:
+        prefix, self._prefix = self._prefix, ""
+        self._inside = self._close_pending = False
+        return prefix

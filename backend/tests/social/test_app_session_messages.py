@@ -193,24 +193,23 @@ def test_chart_descriptor_exposes_layout_identity_without_server_path():
         media_type="application/json", renderer="chart", resource_key="chart-spec",
         metadata={"visual_id": "v1", "interactive": True}, locator={"path": "/private/chart.json"})
     descriptor = social_app_routes._app_resource_descriptor("s1", resource)
-    assert descriptor["visual_id"] == "v1"
+    assert descriptor["resource_id"] == "r1"
+    assert "visual_id" not in descriptor
     assert descriptor["interactive"] is True
     assert descriptor["resource_key"] == "chart-spec"
     assert "/private" not in str(descriptor)
 
 
-def test_static_charts_with_same_filename_keep_distinct_visual_ids(monkeypatch):
+def test_static_charts_with_same_filename_keep_distinct_resource_ids(monkeypatch):
     import asyncio
-    resources = [SimpleNamespace(resource_id=rid, role="output", kind="file", relation="rendition",
+    resources = [SimpleNamespace(resource_id=rid, role="output", kind="file", relation="primary",
         parent_resource_id=None, label="趋势.png", format="png", media_type="image/png",
-        renderer="image", resource_key="chart-image", metadata={"visual_id": vid})
-        for rid, vid in [("r1", "v1"), ("r2", "v2")]]
-    class Service:
-        async def list_resources(self, *args, **kwargs):
-            return SimpleNamespace(resources=resources)
-    monkeypatch.setattr(social_app_routes.SessionResourceService, "database", lambda: Service())
+        renderer="image", resource_key="primary:png", metadata={})
+        for rid in ("a" * 32, "b" * 32)]
+    service = SimpleNamespace(list_resources=AsyncMock(return_value=SimpleNamespace(resources=resources)))
+    monkeypatch.setattr(social_app_routes.SessionResourceService, "database", lambda: service)
     result = asyncio.run(social_app_routes._app_resource_descriptors("s1", []))
-    assert [item["visual_id"] for item in result] == ["v1", "v2"]
+    assert [item["resource_id"] for item in result] == ["a" * 32, "b" * 32]
 
 
 def test_app_resource_list_accepts_authorized_web_session(monkeypatch):
@@ -219,9 +218,57 @@ def test_app_resource_list_accepts_authorized_web_session(monkeypatch):
         async def require_read(self, session_id, user):
             return row
     async def descriptors(session_id, ids):
-        return [{"file_id": "r1", "visual_id": "v1", "interactive": True}]
+        return [{"file_id": "file-1", "resource_id": "a" * 32, "interactive": True}]
     monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: Catalog())
     monkeypatch.setattr(social_app_routes, "_app_resource_descriptors", descriptors)
     response = _client().get(f"/api/social/app/sessions/{row.session_id}/resources")
     assert response.status_code == 200
-    assert response.json()["resources"][0]["visual_id"] == "v1"
+    assert response.json()["resources"][0]["resource_id"] == "a" * 32
+    assert response.json()["resources"][0]["file_id"] == "file-1"
+
+
+def test_cold_history_targets_old_charts_only_after_session_authorization(monkeypatch):
+    row = _web_row()
+    chart_id, preview_id, foreign_id = "a" * 32, "b" * 32, "c" * 32
+    answer = f"旧图 [[chart:{chart_id}]] 其他会话 [[chart:{foreign_id}]]"
+    messages = [
+        {"type": "final", "content": answer, "attachments": [{"file_id": "upload", "url": "/api/upload/upload"}]},
+        {"role": "assistant", "content": f"再次引用 [[chart:{chart_id}]]"},
+    ]
+    adapter = SimpleNamespace(restore=AsyncMock(return_value={"session": SimpleNamespace(model_dump=lambda **kw: {
+        "conversation_history": messages,
+    })}))
+    monkeypatch.setattr(conversations_adapters, "get_conversation_adapters", lambda: SimpleNamespace(get=lambda source: adapter))
+    authorize = AsyncMock(return_value=row)
+    monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: SimpleNamespace(require_read=authorize))
+    spec = SimpleNamespace(resource_id=chart_id, group_id="old-chart", role="output", kind="visual", relation="primary",
+        parent_resource_id=None, label="趋势", format="json", media_type="application/json",
+        renderer="chart", resource_key="chart-spec", metadata={"interactive": True})
+    preview = SimpleNamespace(resource_id=preview_id, role="output", kind="file", relation="preview",
+        parent_resource_id=chart_id, media_type="image/png")
+    recent = [SimpleNamespace(resource_id=f"{i:032x}", role="input", kind="file") for i in range(200)]
+
+    async def list_resources(session_id, *, group_id=None, **kwargs):
+        assert session_id == row.session_id
+        return SimpleNamespace(resources=[spec, preview] if group_id == "old-chart" else recent, next_cursor=None)
+
+    service = SimpleNamespace(list_resources=AsyncMock(side_effect=list_resources), get_resources_by_ids=AsyncMock(return_value=[spec]))
+    monkeypatch.setattr(social_app_routes.SessionResourceService, "database", lambda: service)
+    path = f"/api/social/app/sessions/{row.session_id}/messages"
+    response = _client().get(path)
+    assert response.status_code == 200
+    lookup = service.get_resources_by_ids
+    lookup.assert_awaited_once_with(row.session_id, [chart_id, foreign_id], status="active")
+    first, second = response.json()["messages"]
+    assert first["content"] == answer
+    assert [item["file_id"] for item in first["attachments"]] == ["upload", chart_id]
+    assert len(second["attachments"]) == 1
+    chart = second["attachments"][0]
+    assert chart["url"].endswith(f"/{chart_id}/content")
+    assert chart["preview_url"].endswith(f"/{preview_id}/content")
+
+    lookup.reset_mock()
+    authorize.side_effect = HTTPException(status_code=403, detail="forbidden")
+    response = _client().get(path)
+    assert response.status_code == 403
+    lookup.assert_not_awaited()

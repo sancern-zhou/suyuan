@@ -18,7 +18,8 @@
         <ResourcePreviewActions :resource="item.resource" :group="item.group" compact />
       </article>
       <div v-for="item in outcomes.others" :key="item.group.group_id">
-        <InlineChartCard v-if="item.resource.renderer === 'chart'" :resource="item.resource" />
+        <InlineChartCard v-if="item.resource.renderer === 'chart'"
+          :chart="{ kind: 'spec', resource: item.resource, url: item.resource.content_url }" />
         <AuthenticatedImage v-else :source="item.resource.content_url" :alt="item.resource.label" class="outcome-image" @click="$emit('preview', item.resource.resource_id)" />
       </div>
     </template>

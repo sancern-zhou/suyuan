@@ -14,6 +14,7 @@ from app.agent.resources.resource_service import (
     ResourcePage,
     ResourcePublishResult,
     StoredResource,
+    confirmed_chart_publication,
     stable_group_id,
     stable_resource_id,
     validate_publication,
@@ -114,6 +115,7 @@ class SessionResourcesRepository:
         resources: list[ResourceDeclaration],
         *,
         turn_sequence: int = 0,
+        immutable: bool = False,
     ) -> ResourcePublishResult:
         validate_publication(group_key, resources)
         group_id = stable_group_id(session_id, group_key)
@@ -129,6 +131,10 @@ class SessionResourcesRepository:
                     .with_for_update()
                 )
                 existing = list(locked_rows.scalars().all())
+                if immutable and existing:
+                    return confirmed_chart_publication(
+                        catalog.version, [_stored(row) for row in existing], resources,
+                    )
                 group_version = max((row.version for row in existing), default=0) + 1
 
                 now = datetime.utcnow()
@@ -413,6 +419,36 @@ class SessionResourcesRepository:
                 statement = statement.where(SessionResourceDB.status == status)
             row = (await db.execute(statement)).scalar_one_or_none()
             return _stored(row) if row is not None else None
+
+    async def get_resources_by_ids(
+        self, session_id: str, resource_ids: list[str], *, status: str | None = "active",
+    ) -> list[StoredResource]:
+        if not resource_ids:
+            return []
+        async with AsyncSession(self.engine) as db:
+            statement = select(SessionResourceDB).where(
+                SessionResourceDB.session_id == session_id,
+                SessionResourceDB.resource_id.in_(resource_ids),
+            )
+            if status is not None:
+                statement = statement.where(SessionResourceDB.status == status)
+            rows = (await db.scalars(statement)).all()
+            by_id = {row.resource_id: _stored(row) for row in rows}
+            return [by_id[resource_id] for resource_id in resource_ids if resource_id in by_id]
+
+    async def find_inline_charts_by_paths(
+        self, session_id: str, paths: list[str],
+    ) -> list[StoredResource]:
+        if not paths:
+            return []
+        async with AsyncSession(self.engine) as db:
+            statement = select(SessionResourceDB).where(
+                SessionResourceDB.session_id == session_id,
+                SessionResourceDB.status == "active",
+                SessionResourceDB.resource_metadata.contains({"inline_chart": True}),
+                SessionResourceDB.locator["path"].astext.in_(paths),
+            )
+            return [_stored(row) for row in (await db.scalars(statement)).all()]
 
     async def delete_resource(self, session_id: str, resource_id: str) -> bool:
         async with AsyncSession(self.engine) as db:

@@ -820,12 +820,7 @@ def test_compact_node_view_surfaces_published_charts_and_artifact_paths(tmp_path
     # 子信封图表声明不再塌缩成空对象
     assert view["result_envelope"]["artifacts"][0]["type"] == "chart"
     assert view["result_envelope"]["artifacts"][0]["path"] == str(chart_png)
-    # 已发布图表资源成列：父侧可 [[chart:<resource_id>]] 引用或作为报告 image assets
-    assert view["published_charts"] == [{
-        "resource_id": "res-chart-1",
-        "label": "清远10月AQI时序图",
-        "path": str(chart_png),
-    }]
+    assert "published_charts" not in view  # Only the parent publication can add markers.
 
 
 def test_upstream_summaries_carry_findings_values():

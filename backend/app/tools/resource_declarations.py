@@ -6,14 +6,12 @@ import json
 import mimetypes
 from collections.abc import Iterable
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from app.utils.path_config import get_data_registry
-from app.utils.visual_ids import new_visual_id
 from app.agent.context.data_files import resolve_data_path
 
-# 可内联展示的图片产物后缀：发布时统一分配视觉身份（metadata.visual_id），
-# 使其进入 visuals/别名契约——模型抄 [[chart:chart_N]] 标记即可内联引用。
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
 
 
@@ -305,24 +303,21 @@ def artifact_resource(
 
 
 def chart_resource(
-    visual_id: str,
+    path: str | Path,
     *,
     group_key: str,
     tool_name: str,
-    path: str | Path | None = None,
     label: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "kind": "visual",
         "group_key": group_key,
-        "resource_key": "primary:chart",
+        "resource_key": "chart-spec",
         "relation": "primary",
         "role": "output",
-        "label": label or visual_id,
-        "locator": {"path": str(Path(path).expanduser().resolve())}
-        if path is not None
-        else {"visual_id": visual_id},
+        "label": label or "图表",
+        "locator": {"path": str(Path(path).expanduser().resolve())},
         "format": "json",
         "media_type": "application/json",
         "renderer": "chart",
@@ -390,26 +385,6 @@ def board_product(
     return members
 
 
-def visual_resource(
-    visual_id: str,
-    *,
-    tool_name: str,
-    role: str = "output",
-    label: str | None = None,
-    logical_key: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    resource = chart_resource(
-        visual_id,
-        group_key=logical_key or f"visual:{visual_id}",
-        tool_name=tool_name,
-        label=label,
-        metadata=metadata,
-    )
-    resource["role"] = role
-    return resource
-
-
 def resources_for_visuals(
     visuals: Iterable[dict[str, Any]], *, tool_name: str
 ) -> list[dict[str, Any]]:
@@ -424,29 +399,26 @@ def resources_for_visuals(
             continue
         chart_dir = (get_data_registry() / "charts").resolve()
         chart_dir.mkdir(parents=True, exist_ok=True)
-        spec_path = chart_dir / f"{visual_id}.json"
         safe_spec = _safe_spec_payload(visual)
-        spec_path.write_text(
-            json.dumps(safe_spec, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        group_key = f"visual:{visual_id}"
+        # Producer output is staging data. The session service publishes its own
+        # immutable copy, so the payload ID need not name any file or resource.
+        with NamedTemporaryFile(mode="w", suffix=".json", dir=chart_dir, encoding="utf-8", delete=False) as spec:
+            json.dump(safe_spec, spec, ensure_ascii=False, indent=2, default=str)
+            spec_path = Path(spec.name)
+        group_key = _path_group_key(spec_path, tool_name)
         chart = chart_resource(
-            visual_id,
-            path=spec_path,
+            spec_path,
             group_key=group_key,
             tool_name=tool_name,
-            label=str(visual.get("title") or payload.get("title") or visual_id),
+            label=str(visual.get("title") or payload.get("title") or "图表"),
             metadata={
                 "type": visual.get("type") or payload.get("type"),
-                "visual_id": visual_id,
                 "interactive": (
-                    tool_name not in {"execute_python", "create_business_chart"}
+                    tool_name != "create_business_chart"
                     and (visual.get("type") or payload.get("type")) != "image"
                 ),
             },
         )
-        chart["resource_key"] = "chart-spec"
         resources.append(chart)
         data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
         meta = visual.get("meta") if isinstance(visual.get("meta"), dict) else {}
@@ -477,7 +449,6 @@ def resources_for_visuals(
                     tool_name=tool_name,
                     relation="rendition",
                     renderer="image",
-                    metadata={"visual_id": visual_id},
                 )
                 image["resource_key"] = "chart-image"
                 resources.append(image)
@@ -485,94 +456,13 @@ def resources_for_visuals(
     return resources
 
 
-def allocate_image_visual_ids(paths: Iterable[str | Path]) -> dict[str, str]:
-    """为图片产物预分配内联视觉身份（解析后绝对路径 → visual_id）。
-
-    生成的 visual_id 会同时写入资源声明的 ``metadata.visual_id`` 与工具
-    结果 ``visuals[]`` 条目，两条记录共享同一身份；调用方必须把同一映射
-    传给 ``generated_file_products`` 与 ``generated_image_visuals``。
-    """
-    mapping: dict[str, str] = {}
-    for path in paths:
-        try:
-            resolved = Path(path).expanduser().resolve()
-        except OSError:
-            continue
-        if resolved.suffix.lower() in IMAGE_SUFFIXES:
-            mapping[str(resolved)] = new_visual_id("matplotlib")
-    return mapping
-
-
-def generated_image_visuals(
-    paths: Iterable[str | Path],
-    visual_ids_by_path: dict[str, str],
-    existing_visuals: Iterable[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    """为图片产物构建 visuals 契约条目（与 save_chart 路径同构）。
-
-    ``existing_visuals`` 用于按源文件绝对路径去重：save_chart/base64 路径
-    已登记的图不再重复发身份。条目只携带 id/title/路径，前端渲染与产物
-    卡片消费的是资源目录（content_url），不依赖 visuals 携带图片 URL。
-    """
-    registered: set[str] = set()
-    for visual in existing_visuals or []:
-        if not isinstance(visual, dict):
-            continue
-        data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
-        meta = visual.get("meta") if isinstance(visual.get("meta"), dict) else {}
-        for candidate in (
-            visual.get("local_path"),
-            visual.get("file_path"),
-            data.get("local_path"),
-            data.get("file_path"),
-            data.get("source_file_path"),
-            meta.get("local_path"),
-            meta.get("file_path"),
-        ):
-            if not isinstance(candidate, str) or not candidate:
-                continue
-            try:
-                registered.add(str(Path(candidate).expanduser().resolve()))
-            except OSError:
-                continue
-    visuals: list[dict[str, Any]] = []
-    for path in paths:
-        try:
-            resolved = str(Path(path).expanduser().resolve())
-        except OSError:
-            continue
-        visual_id = visual_ids_by_path.get(resolved)
-        if not visual_id or resolved in registered:
-            continue
-        registered.add(resolved)
-        visuals.append({
-            "id": visual_id,
-            "type": "image",
-            "title": f"图表 {Path(resolved).stem}",
-            "data": {"source_file_path": resolved},
-            "meta": {
-                "generator": "generated_file",
-                "schema_version": "3.1",
-                "file_path": resolved,
-            },
-        })
-    return visuals
-
-
 def generated_file_products(
     paths: Iterable[str | Path],
     *,
     tool_name: str,
     preview_paths: dict[str, str | Path] | None = None,
-    image_visual_ids: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Declare generated files with renderer/capability-aware resource groups.
-
-    Image products additionally carry ``metadata.visual_id``（内联视觉身份），
-    使 ``[[chart:...]]`` 占位符可经 resource_id→visual_id 翻译正确解析。
-    ``image_visual_ids`` 由 ``allocate_image_visual_ids`` 预分配；未提供时
-    内部现分配（仍保证声明带身份，但调用方将拿不到 visuals 映射）。
-    """
+    """Declare generated files with renderer/capability-aware resource groups."""
     resources: list[dict[str, Any]] = []
     seen: set[str] = set()
     previews = {
@@ -588,7 +478,6 @@ def generated_file_products(
         suffix = resolved.suffix.lower()
         renderer = "file"
         capabilities: tuple[str, ...] = ("download",)
-        product_metadata: dict[str, Any] | None = None
         if suffix == ".pdf":
             renderer, capabilities = "pdf", ("preview", "download")
         elif suffix == ".docx":
@@ -602,8 +491,6 @@ def generated_file_products(
             renderer, capabilities = "spreadsheet", ("preview", "download", "edit")
         elif suffix in IMAGE_SUFFIXES:
             renderer, capabilities = "image", ("preview", "download")
-            visual_id = (image_visual_ids or {}).get(identity) or new_visual_id("matplotlib")
-            product_metadata = {"visual_id": visual_id}
         elif suffix in {".ppt", ".pptx"}:
             capabilities = ("download",)
 
@@ -626,7 +513,6 @@ def generated_file_products(
                 previews=preview_specs,
                 renderer=renderer,
                 capabilities=capabilities,
-                metadata=product_metadata,
             )
         )
         seen.add(identity)
@@ -666,12 +552,17 @@ def file_products(
         identity = str(resolved)
         if identity in seen or not resolved.is_file():
             continue
+        image_options = (
+            {"renderer": "image", "capabilities": ("preview", "download")}
+            if role == "output" and resolved.suffix.lower() in IMAGE_SUFFIXES else {}
+        )
         resources.append(
             primary_file(
                 resolved,
                 group_key=_path_group_key(resolved, tool_name),
                 tool_name=tool_name,
                 role=role,
+                **image_options,
             )
         )
         seen.add(identity)

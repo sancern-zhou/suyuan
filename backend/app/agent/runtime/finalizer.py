@@ -8,8 +8,7 @@ from app.agent.markup_sanitizer import (
     DSML_TOOL_CALL_BLOCKED_NOTICE,
     strip_dsml_tool_call_markup,
 )
-from app.agent.resources.chart_placeholders import normalize_chart_placeholders
-from app.agent.runtime.visual_alias import resolve_chart_alias_markers
+from app.agent.resources.chart_placeholders import normalize_chart_placeholders, redact_chart_paths
 
 from .conversation_writer import ConversationWriter
 from .event_bus import RuntimeEventBus
@@ -29,16 +28,24 @@ class Finalizer:
         planner_result: Optional[PlannerResult] = None,
         thought: Any = None,
         stream_answer: bool = True,
+        *,
+        completion_action: dict | None = None,
+        structured_result: bool = False,
     ) -> AsyncGenerator[dict, None]:
-        answer = await normalize_chart_placeholders(answer or "", state.session_id)
-        # 会话级短别名 [[chart:chart_N]] 还原为全局唯一 visual_id，
-        # 必须在流式下发与落库之前完成（SSE 与持久化共用 state.response_text）。
-        answer = await resolve_chart_alias_markers(answer or "", state.session_id)
-        sanitized, had_dsml = strip_dsml_tool_call_markup(answer or "")
-        if had_dsml:
-            sanitized = sanitized or DSML_TOOL_CALL_BLOCKED_NOTICE
-        answer = await resolve_chart_alias_markers(sanitized, state.session_id)
+        if not structured_result:
+            sanitized, had_dsml = strip_dsml_tool_call_markup(answer or "")
+            if had_dsml:
+                sanitized = sanitized or DSML_TOOL_CALL_BLOCKED_NOTICE
+            answer = await normalize_chart_placeholders(sanitized, state.session_id)
         state.response_text = answer or ""
+        if isinstance(thought, str):
+            thought = redact_chart_paths(thought)
+        if completion_action is not None:
+            self.writer.add_iteration(
+                thought,
+                {**completion_action, "answer": state.response_text},
+                {"success": True, "summary": "任务完成"},
+            )
         state.task_completed = True
         self.writer.add_final_assistant_message(state, planner_result, thought=thought)
         if self.agent_logger:

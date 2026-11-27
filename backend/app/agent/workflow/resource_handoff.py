@@ -10,7 +10,7 @@ from typing import Any
 import structlog
 
 from app.agent.resources.contracts import ResourceDeclaration
-from app.agent.resources.resource_service import StoredResource
+from app.agent.resources.resource_service import StoredResource, project_inline_chart
 from app.tools.resource_declarations import primary_file
 from app.utils.path_config import (
     get_data_registry,
@@ -236,6 +236,25 @@ async def import_workflow_handles(
         )
         imported.extend(stored_resource_ref(item) for item in publication.resources)
     return imported
+
+
+def attach_published_node_charts(
+    observation: dict[str, Any], resources: list[StoredResource],
+) -> None:
+    """Project only resources already registered in the parent session."""
+    data = observation.get("data")
+    node_results = data.get("node_results") if isinstance(data, dict) else None
+    if not isinstance(node_results, dict):
+        return
+    by_task: dict[str, list[dict[str, str]]] = {}
+    for resource in resources:
+        origin = resource.metadata.get("workflow_origin") or {}
+        task_id = origin.get("source_task_id")
+        reference = project_inline_chart(resource)
+        if task_id in node_results and reference:
+            by_task.setdefault(task_id, []).append(reference)
+    for task_id, references in by_task.items():
+        node_results[task_id]["published_charts"] = references[:10]
 
 
 def result_resource_declarations(

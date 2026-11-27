@@ -51,6 +51,7 @@ from app.utils.path_config import (
     get_images_dir,
     get_python_output_dir,
     get_reports_dir,
+    is_chart_snapshot_path,
     is_path_within,
     resolve_agent_path,
     is_agent_sensitive_path,
@@ -810,10 +811,8 @@ class ExecutePythonTool(LLMTool):
                     result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
             from app.tools.resource_declarations import (
-                allocate_image_visual_ids,
                 data_file_resource,
                 generated_file_products,
-                generated_image_visuals,
                 resources_for_visuals,
             )
 
@@ -874,22 +873,10 @@ class ExecutePythonTool(LLMTool):
             ):
                 preview_paths[primary_file_path] = pdf_preview["pdf_path"]
 
-            # 图片产物统一视觉身份：声明带 metadata.visual_id，visuals 进
-            # 别名契约（executor 自动绑 [[chart:chart_N]] 短标记），与
-            # save_chart 路径共享同一条可内联引用链路。
-            image_visual_ids = allocate_image_visual_ids(generic_files)
             result["resources"] = generated_file_products(
                 generic_files,
                 tool_name=self.name,
                 preview_paths=preview_paths,
-                image_visual_ids=image_visual_ids,
-            )
-            result.setdefault("visuals", []).extend(
-                generated_image_visuals(
-                    generic_files,
-                    image_visual_ids,
-                    existing_visuals=result.get("visuals"),
-                )
             )
             result["resources"].extend(report_package_resources)
             result["resources"].extend(
@@ -897,18 +884,9 @@ class ExecutePythonTool(LLMTool):
                 for file_path in python_data_paths
             )
             if not self.enable_echarts_visuals:
-                # 仅 save_chart/base64 路径的 visuals 需要补发 chart-spec/chart-image
-                # 资源；generated_file 图片的身份已写入 primary 图片资源声明。
-                preexisting_visuals = [
-                    visual
-                    for visual in result.get("visuals", [])
-                    if isinstance(visual, dict)
-                    and isinstance(visual.get("meta"), dict)
-                    and visual["meta"].get("generator") != "generated_file"
-                ]
-                result["resources"].extend(
-                    resources_for_visuals(preexisting_visuals, tool_name=self.name)
-                )
+                result["resources"].extend(await asyncio.to_thread(
+                    resources_for_visuals, result.get("visuals", []), tool_name=self.name,
+                ))
             # Resource declarations above deliberately retain absolute host paths.
             # Only after they are complete do we expose the canonical Agent-facing
             # project-relative paths and the automatic-publication contract.
@@ -1613,6 +1591,8 @@ class ExecutePythonTool(LLMTool):
                 if str(relative_path) in original_relative_paths:
                     continue
                 destination = destination_dir / relative_path
+                if is_chart_snapshot_path(destination):
+                    raise ValueError("cannot overwrite a published chart snapshot")
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(staged_path, destination)
 
@@ -1898,9 +1878,8 @@ def artifact_path(filename: str) -> str:
                 "Generated files have already been published to the unified session resource catalog. "
                 "Do not call publish_session_file and do not construct a sessions/... path. "
                 "Reuse the returned file_path exactly. "
-                "Generated images and files are delivered to the user automatically as reply outcome cards; "
-                "do NOT wrap their file names or resource IDs in [[chart:...]] placeholders — "
-                "[[chart:...]] is reserved for chart marker lines ([[chart:chart_N]]) returned by chart tools."
+                "Generated files are delivered as reply outcome cards. "
+                "For inline charts, copy the published marker supplied with the tool result."
             )
         if data_refs:
             llm_resume["file_paths"] = [ref["file_path"] for ref in data_refs]
@@ -3583,10 +3562,8 @@ def merge_excel_with_charts(file_paths, output_path):
                 "专家/报告静态图按报告正文插入尺寸设计画布、比例和字号，详见手册报告插图尺寸与比例。"
                 "流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
-                "最终答复可用工具返回 summary 中的图表标记（如 [[chart:chart_0]]，逐字符原样复制）将图片放在相应分析旁；"
-                "未提供标记时才用 visuals.id。工具结果既无标记也无 visuals.id 的普通文件/图片产物，"
-                "禁止编造标记、禁止把文件名或资源 ID 填进 [[chart:...]]，这类产物会自动作为交付卡片出现在答复旁。"
-                "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
+                "最终答复可原样复制发布结果中的 [[chart:<已发布文件路径>]] 标记，将图片放在相应分析旁；"
+                "没有返回图表标记的产物通过交付卡片展示。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
@@ -3650,7 +3627,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "其他通用图：问数模式优先使用 execute_echarts_python；专家/报告模式优先使用 execute_python，ECharts 辅助交互探索；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 深度分析与报告静态图 → 使用 execute_python + matplotlib/seaborn，默认一个独立图表一个图片文件。"
-            "交互图通过统一资源发布；最终回复使用 summary 中的图表标记（原样复制 [[chart:chart_N]]）在相关分析段落之间插入图表；未提供标记时才用 visuals.id。"
+            "交互图通过统一资源发布；最终回复原样复制发布结果给出的路径标记。"
             "需要正文或报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
             "通用计算和文件生成仍使用 execute_python。"
         )
@@ -3712,7 +3689,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
         result.setdefault("resources", []).extend(
-            resources_for_visuals(echarts_visuals, tool_name=self.name)
+            await asyncio.to_thread(resources_for_visuals, echarts_visuals, tool_name=self.name)
         )
         result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个。"
         return result
@@ -3734,8 +3711,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
                 "图表通过统一会话资源目录发布为 chart-spec，Web 与 App 共用交互图表。"
-                "最终回复必须用 [[chart:...]] 标记安排图表位置：优先逐字符原样复制工具返回 summary 中的图表标记（如 [[chart:chart_0]]），"
-                "不得编造标记或手抄 visuals.id 全串；仅在未提供标记时才取工具返回的 visuals.id。"
+                "最终回复在相应分析旁原样复制工具发布结果给出的 [[chart:<已发布文件路径>]] 标记。"
                 "每个标记独占一行并与上下段落空行分隔；按分析逻辑交替组织文字与图表，每张图后说明结论。"
                 "不在正文输出配置 JSON、HTML 或拼接图片 URL；不要要求用户到右侧面板寻找图表。"
                 "需要正文或 Word/QMD 报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"

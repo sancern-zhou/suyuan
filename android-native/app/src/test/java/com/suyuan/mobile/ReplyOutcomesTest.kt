@@ -4,11 +4,12 @@ import org.junit.Test
 
 class ReplyOutcomesTest {
     private fun file(id: String, name: String, group: String = "") = UploadedAttachment(id, name, "document", "application/octet-stream", "/$id", resourceRef = null, groupId = group)
-    private fun chart(id: String, group: String) = file(id, "趋势.json", group).copy(visualId = "v1", renderer = "chart", resourceKey = "chart-spec", interactive = true, mimeType = "application/json")
-    @Test fun placedChartHidesAllItsRenditions() {
+    private fun chart(id: String, group: String) = file(id, "趋势.json", group).copy(renderer = "chart", resourceKey = "chart-spec", interactive = true, mimeType = "application/json")
+    @Test fun placedChartHidesItsRenditionsAndKeepsUnrelatedFiles() {
         val chart = chart("c", "g")
-        val image = file("i", "趋势.png", "g").copy(visualId = "v1", mimeType = "image/png")
-        assertEquals(ReplyOutcomes(emptyList(), emptyList()), replyOutcomes(listOf(chart, image), setOf("c")))
+        val image = file("i", "趋势.png", "g").copy(mimeType = "image/png")
+        val report = file("uploaded-file", "日报.pdf", "report")
+        assertEquals(ReplyOutcomes(listOf(report), emptyList()), replyOutcomes(listOf(chart, image, report), setOf("c")))
     }
     @Test fun unplacedChartsCollapseAsOneOutcome() {
         val chart = chart("c", "g")

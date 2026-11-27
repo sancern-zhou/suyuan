@@ -52,13 +52,8 @@ class FakeToolCoordinator:
 
 
 @pytest.mark.asyncio
-async def test_chart_aliases_are_resolved_before_planner_stream_delivery(monkeypatch):
-    from app.agent.runtime import visual_alias
-
-    registry = visual_alias.VisualAliasRegistry()
-    await registry.bind("chart-stream-test", ["echarts_original"])
-    monkeypatch.setattr(visual_alias, "visual_alias_registry", registry)
-    text = "结论\n\n[[chart:chart_0]]\n\n说明"
+async def test_chart_paths_are_held_until_planner_answer_is_accepted():
+    text = "结论\n\n[[chart:backend/已发布 1.png]]\n\n说明"
 
     class ChartPlanner(FakePlanner):
         async def think_and_action_streaming(self, **kwargs):
@@ -83,7 +78,7 @@ async def test_chart_aliases_are_resolved_before_planner_stream_delivery(monkeyp
     )]
     visible = "".join(event["data"].get("chunk", "") for event in events if event["type"] == "streaming_text")
 
-    assert visible == text.replace("chart_0", "echarts_original")
+    assert visible == text.replace("[[chart:backend/已发布 1.png]]", "【图表不可用】")
     assert events[-1]["planner_result"].text == text
 
 

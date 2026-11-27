@@ -1,36 +1,11 @@
-# 图表短别名
+# 会话正文图表引用
 
-绘图工具仍通过 `visuals[].id` 和统一会话资源交付真实图表。执行器在工具结果中
-追加 `visual_refs` 映射及可复制的 `[[chart:chart_N]]` 标记，减少模型照抄完整
-`visual_id` 时出现的错误；Python 静态图、ECharts 和业务图使用同一机制。
+静态图片和交互图共用 `[[chart:…]]`。工具成功登记图表后，执行器提供 `[[chart:<已发布文件路径>]]`，模型在正文中逐字复制。定稿按当前会话目录精确匹配路径，保存 `[[chart:<resource_id>]]`。Web 和 Android 使用资源 ID 查找图表，再通过已有的鉴权接口获取内容。
 
-- 别名按会话隔离，多个 web worker 通过同一个 Redis 实例共享分配与解析。
-- 流式回复会暂存跨 chunk 拆开的标记，完整解析后才向客户端发送。
-- 最终回复在保存前再次解析；现有资源 ID 占位符归一化、DSML 过滤和真实 ID
-  模糊纠错仍然保留，不需要前端增加另一套图表 ID 协议。
-- Redis 不可用时不分配进程内别名，工具保留真实 ID，模型按 `visuals[].id`
-  引用图表；旧别名解析失败时原样保留，不猜测其他会话或其他图表。
+静态图的标记指向图片资源。交互图指向 ECharts 配置，同组可选的 PNG 仅供预览。发布时保存独立快照，同名出图仍能从新对话历史取回原图。DAG 父会话可沿用快照，使用父会话目录的资源 ID。
 
-## 配置与生命周期
+草稿阶段暂缓交付图表。完成事件以定稿正文替换草稿。路径缺失或歧义时，正文显示 `【图表不可用】`。旧视觉 ID 和短别名退出支持范围，历史数据保留原样。
 
-`AGENT_VISUAL_ALIAS_REDIS_PREFIX` 指定 Redis 键前缀；多个部署实例共用 Redis
-时应配置不同前缀。`AGENT_VISUAL_ALIAS_TTL_SECONDS` 控制映射有效期，默认
-1209600 秒（14 天），每次绑定刷新；web worker 应使用一致的配置。
+发布时协调后端 web 与 worker、Web 前端及 Android 的协议版本。切换前排空运行中的旧版任务。报告包与微信群媒体仍使用各自的交付格式。
 
-每个会话的映射保存在 `<prefix>:map:<session_id>`，计数器保存在
-`<prefix>:seq:<session_id>`。计数器不随映射过期，以免旧标记重号后错误指向新图。
-清理计数器或切换 Redis 前应确认对应会话不再继续使用旧别名；不能单独清除
-仍在使用中的计数器。已经正常保存的回复使用真实 ID，不依赖别名映射继续展示。
-
-## 回归测试
-
-在 `backend_py311` 环境、项目根目录运行：
-
-```bash
-PYTHONPATH=backend python -m pytest \
-  backend/tests/test_visual_alias.py \
-  backend/tests/test_visual_id_protocol.py \
-  backend/tests/test_dsml_markup_sanitizer.py \
-  backend/app/agent/resources/chart_placeholders_test.py \
-  backend/app/agent/runtime/agent_runtime_multimodal_test.py -q
-```
+历史背景见[策略讨论稿](chart-reference-path-strategy.md)。

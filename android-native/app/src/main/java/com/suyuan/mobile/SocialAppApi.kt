@@ -130,7 +130,7 @@ data class UploadedAttachment(
     val variants: List<AttachmentVariant> = emptyList(),
     val renderer: String = "",
     val resourceKey: String = "",
-    val visualId: String = "",
+    val resourceId: String = "",
     val interactive: Boolean = false,
     val groupId: String = "",
     val resourceKind: String = "",
@@ -146,7 +146,7 @@ data class UploadedAttachment(
         put("url", url)
         put("renderer", renderer)
         put("resource_key", resourceKey)
-        put("visual_id", visualId)
+        if (resourceId.isNotBlank()) put("resource_id", resourceId)
         put("interactive", interactive)
         put("group_id", groupId)
         put("kind", resourceKind)
@@ -209,7 +209,7 @@ data class UploadedAttachment(
                 variants = variants,
                 renderer = item.optString("renderer", ""),
                 resourceKey = item.optString("resource_key", ""),
-                visualId = item.optString("visual_id", ""),
+                resourceId = item.optString("resource_id", ""),
                 interactive = item.optBoolean("interactive", false),
                 groupId = item.optString("group_id", ""),
                 resourceKind = item.optString("kind", ""),

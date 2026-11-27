@@ -1,143 +1,94 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.agent.resources.chart_placeholders import (
+    CHART_UNAVAILABLE,
+    ChartDraftFilter,
     collect_placeholder_ids,
     normalize_chart_placeholders,
+    redact_chart_paths,
 )
-from app.agent.resources.contracts import ResourceDeclaration
-from app.agent.resources.resource_service import SessionResourceService
+from app.agent.resources.resource_service import normalize_chart_path
+from app.agent.runtime.event_bus import RuntimeEventBus
+from app.agent.runtime.finalizer import Finalizer
+from app.agent.runtime.types import RunState
+
+IMAGE = "a" * 32
+SPEC = "b" * 32
+IMAGE_PATH = "backend/snapshots/浓度 趋势.png"
+SPEC_PATH = "backend/snapshots/交互趋势.json"
 
 
-def _chart_declaration(group_key: str, resource_key: str, visual_id: str, label: str):
-    return ResourceDeclaration.model_validate({
-        "kind": "visual",
-        "group_key": group_key,
-        "resource_key": resource_key,
-        "relation": "primary",
-        "role": "output",
-        "label": label,
-        "locator": {"path": f"/tmp/{resource_key}.json"},
-        "format": "json",
-        "media_type": "application/json",
-        "renderer": "chart",
-        "metadata": {"type": "image", "visual_id": visual_id, "interactive": False},
-        "tool_name": "execute_python",
-    })
+def marker(value):
+    return f"[[chart:{value}]]"
 
 
-async def _publish_session(service: SessionResourceService, session_id: str) -> dict[str, str]:
-    published = await service.publish_group(
-        session_id,
-        "run-1",
-        "charts:fig2",
-        [_chart_declaration("charts:fig2", "chart-spec", "matplotlib_fig2", "图表 fig2")],
-    )
-    image = await service.publish_group(
-        session_id,
-        "run-1",
-        "charts:fig2-image",
-        [_chart_declaration("charts:fig2-image", "chart-image", "matplotlib_fig2", "fig2.png")],
-    )
-    await service.publish_group(
-        session_id,
-        "run-1",
-        "data:station",
-        [ResourceDeclaration.model_validate({
-            "kind": "data",
-            "group_key": "data:station",
-            "resource_key": "primary:data",
-            "relation": "primary",
-            "role": "source",
-            "label": "station data",
-            "locator": {"path": "/tmp/station.csv"},
-            "format": "csv",
-            "media_type": "text/csv",
-            "metadata": {},
-            "tool_name": "execute_sql_query",
-        })],
-    )
-    spec_id = published.resources[0].resource_id
-    image_id = image.resources[0].resource_id
-    return {spec_id: "matplotlib_fig2", image_id: "matplotlib_fig2"}
+class Catalog:
+    async def find_inline_charts_by_paths(self, session_id, paths):
+        assert session_id == "owned"
+        image = SimpleNamespace(resource_id=IMAGE)
+        spec = SimpleNamespace(resource_id=SPEC)
+        known = {
+            normalize_chart_path(IMAGE_PATH): [image],
+            normalize_chart_path(SPEC_PATH): [spec],
+            normalize_chart_path("backend/ambiguous.png"): [image, spec],
+        }
+        return {normalize_chart_path(path): known.get(normalize_chart_path(path), []) for path in paths}
+
+    async def get_resources_by_ids(self, session_id, ids):
+        assert session_id == "owned"
+        return []
 
 
 @pytest.mark.asyncio
-async def test_resource_id_placeholders_are_rewritten_to_visual_id():
-    session_id = "expert_session_test"
-    service = SessionResourceService.in_memory()
-    id_to_visual = await _publish_session(service, session_id)
-    spec_id, image_id = sorted(id_to_visual, key=lambda item: id_to_visual[item])
-    text = (
-        "结论一：\n\n"
-        f"[[chart:{spec_id}]]\n\n"
-        "中间文字\n\n"
-        f"[[chart:{image_id}]]\n"
-    )
-
-    normalized = await normalize_chart_placeholders(text, session_id, service=service)
-
-    assert normalized.count("[[chart:matplotlib_fig2]]") == 2
-    assert spec_id not in normalized and image_id not in normalized
+async def test_path_marker_resolves_static_and_interactive_resources_in_order():
+    text = f"趋势\n{marker(IMAGE_PATH)}\n交互\n{marker(SPEC_PATH)}"
+    expected = f"趋势\n{marker(IMAGE)}\n交互\n{marker(SPEC)}"
+    assert await normalize_chart_placeholders(text, "owned", Catalog()) == expected
 
 
 @pytest.mark.asyncio
-async def test_visual_id_placeholder_is_kept_unchanged():
-    session_id = "expert_session_test"
-    service = SessionResourceService.in_memory()
-    await _publish_session(service, session_id)
-    text = "正文\n\n[[chart:matplotlib_fig2]]\n"
-
-    normalized = await normalize_chart_placeholders(text, session_id, service=service)
-
-    assert normalized == text
+async def test_unresolved_paths_and_unowned_ids_render_as_plain_text():
+    values = ["backend/other-session.png", "backend/ambiguous.png", "https://example.com/p.png", "chart_0", IMAGE]
+    text = " ".join(map(marker, values))
+    assert await normalize_chart_placeholders(text, "owned", Catalog()) == " ".join([CHART_UNAVAILABLE] * len(values))
+    assert await normalize_chart_placeholders(marker(IMAGE_PATH), None, Catalog()) == CHART_UNAVAILABLE
 
 
-@pytest.mark.asyncio
-async def test_unknown_and_non_chart_ids_are_kept_unchanged():
-    session_id = "expert_session_test"
-    service = SessionResourceService.in_memory()
-    await _publish_session(service, session_id)
-    data_resources = [
-        resource for resource in service._state.resources.values()
-        if resource.resource_key == "primary:data"
-    ]
-    data_id = data_resources[0].resource_id
-    text = (
-        f"未知 [[chart:totally_made_up_id]] 与 "
-        f"数据资源 [[chart:{data_id}]] 均不改写"
-    )
+def test_code_examples_and_escaped_markers_are_not_chart_references():
+    code = f"示例 `{marker(IMAGE)}`\n\n```text\n{marker(IMAGE)}\n```\n\n\\{marker(IMAGE)}"
+    assert collect_placeholder_ids(f"{code}\n\n{marker(SPEC)}") == {SPEC}
+    assert redact_chart_paths(f"{code}\n\n{marker(IMAGE_PATH)}") == f"{code}\n\n{CHART_UNAVAILABLE}"
 
-    normalized = await normalize_chart_placeholders(text, session_id, service=service)
 
-    assert normalized == text
+def test_quoted_fences_and_indented_examples_remain_literal():
+    code = f"> ~~~text\n> {marker(IMAGE)}\n> ~~~\n\n    {marker(IMAGE)}"
+    assert collect_placeholder_ids(f"{code}\n\n{marker(SPEC)}") == {SPEC}
+    unclosed_quote = f"> ```\n> {marker(IMAGE)}\n\n{marker(SPEC)}"
+    assert collect_placeholder_ids(unclosed_quote) == {SPEC}
+
+
+@pytest.mark.parametrize("chunk_size", [1, 3, 5, 31, 4096])
+def test_draft_filter_buffers_chart_delimiters_and_redacts_incomplete_paths(chunk_size):
+    filter_ = ChartDraftFilter()
+    answer = f"前文 {marker(IMAGE_PATH)} 中间 [[chart:backend/private.png\n后文"
+    visible = "".join(filter_.append(answer[i:i + chunk_size]) for i in range(0, len(answer), chunk_size))
+    assert visible + filter_.flush() == f"前文 {CHART_UNAVAILABLE} 中间 {CHART_UNAVAILABLE}\n后文"
 
 
 @pytest.mark.asyncio
-async def test_lookup_failure_returns_original_text():
-    class _BrokenService:
-        async def list_resources(self, *args, **kwargs):
-            raise RuntimeError("database unavailable")
-
-    text = "正文\n\n[[chart:abcdef01]]\n"
-
-    normalized = await normalize_chart_placeholders(
-        text, "expert_session_test", service=_BrokenService()
+async def test_finalizer_uses_same_resolved_text_for_iteration_persistence_and_terminal_events(monkeypatch):
+    monkeypatch.setattr("app.agent.resources.chart_placeholders.SessionResourceService.database", lambda: Catalog())
+    entries = {}
+    writer = SimpleNamespace(
+        add_iteration=lambda thought, action, observation: entries.update(iteration=action["answer"]),
+        add_final_assistant_message=lambda state, planner_result, thought: entries.update(saved=state.response_text),
     )
-
-    assert normalized == text
-
-
-def test_no_placeholder_short_circuits_without_lookup():
-    class _MustNotCall:
-        def __getattr__(self, name):
-            raise AssertionError("service must not be touched")
-
-    text = "没有占位符的正文"
-    assert collect_placeholder_ids(text) == set()
-    # 事件循环外直接断言快速路径：session_id 缺失时不做任何查询
-    import asyncio
-
-    normalized = asyncio.run(
-        normalize_chart_placeholders("[[chart:whatever]]", None, service=_MustNotCall())
-    )
-    assert normalized == "[[chart:whatever]]"
+    state = RunState(session_id="owned", user_query="画图", mode="expert", response_streamed=True)
+    events = [event async for event in Finalizer(writer, RuntimeEventBus()).complete(
+        state, f"图\n{marker(IMAGE_PATH)}", completion_action={"type": "PLAIN_TEXT_REPLY"}
+    )]
+    assert entries == {"iteration": f"图\n{marker(IMAGE)}", "saved": f"图\n{marker(IMAGE)}"}
+    assert [event["type"] for event in events] == ["agent_finish", "complete"]
+    assert events[0]["answer"] == events[1]["data"]["answer"] == events[1]["data"]["response"] == entries["saved"]

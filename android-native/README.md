@@ -14,8 +14,8 @@
 App 的回复内图表复用 Web 的 `ChartPanel`，打包前先在仓库 `frontend/` 执行
 `npm install`（首次）和 `npm run build:standalone`。Gradle 自动从该次构建的
 `dist/.vite/manifest.json` 提取 `chart.html` 及其依赖，打包进 App；不需要 CDN。
-Agent 使用独立一行的 `[[chart:<visual_id>]]` 决定图表位置，Web/App 均支持。
-后端须同步部署图表资源元数据和历史引用恢复更新，旧后端仍将 JSON 作为普通附件返回。
+Web 和 App 在正文中识别 `[[chart:<resource_id>]]`，其中 `resource_id` 为 32 位小写十六进制。
+后端在定稿时将已登记的出图路径转换为会话资源 ID。App 按该 ID 查找图片或交互图配置。
 
 ```powershell
 .\build-debug.ps1 -Install

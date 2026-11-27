@@ -578,7 +578,7 @@ class GetPlatformWeatherImageTool(LLMTool):
                 refs["visuals"] = visual_refs
 
             # visual 带原生文件 local_path，走统一登记产出 chart-spec + chart-image
-            # （含 visual_id），App 端 [[chart:<id>]] 标记即可引用；无 visual 时退回文件登记。
+            # 资源组登记原图供会话内联；无 visual 时退回文件登记。
             if visual:
                 resources = resources_for_visuals([visual], tool_name=self.name)
             else:

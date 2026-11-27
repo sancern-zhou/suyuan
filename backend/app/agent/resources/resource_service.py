@@ -1,27 +1,97 @@
 """Canonical service boundary for versioned session resource groups."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import os
+import re
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
+from app.utils import path_config
 from app.utils.path_config import (
     TEMP_ROOT,
     get_data_registry,
     get_sessions_dir,
     get_uploads_dir,
+    is_agent_sensitive_path,
     is_path_within,
 )
 
 from .contracts import ResourceDeclaration, ResourceRelation
 
 
+_CHART_SNAPSHOT_DIR = "chart_snapshots"
+_CHART_PATH_DELIMITERS = re.compile(r"[\[\]`<>\r\n\x00]")
+
+
+def normalize_chart_path(path: str) -> str | None:
+    """Normalize a catalog lookup key without opening or statting a model path."""
+    if not isinstance(path, str) or not path.strip() or _CHART_PATH_DELIMITERS.search(path):
+        return None
+    if "://" in path or (os.name != "nt" and re.match(r"^[A-Za-z]:[\\/]", path)):
+        return None
+    candidate = Path(path.strip())
+    if candidate.anchor and not candidate.is_absolute():
+        return None
+    return Path(os.path.abspath(path_config.PROJECT_ROOT / candidate)).as_posix()
+
+
+def select_inline_chart_member(declarations: list[ResourceDeclaration]) -> ResourceDeclaration | None:
+    active = [item for item in declarations if item.status.value == "active" and item.locator.path]
+    spec = next(
+        (item for item in active if item.resource_key == "chart-spec" and item.renderer.value == "chart"),
+        None,
+    )
+    if spec and spec.metadata.get("interactive") is not False:
+        return spec
+    return next(
+        (
+            item for item in active
+            if item.renderer.value == "image"
+            and (item.relation is ResourceRelation.PRIMARY or item.resource_key == "chart-image")
+        ),
+        None,
+    )
+
+
 def stable_group_id(session_id: str, group_key: str) -> str:
     return hashlib.sha256(f"{session_id}:{group_key}".encode()).hexdigest()[:32]
+
+
+def chart_publication_identity(
+    run_id: str, tool_name: str, turn_sequence: int, tool_call_id: str, chart_index: int,
+) -> str:
+    return f"{run_id}:{tool_name}:{turn_sequence}:{tool_call_id}:{chart_index}"
+
+
+def _fingerprint_chart_sources(declarations: list[ResourceDeclaration]) -> str:
+    """Disambiguate direct publications made without a tool-call identity."""
+    digest = hashlib.sha256()
+    allowed = [get_data_registry(), get_uploads_dir(), TEMP_ROOT]
+    for item in sorted(declarations, key=lambda decl: decl.resource_key):
+        if item.locator.path:
+            source = Path(item.locator.path)
+            _require_chart_source(source, allowed)
+            with source.open("rb") as contents:
+                digest.update(hashlib.file_digest(contents, "sha256").digest())
+        digest.update(item.resource_key.encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _require_chart_source(source: Path, allowed: list[Path]) -> None:
+    if (
+        not source.is_file()
+        or is_agent_sensitive_path(source)
+        or not is_path_within(source, allowed)
+    ):
+        raise ValueError(f"chart snapshot source is unavailable: {source}")
 
 
 def stable_resource_id(
@@ -132,6 +202,51 @@ class StoredResource:
         )
 
 
+def inline_chart_path(resource: StoredResource) -> str | None:
+    """Return the copyable path for the catalog's selected inline chart member."""
+    raw_path = resource.locator.get("path")
+    if resource.status != "active" or resource.metadata.get("inline_chart") is not True:
+        return None
+    if not normalize_chart_path(raw_path):
+        return None
+    path = Path(raw_path)
+    try:
+        return path.relative_to(path_config.PROJECT_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def project_inline_chart(resource: StoredResource) -> dict[str, str] | None:
+    path = inline_chart_path(resource)
+    if path is None:
+        return None
+    return {"label": resource.label, "path": path, "marker": f"[[chart:{path}]]"}
+
+
+def confirmed_chart_publication(
+    catalog_version: int,
+    existing: list[StoredResource],
+    resources: list[ResourceDeclaration],
+) -> ResourcePublishResult:
+    """Return the original complete group on retry, including its original IDs."""
+    expected = {item.resource_key: item.locator.path for item in resources}
+    selected = select_inline_chart_member(resources)
+    if (
+        {item.resource_key: item.locator.get("path") for item in existing} != expected
+        or len(existing) != len(expected)
+        or any(item.status != "active" for item in existing)
+        or not selected
+        or not any(item.resource_key == selected.resource_key and inline_chart_path(item) for item in existing)
+    ):
+        raise ValueError("confirmed chart publication is incomplete or inconsistent")
+    by_key = {item.resource_key: item for item in existing}
+    return ResourcePublishResult(
+        catalog_version,
+        existing[0].version,
+        [by_key[item.resource_key] for item in resources],
+    )
+
+
 @dataclass(frozen=True)
 class ResourcePublishResult:
     catalog_version: int
@@ -174,8 +289,8 @@ class SessionResourceService:
         self._storage_root = storage_root
 
     @classmethod
-    def in_memory(cls) -> SessionResourceService:
-        return cls(_MemoryState())
+    def in_memory(cls, *, storage_root: Path | None = None) -> SessionResourceService:
+        return cls(_MemoryState(), storage_root=storage_root)
 
     @classmethod
     def database(cls) -> SessionResourceService:
@@ -185,6 +300,68 @@ class SessionResourceService:
             repository=SessionResourcesRepository(),
             storage_root=get_sessions_dir() / "resource_content",
         )
+
+    def _existing_snapshot_key(self, declarations: list[ResourceDeclaration]) -> str | None:
+        if self._storage_root is None:
+            return None
+        root = (self._storage_root / _CHART_SNAPSHOT_DIR).resolve()
+        paths = [Path(item.locator.path) for item in declarations if item.locator.path]
+        if not paths or len({path.parent for path in paths}) != 1:
+            return None
+        directory = paths[0].parent
+        if directory.parent == root and re.fullmatch(r"[0-9a-f]{32}", directory.name):
+            return f"chart-publication:{directory.name}"
+        return None
+
+    def _snapshot_chart_group(
+        self,
+        group_key: str,
+        declarations: list[ResourceDeclaration],
+        selected: ResourceDeclaration,
+    ) -> list[ResourceDeclaration]:
+        if self._storage_root is None:
+            return declarations
+        snapshot_root = (self._storage_root / _CHART_SNAPSHOT_DIR).resolve()
+        paths = {item.resource_key: Path(item.locator.path) for item in declarations if item.locator.path}
+        if self._existing_snapshot_key(declarations) != group_key:
+            destination = snapshot_root / group_key.removeprefix("chart-publication:")
+            # Each complete group becomes visible in one atomic rename. The first
+            # completed write wins, including when two processes retry together.
+            names = {
+                item.resource_key: hashlib.sha256(item.resource_key.encode()).hexdigest()[:12]
+                + (f".{item.format}" if re.fullmatch(r"[a-zA-Z0-9]{1,12}", item.format) else "")
+                for item in declarations if item.locator.path
+            }
+            if not destination.exists():
+                snapshot_root.mkdir(parents=True, exist_ok=True)
+                with TemporaryDirectory(dir=snapshot_root, prefix=".staging-") as temporary:
+                    staged = Path(temporary) / "group"
+                    staged.mkdir()
+                    allowed = [get_data_registry(), get_uploads_dir(), TEMP_ROOT]
+                    for key, source in paths.items():
+                        _require_chart_source(source, allowed)
+                        shutil.copyfile(source, staged / names[key])
+                    try:
+                        staged.rename(destination)
+                    except OSError:
+                        if not destination.is_dir():
+                            raise
+            paths = {key: destination / name for key, name in names.items()}
+        if not all(path.is_file() and normalize_chart_path(path.as_posix()) for path in paths.values()):
+            raise ValueError("chart snapshot is missing or has an unsupported path")
+        published = []
+        for item in declarations:
+            metadata = dict(item.metadata)
+            metadata.pop("visual_id", None)
+            metadata.pop("inline_chart", None)
+            if item.resource_key == selected.resource_key:
+                metadata["inline_chart"] = True
+            updates = {"metadata": metadata}
+            if path := paths.get(item.resource_key):
+                updates["locator"] = item.locator.model_copy(update={"path": path.as_posix()})
+                metadata["size"] = path.stat().st_size
+            published.append(item.model_copy(update=updates))
+        return published
 
     def _materialize_declarations(
         self, session_id: str, declarations: list[ResourceDeclaration]
@@ -302,10 +479,28 @@ class SessionResourceService:
         resources: Iterable[ResourceDeclaration],
         *,
         turn_sequence: int = 0,
+        publication_id: str | None = None,
     ) -> ResourcePublishResult:
         declarations = list(resources)
         validate_publication(group_key, declarations)
-        declarations = self._materialize_declarations(session_id, declarations)
+        selected = select_inline_chart_member(declarations)
+        immutable = selected is not None and self._storage_root is not None
+        if immutable:
+            # Cross-session handoff uses the original snapshot key. For newly
+            # produced charts the caller's stable operation identity scopes retries.
+            snapshot_key = self._existing_snapshot_key(declarations)
+            if snapshot_key is None:
+                if publication_id is None:
+                    fingerprint = await asyncio.to_thread(_fingerprint_chart_sources, declarations)
+                    publication_id = f"{run_id}:{turn_sequence}:{group_key}:{fingerprint}"
+                snapshot_key = "chart-publication:" + stable_group_id(session_id, publication_id)
+            group_key = snapshot_key
+            declarations = await asyncio.to_thread(
+                self._snapshot_chart_group, group_key, declarations, selected,
+            )
+            declarations = [item.model_copy(update={"group_key": group_key}) for item in declarations]
+        else:
+            declarations = await asyncio.to_thread(self._materialize_declarations, session_id, declarations)
         if self._repository is not None:
             return await self._repository.publish_group(
                 session_id,
@@ -313,6 +508,7 @@ class SessionResourceService:
                 group_key,
                 declarations,
                 turn_sequence=turn_sequence,
+                immutable=immutable,
             )
         return self._publish_memory_group(
             session_id,
@@ -320,6 +516,7 @@ class SessionResourceService:
             group_key,
             declarations,
             turn_sequence=turn_sequence,
+            immutable=immutable,
         )
 
     async def attach_resources(
@@ -439,9 +636,19 @@ class SessionResourceService:
         declarations: list[ResourceDeclaration],
         *,
         turn_sequence: int,
+        immutable: bool = False,
     ) -> ResourcePublishResult:
         group_id = stable_group_id(session_id, group_key)
         group_version_key = (session_id, group_id)
+        if immutable:
+            existing = [
+                item for item in self._state.resources.values()
+                if item.session_id == session_id and item.group_id == group_id
+            ]
+            if existing:
+                return confirmed_chart_publication(
+                    self._state.catalog_versions.get(session_id, 0), existing, declarations,
+                )
         group_version = self._state.group_versions.get(group_version_key, 0) + 1
         now = datetime.now(UTC)
         new_resources: list[StoredResource] = []
@@ -603,6 +810,43 @@ class SessionResourceService:
         if status is not None and resource.status != status:
             return None
         return resource
+
+    async def get_resources_by_ids(
+        self, session_id: str, resource_ids: Iterable[str], *, status: str | None = "active",
+    ) -> list[StoredResource]:
+        ids = list(dict.fromkeys(resource_ids))
+        if self._repository is not None:
+            return await self._repository.get_resources_by_ids(session_id, ids, status=status)
+        resources = []
+        for resource_id in ids:
+            resource = await self.get_resource(session_id, resource_id, status=status)
+            if resource is not None:
+                resources.append(resource)
+        return resources
+
+    async def find_inline_charts_by_paths(
+        self, session_id: str, paths: Iterable[str],
+    ) -> dict[str, list[StoredResource]]:
+        matches = {
+            key: [] for path in paths if (key := normalize_chart_path(path)) is not None
+        }
+        if not matches:
+            return matches
+        if self._repository is not None:
+            resources = await self._repository.find_inline_charts_by_paths(session_id, list(matches))
+        else:
+            resources = self._state.resources.values()
+        for resource in resources:
+            if resource.session_id != session_id or inline_chart_path(resource) is None:
+                continue
+            key = resource.locator.get("path")
+            if key in matches:
+                matches[key].append(resource)
+        return matches
+
+    async def find_inline_charts_by_path(self, session_id: str, path: str) -> list[StoredResource]:
+        matches = await self.find_inline_charts_by_paths(session_id, [path])
+        return next(iter(matches.values()), [])
 
     async def delete_resource(self, session_id: str, resource_id: str) -> bool:
         if self._repository is not None:

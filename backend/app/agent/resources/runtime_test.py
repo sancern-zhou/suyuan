@@ -101,6 +101,37 @@ async def test_tool_result_publication_returns_durable_change():
 
 
 @pytest.mark.asyncio
+async def test_direct_chart_publication_is_idempotent_per_call(tmp_path):
+    source = tmp_path / "chart.png"
+    source.write_bytes(b"first")
+    service = SessionResourceService.in_memory(storage_root=tmp_path / "catalog")
+    resource = primary_file(source, group_key="chart", tool_name="test_chart", renderer="image")
+
+    async def publish(call_id):
+        result = {"success": True, "resources": [resource]}
+        publication = await persist_tool_result_resources(
+            service, "direct-chart", "direct-run",
+            {"type": "tool_result", "data": {
+                "tool_name": "test_chart", "tool_call_id": call_id, "result": result,
+            }},
+            turn_sequence=1,
+        )
+        [reference] = result["chart_references"]
+        assert reference["marker"] == f"[[chart:{reference['path']}]]"
+        [stored] = await service.find_inline_charts_by_path("direct-chart", reference["path"])
+        assert publication.changed_resource_ids == [stored.resource_id]
+        return stored
+
+    first = await publish("call-1")
+    source.write_bytes(b"second")
+    assert await publish("call-1") == first
+    second = await publish("call-2")
+    assert second.group_id != first.group_id
+    assert Path(first.locator["path"]).read_bytes() == b"first"
+    assert Path(second.locator["path"]).read_bytes() == b"second"
+
+
+@pytest.mark.asyncio
 async def test_publish_session_file_requests_frontend_focus():
     class Service:
         async def publish_group(self, session_id, run_id, group_key, resources, *, turn_sequence=0):
@@ -397,7 +428,7 @@ async def test_ownership_transition_waits_for_resource_commit(tmp_path):
             await allow_commit.wait()
             return SimpleNamespace(
                 catalog_version=1,
-                    resources=[SimpleNamespace(resource_id="resource-a", group_id="group-a")],
+                resources=[_stored(_file_declaration(generated))],
             )
 
     async def tool(**_):
@@ -570,7 +601,7 @@ def test_agent_resource_map_is_bounded_and_includes_actionable_path(tmp_path):
 
     assert stored.resource_id in projected
     assert f"path={path}" in projected
-    assert "shown paths are tool-only" in projected
+    assert "Other paths are tool-only" in projected
     assert len(projected) <= 500
 
 
@@ -585,7 +616,7 @@ def test_agent_resource_map_uses_canonical_absolute_paths():
     projected = project_agent_resource_map([stored])
 
     assert f"path={source}" in projected
-    assert "Never place shown paths in final Markdown" in projected
+    assert "no server paths in Markdown links or image URLs" in projected
 
 
 def test_agent_resource_map_collapses_same_locator_but_reports_all_roles(tmp_path):

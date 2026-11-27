@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -211,3 +212,62 @@ def test_authorized_catalog_path_is_registered_for_typed_data_loaders(tmp_path):
     resolved = str(source_file.resolve())
     assert context.authorized_input_paths == [resolved]
     assert session.data_files[resolved] == resolved
+
+
+@pytest.mark.asyncio
+async def test_parent_executor_projects_confirmed_child_snapshot_once(tmp_path, monkeypatch):
+    from app.agent.core.executor import ToolExecutor
+    from app.agent.runtime.ownership import run_ownership_registry
+    from app.tools.resource_declarations import resources_for_visuals
+
+    monkeypatch.setattr("app.tools.resource_declarations.get_data_registry", lambda: tmp_path)
+    image = tmp_path / "静态 预览.png"
+    image.write_bytes(b"png")
+    raw = resources_for_visuals([{
+        "id": "internal-chart-id", "type": "bar", "title": "交互图",
+        "local_path": str(image), "data": {"series": [{"type": "bar", "data": [3]}]},
+    }], tool_name="execute_echarts_python")
+    service = SessionResourceService.in_memory(storage_root=tmp_path / "immutable content")
+    child = await service.publish_group(
+        "chart-child", "child-run", raw[0]["group_key"],
+        [ResourceDeclaration.model_validate(item) for item in raw],
+    )
+    refs = [stored_resource_ref(item) for item in child.resources]
+    node_results = {"node": {"data": {"resource_refs": refs}}}
+
+    async def tool(**_):
+        return {
+            "success": True,
+            "resources": result_resource_declarations("dag", node_results),
+            "data": {"node_results": {"node": {"status": "success"}}},
+        }
+
+    executor = ToolExecutor(tool_registry={"run_agent_workflow": tool})
+    executor.memory_manager = SimpleNamespace(session_id="chart-parent")
+    executor.resource_run_id = "parent-run"
+    context = SimpleNamespace(session_resource_context="")
+    executor.configure_resource_tracking(service=service, context_builder=context)
+    await run_ownership_registry.register("chart-parent", "parent-run")
+    try:
+        assert not await service.find_inline_charts_by_path("chart-parent", refs[0]["file_path"])
+        result = await executor.execute_tool_with_retry("run_agent_workflow", {}, "call-1")
+        [reference] = result["chart_references"]
+        assert reference == {"label": "交互图", "path": refs[0]["file_path"], "marker": f"[[chart:{refs[0]['file_path']}]]"}
+        assert result["data"]["node_results"]["node"]["published_charts"] == [reference]
+        assert reference["marker"] in result["summary"]
+        assert reference["marker"] in context.session_resource_context
+        [parent_spec] = await service.find_inline_charts_by_path("chart-parent", reference["path"])
+        assert parent_spec.resource_id != refs[0]["resource_id"]
+        assert parent_spec.resource_key == "chart-spec"
+        [parent_preview] = await service.get_resources_by_ids(
+            "chart-parent", set(result["resource_tracking"]["resource_ids"]) - {parent_spec.resource_id},
+        )
+        assert parent_preview.parent_resource_id == parent_spec.resource_id
+        assert parent_preview.locator["path"] == refs[1]["file_path"]
+        retry = await executor.execute_tool_with_retry("run_agent_workflow", {}, "call-1")
+        assert retry["resource_tracking"] == result["resource_tracking"]
+        assert retry["chart_references"] == [reference]
+        assert len(list((tmp_path / "immutable content" / "chart_snapshots").iterdir())) == 1
+        assert Path(parent_preview.locator["path"]).read_bytes() == b"png"
+    finally:
+        await run_ownership_registry.complete("chart-parent", "parent-run")

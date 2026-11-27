@@ -179,6 +179,48 @@ def test_create_share_filters_history_and_rewrites_resource_urls(monkeypatch, tm
     )
 
 
+def test_share_copies_exact_chart_resource_even_without_message_attachments(monkeypatch, tmp_path):
+    resource_id = "a" * 32
+    ignored_id = "b" * 32
+    source = tmp_path / "interactive.json"
+    source.write_bytes(b'{"data": {"series": []}}')
+    history = [
+        {"role": "user", "content": f"绘图 [[chart:{ignored_id}]]"},
+        {"type": "final", "role": "assistant", "content": f"图\n\n[[chart:{resource_id}]]"},
+    ]
+    _patch_snapshot_sources(monkeypatch, _web_row(), history)
+    fake = _FakeSession()
+    monkeypatch.setattr(routes, "async_session", lambda: fake)
+    monkeypatch.setattr(routes, "_share_dir", lambda share_id: tmp_path / share_id)
+
+    from app.agent.resources.resource_service import SessionResourceService
+    from app.utils import path_config
+
+    monkeypatch.setattr(path_config, "get_data_registry", lambda: tmp_path)
+
+    class Catalog:
+        async def get_resource(self, session_id, requested_id, status):
+            assert (session_id, requested_id, status) == ("sess-1", resource_id, "active")
+            return SimpleNamespace(
+                resource_id=requested_id, locator={"path": str(source)},
+                resource_key="chart-spec", renderer="chart", status="active",
+                media_type="application/json", label="趋势", metadata={"inline_chart": True, "interactive": True},
+            )
+
+    monkeypatch.setattr(SessionResourceService, "database", lambda: Catalog())
+    client = _client()
+    created = client.post("/api/shared-conversations", json={"session_id": "sess-1"})
+    assert created.status_code == 200
+    share_id = created.json()["share_id"]
+    fake.records[share_id] = fake.added[0]
+    detail = client.get(f"/api/shared-conversations/{share_id}")
+    assert detail.status_code == 200
+    [chart] = detail.json()["resources"]
+    assert chart["resource_id"] == resource_id and chart["interactive"] is True
+    assert chart["content_url"] == f"/api/shared-conversations/{share_id}/resources/{resource_id}/content"
+    assert client.get(chart["content_url"]).content == source.read_bytes()
+
+
 def test_create_share_rejects_non_owner(monkeypatch):
     row = _web_row()
     row.owner_user_id = "someone-else"

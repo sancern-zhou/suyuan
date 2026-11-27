@@ -157,17 +157,23 @@ async def _copy_share_attachments(
     the original resource_id to its copied file so the resource endpoint can
     serve bytes without touching the (garbage-collectable) original.
     """
-    from app.agent.resources.resource_service import SessionResourceService
+    from app.agent.resources.chart_placeholders import collect_placeholder_ids
+    from app.agent.resources.resource_service import SessionResourceService, inline_chart_path
     from app.utils.path_config import get_data_registry
 
     prefix = _RESOURCE_URL_PREFIX.format(session_id=session_id)
-    wanted: dict[str, dict] = {}
+    chart_ids: set[str] = set()
+    for item in history:
+        role = str(item.get("type") or item.get("role") or "").lower()
+        if role in {"assistant", "final", "answer"}:
+            chart_ids.update(collect_placeholder_ids(_item_text(item)))
+    wanted: dict[str, dict] = {resource_id: {} for resource_id in sorted(chart_ids)}
     for attachment in _iter_attachments(history):
         for key in ("url", "preview_url", "download_url"):
             url = str(attachment.get(key) or "")
             if url.startswith(prefix):
                 resource_id = url[len(prefix):].split("?", 1)[0].split("/", 1)[0]
-                if resource_id and resource_id not in wanted:
+                if resource_id and not wanted.get(resource_id):
                     wanted[resource_id] = attachment
 
     if not wanted:
@@ -186,6 +192,9 @@ async def _copy_share_attachments(
             logger.warning("shared_attachment_lookup_failed", session_id=session_id, resource_id=resource_id, error=str(exc))
             continue
         if resource is None:
+            continue
+        is_chart = resource_id in chart_ids and bool(inline_chart_path(resource))
+        if not attachment and not is_chart:
             continue
         raw_path = str((resource.locator or {}).get("path") or "").strip()
         if not raw_path:
@@ -206,6 +215,13 @@ async def _copy_share_attachments(
                 "stored_name": stored_name,
                 "filename": str(attachment.get("filename") or source.name),
                 "media_type": str(resource.media_type or mimetypes.guess_type(source.name)[0] or "application/octet-stream"),
+                **({
+                    "inline_chart": True,
+                    "resource_key": resource.resource_key,
+                    "renderer": resource.renderer,
+                    "interactive": bool(resource.metadata.get("interactive")),
+                    "label": resource.label,
+                } if is_chart else {}),
             }
         )
     return manifest
@@ -268,9 +284,8 @@ async def _build_snapshot(user: CurrentUser, session_id: str) -> dict:
         _MOBILE_VISIBLE_HISTORY_TYPES,
         _app_resource_descriptors,
     )
-    from app.agent.resources.resource_service import SessionResourceService
     from app.conversations.adapters import get_conversation_adapters
-    from app.social.inline_charts import attach_reply_resources
+    from app.social.inline_charts import attach_reply_resources, reply_chart_ids
 
     catalog = get_conversation_catalog()
     row = await catalog.repository.get(session_id)
@@ -297,7 +312,9 @@ async def _build_snapshot(user: CurrentUser, session_id: str) -> dict:
 
     try:
         descriptors = await _app_resource_descriptors(session_id, [])
-        attach_reply_resources(visible, descriptors)
+        chart_ids = sorted(reply_chart_ids(visible))
+        chart_descriptors = await _app_resource_descriptors(session_id, chart_ids) if chart_ids else []
+        attach_reply_resources(visible, descriptors, chart_descriptors=chart_descriptors)
     except Exception as exc:
         logger.warning("shared_snapshot_resources_attach_failed", session_id=session_id, error=str(exc))
 
@@ -425,6 +442,20 @@ async def get_shared_conversation(
     row = await _active_share(share_id)
     summary = _share_summary(row)
     summary["messages"] = row.snapshot or []
+    prefix = _SHARE_RESOURCE_URL_PREFIX.format(share_id=share_id)
+    summary["resources"] = [
+        {
+            "resource_id": item["resource_id"],
+            "resource_key": item["resource_key"],
+            "renderer": item["renderer"],
+            "media_type": item["media_type"],
+            "interactive": item["interactive"],
+            "label": item["label"],
+            "status": "active",
+            "content_url": f"{prefix}{item['resource_id']}/content",
+        }
+        for item in (row.attachments or []) if item.get("inline_chart")
+    ]
     return summary
 
 

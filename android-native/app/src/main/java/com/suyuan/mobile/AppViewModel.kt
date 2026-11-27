@@ -974,7 +974,8 @@ class AppViewModel(
             attachmentPreviews = current.attachmentPreviews + (id to AttachmentPreview(loading = true)),
         )
         viewModelScope.launch {
-            val previewAttachment = attachment.previewUrl?.let { attachment.copy(url = it) } ?: attachment
+            val previewAttachment = if (isInteractiveChart(attachment)) attachment else
+                attachment.previewUrl?.let { attachment.copy(url = it) } ?: attachment
             runCatching { repository.download(current.token, previewAttachment) }
                 .onSuccess { bytes ->
                     val isImage = isImageAttachment(attachment)

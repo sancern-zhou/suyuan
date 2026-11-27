@@ -15,9 +15,8 @@ internal data class ReplyOutcomes(val files: List<UploadedAttachment>, val other
 internal fun replyOutcomes(attachments: List<UploadedAttachment>, placed: Set<String>): ReplyOutcomes {
     val used = attachments.filter { it.fileId in placed }
     val groups = used.map { it.groupId }.filter(String::isNotBlank).toSet()
-    val visuals = used.map { it.visualId }.filter(String::isNotBlank).toSet()
     val visible = attachments.distinctBy { it.fileId.ifBlank { it.url } }.filterNot {
-        it.fileId in placed || (it.groupId.isNotBlank() && it.groupId in groups) || (it.visualId.isNotBlank() && it.visualId in visuals) ||
+        it.fileId in placed || (it.groupId.isNotBlank() && it.groupId in groups) ||
             (it.resourceRole.isNotBlank() && it.resourceRole !in setOf("output", "report", "attachment")) ||
             it.resourceKind == "data" || (it.resourceKey == "chart-spec" && !it.interactive) ||
             (!isInteractiveChart(it) && (it.filename.substringAfterLast('.', "").lowercase() in setOf("json", "qmd", "log", "yaml", "yml", "parquet", "sql") ||

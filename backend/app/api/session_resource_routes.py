@@ -133,8 +133,6 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
-    if item.metadata.get("visual_id"):
-        dto["visual_id"] = item.metadata["visual_id"]
     if item.resource_key == "chart-spec":
         dto["interactive"] = item.metadata.get("interactive", (
             item.metadata.get("type") != "image"

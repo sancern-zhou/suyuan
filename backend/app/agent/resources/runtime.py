@@ -133,9 +133,23 @@ async def persist_tool_result_resources(
         ]
     from .office_preview import attach_office_preview_declarations
 
+    from .resource_service import (
+        chart_publication_identity,
+        project_inline_chart,
+        select_inline_chart_member,
+    )
+
     declarations = await attach_office_preview_declarations(declarations)
+    tool_call_id = data.get("tool_call_id") or data.get("tool_use_id") or event.get("tool_call_id")
     published = []
+    chart_index = 0
     for group_key, members in groupby_group_key(declarations).items():
+        options = {}
+        if tool_call_id and select_inline_chart_member(members) is not None:
+            options["publication_id"] = chart_publication_identity(
+                run_id, tool_name, turn_sequence, tool_call_id, chart_index,
+            )
+            chart_index += 1
         published.append(
             await service.publish_group(
                 session_id,
@@ -143,6 +157,7 @@ async def persist_tool_result_resources(
                 group_key,
                 members,
                 turn_sequence=turn_sequence,
+                **options,
             )
         )
     if not published:
@@ -155,6 +170,12 @@ async def persist_tool_result_resources(
         for publication in published
         for resource in publication.resources
     ]
+    references = [
+        reference for resource in changed_resources
+        if (reference := project_inline_chart(resource)) is not None
+    ]
+    if references:
+        result["chart_references"] = references
     preferred_resource_key = str(presentation.get("resource_key") or "").strip()
     focus_resource = next(
         (

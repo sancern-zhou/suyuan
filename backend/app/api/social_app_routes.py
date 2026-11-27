@@ -48,7 +48,8 @@ from app.social.session_mapper import SessionMapper
 from app.social.app_runs import get_app_run_store
 from app.social.app_client_compat import is_legacy_app
 from app.agent.user_questions import QuestionSet
-from app.social.inline_charts import _CHART_REFERENCE
+from app.agent.resources.chart_placeholders import collect_placeholder_ids, redact_chart_paths
+from app.social.inline_charts import attach_reply_resources, is_chart_attachment, reply_chart_ids
 from config.settings import settings
 
 router = APIRouter(prefix="/api/social/app", tags=["android-app"])
@@ -1341,8 +1342,10 @@ def _app_resource_descriptor(session_id: str, resource, *, preview_resource=None
         "format": resource.format,
         "renderer": resource.renderer,
         "resource_key": resource.resource_key,
-        "visual_id": str(resource.metadata.get("visual_id") or ""),
-        "interactive": resource.metadata.get("interactive") is True,
+        "interactive": (
+            resource.resource_key == "chart-spec" and resource.renderer == "chart"
+            and resource.metadata.get("interactive") is not False
+        ),
         "group_id": str(getattr(resource, "group_id", "") or ""),
         "run_id": str(getattr(resource, "run_id", "") or ""),
         "relation": str(getattr(resource, "relation", "") or ""),
@@ -1368,24 +1371,38 @@ def _app_resource_variant(session_id: str, resource) -> dict:
     }
 
 
+def _app_visible_resource(item) -> bool:
+    return (
+        item.role in {"output", "report", "attachment"}
+        and item.kind in {"data", "file", "artifact", "visual"}
+    )
+
+
 async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) -> list[dict]:
     service = SessionResourceService.database()
-    page = await service.list_resources(session_id, status="active", limit=200)
-    resources = [
-        item for item in page.resources
-        if item.role in {"output", "report", "attachment"}
-        and item.kind in {"data", "file", "artifact", "visual"}
-    ]
-    requested = {str(item) for item in resource_ids if str(item).strip()}
+    requested = {item for item in resource_ids if item}
     if requested:
-        requested |= {
-            item.parent_resource_id for item in resources
-            if item.resource_id in requested and item.parent_resource_id
-        }
-        resources = [
-            item for item in resources
-            if item.resource_id in requested or item.parent_resource_id in requested
-        ]
+        selected = await service.get_resources_by_ids(session_id, sorted(requested), status="active")
+        selected = [item for item in selected if _app_visible_resource(item)]
+        parent_ids = {item.parent_resource_id for item in selected if item.parent_resource_id}
+        related_ids = requested | parent_ids
+        # Resolve derivatives (report variants and optional chart previews) only
+        # within selected groups. The session's recent resource page is irrelevant.
+        by_id = {item.resource_id: item for item in selected}
+        for group_id in sorted({item.group_id for item in selected if item.group_id}):
+            cursor = None
+            while True:
+                page = await service.list_resources(session_id, group_id=group_id, status="active", limit=200, cursor=cursor)
+                for item in page.resources:
+                    if item.resource_id in related_ids or item.parent_resource_id in related_ids:
+                        by_id.setdefault(item.resource_id, item)
+                cursor = page.next_cursor
+                if cursor is None:
+                    break
+        resources = [item for item in by_id.values() if _app_visible_resource(item)]
+    else:
+        page = await service.list_resources(session_id, status="active", limit=200)
+        resources = [item for item in page.resources if _app_visible_resource(item)]
     by_parent = {item.parent_resource_id: item for item in resources if item.relation == "preview" and item.parent_resource_id}
     children_by_parent: dict[str, list] = {}
     for item in resources:
@@ -1437,8 +1454,8 @@ async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) ->
             str(descriptor.get("group_id") or descriptor.get("run_id") or "") + ":" + str(descriptor.get("filename") or descriptor.get("name") or "").strip().lower(),
             str(descriptor.get("mime_type") or descriptor.get("format") or "").strip().lower(),
         )
-        if descriptor.get("resource_key") in {"chart-spec", "chart-image"}:
-            key = (descriptor["file_id"], descriptor["resource_key"])
+        if is_chart_attachment(descriptor):
+            key = (descriptor["resource_id"], descriptor["resource_key"])
         if not key[0]:
             continue
         current = deduplicated.get(key)
@@ -1488,6 +1505,24 @@ async def _stream_events(
             "data": {"code": "session_run_in_progress", "error": "当前会话正在执行，请等待完成或暂停后重试"},
         }
         yield f"data: {dumps_safe(error_event)}\n\n"
+
+
+def _app_public_event_value(value):
+    if isinstance(value, str):
+        return redact_chart_paths(value)
+    if isinstance(value, (list, tuple)):
+        return [_app_public_event_value(item) for item in value]
+    if isinstance(value, dict):
+        hidden_keys = {"chart_references", "published_charts"}
+        metadata = value.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("inline_chart") is True:
+            hidden_keys.update({"locator", "file_path"})
+        return {
+            key: _app_public_event_value(item)
+            for key, item in value.items()
+            if key not in hidden_keys
+        }
+    return value
 
 
 async def _stream_events_unlocked(
@@ -1566,6 +1601,9 @@ async def _stream_events_unlocked(
             },
         ):
             event_type = event.get("type")
+            # The runtime buffers streamed markers across chunks. App-specific
+            # process fields may still carry model-facing tool results.
+            event = _app_public_event_value(event)
             event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
             if event_data.get("run_id"):
                 registered = await cancellation_registry.attach_run_id(session_id, cancel_event, str(event_data["run_id"]))
@@ -1594,32 +1632,27 @@ async def _stream_events_unlocked(
             elif event_type == "streaming_text":
                 streamed_answer += str(event_data.get("chunk") or "")
             elif event_type == "resources_changed":
-                descriptors = await _app_resource_descriptors(
-                    session_id,
-                    [str(item) for item in event_data.get("changed_resource_ids") or []],
-                )
-                if descriptors:
-                    streamed_resources.extend(descriptors)
-                    event_data["attachments"] = descriptors
+                changed_ids = [str(item) for item in event_data.get("changed_resource_ids") or [] if item]
+                if changed_ids:
+                    descriptors = await _app_resource_descriptors(session_id, changed_ids)
+                    if descriptors:
+                        streamed_resources.extend(descriptors)
+                        event_data["attachments"] = descriptors
             elif event_type == "complete":
-                answer = str(event_data.get("answer") or streamed_answer).strip()
+                answer = redact_chart_paths(str(event_data.get("answer") or streamed_answer)).strip()
                 if answer:
                     final_attachments = list(streamed_resources)
                     session_descriptors: Optional[list] = None
-                    # 答案可能复用之前轮次生成的图表（跨轮引用）。本轮没有产生
-                    # resources_changed 时，按会话目录补齐被引用的图表资源，
-                    # 否则 App 端按消息附件匹配不到 [[chart:...]] 只能显示原文。
-                    referenced_ids = {
-                        ref for ref in _CHART_REFERENCE.findall(answer)
-                    } - {item.get("visual_id") for item in final_attachments}
+                    # Cross-turn charts may be arbitrarily old. Use only the
+                    # exact IDs in the final answer and only this session.
+                    referenced_ids = collect_placeholder_ids(answer) - {
+                        item.get("resource_id") for item in final_attachments if is_chart_attachment(item)
+                    }
                     if referenced_ids:
                         try:
-                            session_descriptors = await _app_resource_descriptors(session_id, [])
-                            known_file_ids = {item.get("file_id") for item in final_attachments}
                             final_attachments.extend(
-                                item for item in session_descriptors
-                                if item.get("visual_id") in referenced_ids
-                                and item.get("file_id") not in known_file_ids
+                                item for item in await _app_resource_descriptors(session_id, sorted(referenced_ids))
+                                if item["resource_id"] in referenced_ids and is_chart_attachment(item)
                             )
                         except Exception as exc:
                             logger.warning(
@@ -1641,14 +1674,17 @@ async def _stream_events_unlocked(
                                     error=str(exc),
                                 )
                         answer = _rewrite_app_image_urls(answer, session_descriptors)
-                    seen_file_ids = set()
-                    final_attachments = [
-                        item for item in final_attachments
-                        if item.get("file_id") and not (item["file_id"] in seen_file_ids or seen_file_ids.add(item["file_id"]))
-                    ]
+                    event_data["answer"] = answer
+                    if "response" in event_data:
+                        event_data["response"] = answer
+                    final_attachments = list({item["file_id"]: item for item in final_attachments}.values())
                     if final_attachments:
                         event_data["attachments"] = final_attachments
-                        event_data["resource_run_ids"] = sorted({item["run_id"] for item in final_attachments if item.get("run_id")})
+                    # Do not attribute earlier runs to this turn solely because
+                    # their charts were explicitly referenced in its final reply.
+                    run_ids = {item["run_id"] for item in streamed_resources if item.get("run_id")}
+                    if run_ids:
+                        event_data["resource_run_ids"] = sorted(run_ids)
                     display_history.append({
                         "type": "final",
                         "role": "assistant",
@@ -1680,7 +1716,7 @@ async def _stream_events_unlocked(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        error = {"type": "fatal_error", "data": {"error": str(exc), "code": "app_agent_failed"}}
+        error = {"type": "fatal_error", "data": {"error": redact_chart_paths(str(exc)), "code": "app_agent_failed"}}
         yield f"data: {dumps_safe(error)}\n\n"
     finally:
         end_assistant_request(assistant_request_token)
@@ -1903,6 +1939,7 @@ _SCHEDULED_SESSION_RE = re.compile(r"^scheduled_task_(?P<task_id>.+)_\d{8}_\d{6}
 # 执行过程（tool_use/tool_result/process 等）与 Web 端共享存储，但不下发。
 _MOBILE_VISIBLE_HISTORY_TYPES = {
     "user",
+    "assistant",
     "final",
     "thought",
     "thinking",
@@ -1980,21 +2017,28 @@ async def app_session_messages(
 async def _mobile_history(session_id: str, messages: list) -> list:
     from app.conversations.resource_urls import conversation_resource_urls
     messages = conversation_resource_urls(messages, session_id, app=True)
+    # Resolve charts by ID for the whole authorized transcript window, even
+    # if these resources were published long before the recent catalog page.
+    chart_ids = reply_chart_ids(messages)
+    chart_descriptors = []
+    if chart_ids:
+        try:
+            chart_descriptors = await _app_resource_descriptors(session_id, sorted(chart_ids))
+        except Exception as exc:
+            logger.warning("app_session_charts_restore_failed", session_id=session_id, error=str(exc))
+    descriptors = []
+    try:
+        descriptors = await _app_resource_descriptors(session_id, [])
+    except Exception as exc:
+        logger.warning("app_session_resources_restore_failed", session_id=session_id, error=str(exc))
+    # Hidden process rows still supply run/resource attribution for regular files.
+    attach_reply_resources(messages, descriptors, chart_descriptors=chart_descriptors)
     history = [
-        item
+        _app_public_event_value(item) if isinstance(item, dict) and (item.get("type") or item.get("role")) != "user" else item
         for item in messages
         if not isinstance(item, dict)
         or str(item.get("type") or item.get("role") or "").lower() in _MOBILE_VISIBLE_HISTORY_TYPES
     ]
-    # Match explicit chart references and run/resource identities to their turns.
-    # Unattributed legacy files remain in the catalog, not on the latest reply.
-    descriptors = []
-    try:
-        descriptors = await _app_resource_descriptors(session_id, [])
-        from app.social.inline_charts import attach_reply_resources
-        attach_reply_resources(history, descriptors)
-    except Exception as exc:
-        logger.warning("app_session_resources_restore_failed", session_id=session_id, error=str(exc))
     for item in history:
         if isinstance(item, dict) and isinstance(item.get("content"), str):
             item["content"] = _rewrite_app_image_urls(item["content"], descriptors)

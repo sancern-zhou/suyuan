@@ -1,45 +1,42 @@
-"""Restore chart resources at their referenced assistant turns, without exposing paths."""
-import re
+"""Restore App reply attachments without borrowing files from unrelated turns."""
+from collections.abc import Sequence
 
-from app.utils.visual_ids import VISUAL_ID_PATTERN
-
-# 字符集与长度唯一定义在 app/utils/visual_ids.py（契约测试钉住）。
-_CHART_REFERENCE = re.compile(rf"\[\[chart:({VISUAL_ID_PATTERN})\]\]")
+from app.agent.resources.chart_placeholders import collect_placeholder_ids
 
 
-def attach_reply_resources(history: list, descriptors: list[dict]) -> None:
-    replies = [item for item in history if isinstance(item, dict)
-               and str(item.get("type") or item.get("role") or "").lower() in {"assistant", "final"}]
-    if not replies:
-        return
-    # Specs and image renditions share a visual ID. Prefer the renderable image
-    # for static charts, and the interactive spec for ECharts, independent of order.
-    def priority(value):
-        if value.get("resource_key") == "chart-spec" and value.get("interactive") is True:
-            return 2
-        if str(value.get("mime_type") or "").startswith("image/"):
-            return 1
-        return 0
+def _message_type(item: dict) -> str:
+    return str(item.get("type") or item.get("role") or "").lower()
 
-    by_id = {str(value[key]): value for value in sorted(descriptors, key=priority)
-             for key in ("visual_id", "file_id") if value.get(key)}
 
-    def attach(reply, resources):
-        existing = reply.get("attachments") if isinstance(reply.get("attachments"), list) else []
-        current_groups = {value.get("group_id") for value in resources if value.get("group_id")}
-        current_ids = {value["file_id"] for value in resources}
-        existing = [value for value in existing if isinstance(value, dict) and
-                    (not value.get("group_id") or value["group_id"] not in current_groups or value.get("file_id") in current_ids)]
-        known = {str(value.get("file_id") or value.get("resource_id") or value.get("url") or "")
-                 for value in existing if isinstance(value, dict)}
-        additions = {value["file_id"]: value for value in resources if value["file_id"] not in known}
-        reply["attachments"] = existing + list(additions.values())
+def reply_chart_ids(history: list) -> set[str]:
+    return {
+        resource_id
+        for item in history
+        if isinstance(item, dict) and _message_type(item) in {"assistant", "final"}
+        for resource_id in collect_placeholder_ids(str(item.get("content") or ""))
+    }
 
+
+def is_chart_attachment(item: dict) -> bool:
+    return (
+        str(item.get("mime_type") or "").lower().startswith("image/")
+        or (item.get("resource_key") == "chart-spec" and item.get("interactive") is True)
+    )
+
+
+def attach_reply_resources(
+    history: list, descriptors: list[dict], *, chart_descriptors: Sequence[dict] = (),
+) -> None:
+    charts_by_id = {
+        value["resource_id"]: value
+        for value in (*descriptors, *chart_descriptors)
+        if value.get("resource_id") and is_chart_attachment(value)
+    }
     preceding_runs, preceding_ids, preceding_groups = set(), set(), set()
     for reply in history:
         if not isinstance(reply, dict):
             continue
-        role = str(reply.get("type") or reply.get("role") or "").lower()
+        role = _message_type(reply)
         if role == "user":
             preceding_runs, preceding_ids, preceding_groups = set(), set(), set()
             continue
@@ -48,17 +45,35 @@ def attach_reply_resources(history: list, descriptors: list[dict]) -> None:
         for payload in (reply, data, result):
             if payload.get("run_id"):
                 preceding_runs.add(str(payload["run_id"]))
-            preceding_ids.update(str(value) for value in payload.get("resource_ids", []) if value)
-            preceding_runs.update(str(value) for value in payload.get("resource_run_ids", []) if value)
-            preceding_groups.update(str(value) for value in payload.get("resource_group_ids", []) if value)
+            preceding_ids.update(str(value) for value in payload.get("resource_ids") or [] if value)
+            preceding_runs.update(str(value) for value in payload.get("resource_run_ids") or [] if value)
+            preceding_groups.update(str(value) for value in payload.get("resource_group_ids") or [] if value)
         if role not in {"assistant", "final"}:
             continue
-        resources = [by_id[ref] for ref in _CHART_REFERENCE.findall(str(reply.get("content") or ""))
-                     if ref in by_id]
-        preceding_groups.update(value["group_id"] for value in reply.get("attachments", []) if isinstance(value, dict) and value.get("group_id"))
-        resources += [value for value in descriptors if value.get("file_id") in preceding_ids or value.get("group_id") in preceding_groups
-                      or (value.get("run_id") and value["run_id"] in preceding_runs)]
-        attach(reply, resources)
+        refs = collect_placeholder_ids(str(reply.get("content") or ""))
+        charts = [charts_by_id[ref] for ref in sorted(refs) if ref in charts_by_id]
+        existing = reply.get("attachments")
+        existing = [value for value in existing if isinstance(value, dict)] if isinstance(existing, list) else []
+        # An inline reference can belong to an earlier turn. Keep the attachment
+        # but do not revive every other file in its run or group.
+        preceding_groups.update(
+            value["group_id"] for value in existing
+            if value.get("group_id") and value.get("resource_id") not in refs
+        )
+        files = [value for value in descriptors if (
+            value.get("file_id") in preceding_ids or value.get("group_id") in preceding_groups
+            or value.get("run_id") in preceding_runs
+        )]
+        current_groups = {value["group_id"] for value in files if value.get("group_id")}
+        current_ids = {value["file_id"] for value in files}
+        existing = [value for value in existing if (
+            value.get("resource_id") in refs or value.get("group_id") not in current_groups
+            or value.get("file_id") in current_ids
+        )]
+        # Current authorized descriptors replace the metadata for that exact
+        # chart while ordinary upload IDs (and their display links) stay intact.
+        existing = [charts_by_id.get(value["resource_id"], value) if value.get("resource_id") in refs else value for value in existing]
+        known = {str(value.get("file_id") or value.get("resource_id") or value.get("url") or "") for value in existing}
+        additions = {value["file_id"]: value for value in [*files, *charts] if value["file_id"] not in known}
+        reply["attachments"] = existing + list(additions.values())
         preceding_runs, preceding_ids, preceding_groups = set(), set(), set()
-    # Unattributed legacy resources remain in the session catalog. Never assign
-    # them to an unrelated final reply merely because it is the latest one.

@@ -15,7 +15,7 @@ def _tool_result_payloads(session):
 
 
 def test_resource_tracking_ids_never_reach_llm_projection(tmp_path):
-    """新鲜窗口 raw 注入路径：目录主键剥离，visuals 契约原样保留。"""
+    """The fresh result projects descriptions and confirmed paths to the model."""
     session = SessionMemory("server-ids", base_dir=tmp_path)
     session.add_user_message("画图")
     raw = {
@@ -29,6 +29,8 @@ def test_resource_tracking_ids_never_reach_llm_projection(tmp_path):
             "focus_resource_id": "144b6c090a47cd3e53dbd52839b4560f",
         },
         "visuals": [{"id": "matplotlib_x1", "type": "image"}],
+        "refs": {"visuals": [{"id": "matplotlib_x1"}], "data": [{"file_path": "input.json"}]},
+        "chart_references": [{"label": "图", "path": "published/plot.png", "marker": "[[chart:published/plot.png]]"}],
     }
     session.add_streaming_tool_results([{
         "tool_name": "execute_python",
@@ -41,7 +43,10 @@ def test_resource_tracking_ids_never_reach_llm_projection(tmp_path):
     assert len(results) == 1
     assert results[0]["resource_tracking"] == {"durable": True}
     assert "144b6c090a47cd3e53dbd52839b4560f" not in json.dumps(results)
-    assert results[0]["visuals"] == raw["visuals"]
+    assert results[0]["visuals"] == [{"type": "image"}]
+    assert results[0]["refs"] == {"data": [{"file_path": "input.json"}]}
+    assert results[0]["chart_references"] == raw["chart_references"]
+    assert "matplotlib_x1" not in json.dumps(results)
     # 进程内 stash 保留完整 tracking，SSE/落库/前端产物卡片仍可消费
     stored_raw = session.conversation_history[-1].data["raw_results"][0]["raw"]
     assert stored_raw["resource_tracking"]["resource_ids"] == [

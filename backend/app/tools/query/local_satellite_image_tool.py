@@ -148,8 +148,6 @@ class LocalSatelliteImageTool(LLMTool):
             "status": "success",
             "data": {"source": self.source_name, "images": images, "count": len(images)},
             "visuals": visuals,
-            # visual 带原生文件 local_path，统一登记产出 chart-spec + chart-image
-            # （含 visual_id），App 端 [[chart:<id>]] 标记即可引用。
             "resources": resources_for_visuals(visuals, tool_name=self.name),
             "refs": refs,
             "llm_resume": {

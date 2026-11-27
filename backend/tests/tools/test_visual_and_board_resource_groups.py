@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -45,7 +46,7 @@ def test_chart_spec_and_image_are_one_resource_group(tmp_path, monkeypatch):
     assert chart.metadata["interactive"] is False
     assert rendition.relation.value == "rendition"
     assert rendition.parent_key == "chart-spec"
-    spec = json.loads((tmp_path / "charts" / "chart-1.json").read_text())
+    spec = json.loads(Path(chart.locator.path).read_text(encoding="utf-8"))
     assert "image_url" not in str(spec)
     assert str(tmp_path) not in str(spec)
 

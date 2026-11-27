@@ -1,9 +1,39 @@
-// [[chart:<visual_id>]] 占位符协议在前端的唯一定义。
-// 与后端 app/utils/visual_ids.py 的 VISUAL_ID_PATTERN 保持一致
-// （字符集 A-Za-z0-9_.-，长度 ≤100；契约测试 backend/tests/test_visual_id_protocol.py）。
-// 新增消费方请导入 chartReferenceRegex，不要手写字符类。
-export const VISUAL_ID_PATTERN_SOURCE = '[A-Za-z0-9_.-]{1,100}'
+import MarkdownIt from 'markdown-it'
+import markdownItKatex from '@traptitech/markdown-it-katex'
+import markdownItMultimdTable from 'markdown-it-multimd-table'
 
-export function chartReferenceRegex() {
-  return new RegExp(`\\[\\[chart:(${VISUAL_ID_PATTERN_SOURCE})\\]\\]`, 'g')
+const CHART_REFERENCE = /\[\[chart:([0-9a-f]{32})\]\]/y
+
+// Let Markdown-It consume code fences, inline code, escapes and link destinations
+// before interpreting chart references in ordinary Markdown content.
+function chartReference(state, silent) {
+  if (!state.env.chartReferences || state.linkLevel || state.src[state.pos] !== '[') return false
+  CHART_REFERENCE.lastIndex = state.pos
+  const match = CHART_REFERENCE.exec(state.src)
+  if (!match || CHART_REFERENCE.lastIndex > state.posMax) return false
+  if (!silent) {
+    const token = state.push('chart_reference', '', 0)
+    token.content = match[0]
+    token.meta = { resourceId: match[1] }
+  }
+  state.pos += match[0].length
+  return true
+}
+
+export function createChartMarkdown() {
+  const md = new MarkdownIt({ html: true, linkify: true, typographer: true })
+    .use(markdownItMultimdTable, { multiline: true, rowspan: true, headerless: true })
+    .use(markdownItKatex, { throwOnError: false, errorColor: '#cc0000' })
+  md.inline.ruler.before('link', 'chart_reference', chartReference)
+  return md
+}
+
+const referenceParser = createChartMarkdown()
+
+export function chartReferenceIds(content) {
+  if (!content.includes('[[chart:')) return []
+  const tokens = referenceParser.parse(content, { chartReferences: true })
+  return tokens.flatMap(token => (token.children || [])
+    .filter(child => child.type === 'chart_reference')
+    .map(child => child.meta.resourceId))
 }

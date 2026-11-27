@@ -44,9 +44,9 @@ def test_every_output_producer_category_declares_valid_resources(tmp_path):
         Producer("html_artifact", "html-artifact", lambda: {"resources": [directory_artifact(
             artifact, entrypoint="index.html", group_key="html:fixture", tool_name="html_artifact")]}),
         Producer("chart", "chart", lambda: {"resources": [chart_resource(
-            "chart-1", path=files["json"], group_key="chart:fixture", tool_name="chart")]}),
+            files["json"], group_key="chart:fixture", tool_name="chart")]}),
         Producer("map", "map", lambda: {"resources": [chart_resource(
-            "map-1", path=files["json"], group_key="map:fixture", tool_name="map")]}),
+            files["json"], group_key="map:fixture", tool_name="map")]}),
         Producer("board", "board", lambda: {"resources": board_product(
             xml_path=files["drawio"], artifact_id="board-1", tool_name="board",
             screenshot_path=files["png"])}),

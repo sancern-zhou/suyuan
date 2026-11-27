@@ -73,21 +73,34 @@ def _strip_read_state_content_for_llm(value: Any) -> Any:
 
 
 def _strip_server_resource_ids_for_llm(value: Any) -> Any:
-    """LLM 注入前剥离 resource_tracking 中的资源目录主键。
-
-    resource_id/group_id/focus_resource_id 是服务端资源目录与前端产物卡片
-    的内部主键，不属于 ``[[chart:...]]`` 协议（协议只接受 visual_id 与
-    会话短别名 chart_N）。历史教训：模型把它们当图表 ID 抄进占位符，前端
-    按 visual_id 匹配不到导致图表不渲染，产物卡片还被标记文本抑制。模型
-    视野只保留 durable 状态；SSE 事件与落库消息仍携带完整 tracking。
-    """
+    """Project catalog tracking and chart descriptions for the model."""
     if not isinstance(value, dict):
         return value
-    tracking = value.get("resource_tracking")
-    if not isinstance(tracking, dict):
-        return value
-    slim = {key: val for key, val in tracking.items() if key == "durable"}
-    return {**value, "resource_tracking": slim}
+    projected = {
+        key: item for key, item in value.items()
+        if key not in {"visual_ids", "visual_refs"}
+    }
+    tracking = projected.get("resource_tracking")
+    if isinstance(tracking, dict):
+        projected["resource_tracking"] = {key: val for key, val in tracking.items() if key == "durable"}
+    if isinstance(visuals := projected.get("visuals"), list):
+        projected["visuals"] = [
+            {key: item[key] for key in ("type", "title") if key in item}
+            for item in visuals if isinstance(item, dict)
+        ]
+    for key in ("refs", "llm_resume", "chart_summary"):
+        if isinstance(item := projected.get(key), dict):
+            item = {
+                name: val for name, val in item.items()
+                if name not in {"visuals", "generated_visuals", "chart_id"}
+            }
+            if isinstance(files := item.get("files"), list):
+                item["files"] = [
+                    {name: val for name, val in entry.items() if name != "visual_id"}
+                    if isinstance(entry, dict) else entry for entry in files
+                ]
+            projected[key] = item
+    return projected
 
 
 def _todo_status_counts(items: Any) -> Dict[str, int]:
@@ -507,7 +520,7 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
         "file_paths", "report_file_path", "report_file_paths", "count", "total_count", "sample_count",
         "original_count", "metadata", "has_chart", "chart_summary",
         "source_file_paths", "source_report_file_paths",
-        "refs", "context_refs", "llm_resume", "content_preview", "visual_ids",
+        "refs", "context_refs", "llm_resume", "content_preview", "chart_references",
         "stdout",
     }
     minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}

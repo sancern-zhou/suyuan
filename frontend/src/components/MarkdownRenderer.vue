@@ -1,6 +1,10 @@
 <template>
   <div class="markdown-renderer" ref="markdownRef" :class="{ 'is-streaming': streaming }">
-    <div v-html="renderedHtml" @click="handleImageClick"></div>
+    <div ref="markdownBody" v-html="renderedMarkdown.html" @click="handleImageClick"></div>
+    <Teleport v-for="slot in chartSlots" :key="slot.index" :to="slot.target">
+      <InlineChartCard v-if="slot.chart" :key="slot.chart.url" :chart="slot.chart" />
+      <span v-else>【图表不可用】</span>
+    </Teleport>
     <!-- 流式输出光标 -->
     <span v-if="streaming" class="streaming-cursor"></span>
   </div>
@@ -13,10 +17,10 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import MarkdownIt from 'markdown-it'
-import markdownItKatex from '@traptitech/markdown-it-katex'
-import markdownItMultimdTable from 'markdown-it-multimd-table'
+import { computed, ref, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { v4 as uuid } from 'uuid'
+import InlineChartCard from './InlineChartCard.vue'
+import { createChartMarkdown } from '@/services/chartReferencePattern.js'
 import 'katex/dist/katex.min.css'
 import ImageLightbox from './ImageLightbox.vue'
 import {
@@ -38,18 +42,15 @@ const lightboxImages = ref([])
 const currentImageIndex = ref(0)
 const markdownImageHydrator = createMarkdownApiImageHydrator()
 
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true
-}).use(markdownItMultimdTable, {
-  multiline: true,  // 启用多行表格支持
-  rowspan: true,    // 启用行跨列支持
-  headerless: true  // 启用无头表格支持
-}).use(markdownItKatex, {
-  throwOnError: false,
-  errorColor: '#cc0000'
-})
+const md = createChartMarkdown()
+const markdownBody = ref(null)
+const chartSlots = shallowRef([])
+// Scope generated targets to this render so raw Markdown HTML cannot supply a chart slot.
+md.renderer.rules.chart_reference = (tokens, index, options, env) => {
+  if (env.streaming) return ''
+  const slot = env.chartIds.push(tokens[index].meta.resourceId) - 1
+  return `<span class="md-chart-slot" data-chart-slot="${env.chartSlotKey}-${slot}"></span>`
+}
 
 // 原始HTML图片无法安全附加业务请求头，统一转义；Markdown图片语法走下方受控规则。
 md.core.ruler.after('inline', 'escape_raw_html_images', (state) => {
@@ -158,8 +159,14 @@ const props = defineProps({
   streaming: {
     type: Boolean,
     default: false
+  },
+  chartResources: {
+    type: Map,
+    default: null
   }
 })
+
+const chartReferencesEnabled = computed(() => props.chartResources !== null)
 
 // ✅ 节流函数：减少 markdown 解析次数
 let throttleTimer = null
@@ -177,8 +184,6 @@ const updateProcessedContent = (newContent) => {
   throttlePendingContent = null
 
   // 根据是否 streaming 设置不同的节流时间
-  const throttleDelay = props.streaming ? 50 : 100
-
   throttleTimer = setTimeout(() => {
     throttleTimer = null
     // 如果有待处理内容，立即更新
@@ -186,31 +191,27 @@ const updateProcessedContent = (newContent) => {
       processedContent.value = throttlePendingContent
       throttlePendingContent = null
     }
-  }, throttleDelay)
+  }, 50)
 }
 
-// 监听content变化
-// 【简化】现在后端统一返回完整URL，不需要预处理了
-watch(() => props.content, (newContent) => {
-  if (!newContent) {
-    processedContent.value = ''
-    return
+watch([() => props.content, () => props.streaming], ([content, streaming]) => {
+  if (!streaming || !content) {
+    // A terminal event may replace streamed text (or clear it) without another chunk.
+    clearTimeout(throttleTimer)
+    throttleTimer = null
+    throttlePendingContent = null
+    processedContent.value = content
+  } else {
+    updateProcessedContent(content)
   }
-
-  // ✅ 使用节流更新，减少 markdown 解析次数
-  updateProcessedContent(newContent)
 }, { immediate: true })
 
 // 已移除脱敏限制
 
 // 【Vue 3 最佳实践】使用 computed + watch 组合确保响应式更新
-const renderedHtml = computed(() => {
-  // 明确声明依赖：props.content 和 props.streaming
-  // Vue 3 会自动追踪这些依赖，当它们变化时重新计算
-  const _content = props.content
+const renderedMarkdown = computed(() => {
   const _streaming = props.streaming
-
-  let content = normalizeRestoredContent(processedContent.value || _content || '')
+  let content = normalizeRestoredContent(processedContent.value || '')
 
   // 【调试】
   if (content.includes('|') && content.includes('------')) {
@@ -286,9 +287,9 @@ const renderedHtml = computed(() => {
     return `<div class="inline-chart-wrapper">${markdownImage}</div>`
   })
 
-  // 【保留占位符】让ReActMessageList.vue处理截图注入，不在这里替换占位符
-
-  const rendered = md.render(content, { streaming: _streaming })
+  const env = { streaming: _streaming, chartReferences: chartReferencesEnabled.value, chartIds: [] }
+  if (env.chartReferences && !_streaming && content.includes('[[chart:')) env.chartSlotKey = uuid()
+  const rendered = md.render(content, env)
 
   console.log('[MarkdownRenderer] ===== 渲染完成 =====')
   console.log('[MarkdownRenderer] streaming:', props.streaming)
@@ -307,8 +308,17 @@ const renderedHtml = computed(() => {
   }
 
   // 渲染结果统一净化，阻断 LLM/知识库内容中的脚本注入（XSS）
-  return sanitizeRichHtml(rendered)
+  return { html: sanitizeRichHtml(rendered), chartIds: env.chartIds, chartSlotKey: env.chartSlotKey }
 })
+
+// Vue owns the chart components. Their targets are created by the sanitized
+// Markdown render, so resolve them only after the DOM has been patched.
+watch([markdownBody, renderedMarkdown, () => props.chartResources], ([body, rendered, resources]) => {
+  chartSlots.value = body && resources ? rendered.chartIds.flatMap((id, index) => {
+    const target = body.querySelector(`[data-chart-slot="${rendered.chartSlotKey}-${index}"]`)
+    return target ? [{ index, target, chart: resources.get(id) }] : []
+  }) : []
+}, { flush: 'post' })
 
 // 收集Markdown中的所有图片
 const collectImages = () => {
@@ -354,7 +364,7 @@ const refreshImages = async () => {
 }
 
 // 监听内容变化，重新收集图片
-watch([renderedHtml, () => props.streaming], () => {
+watch([renderedMarkdown, () => props.streaming], () => {
   refreshImages()
 })
 
@@ -504,6 +514,10 @@ const handleImageClick = (e) => {
   }
 
   // 图片样式 - 无边框样式
+  :deep(.md-chart-slot), :deep(.inline-chart-image), :deep(.inline-chart-image .md-image-caption) {
+    display: block;
+  }
+
   :deep(.md-image-wrapper) {
     margin: 16px 0;
     text-align: center;

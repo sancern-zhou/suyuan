@@ -1279,7 +1279,7 @@ export const useReactStore = defineStore('react', {
       // 直接修改对象属性在某些情况下不会触发响应式更新
       const updatedMessage = {
         ...message,
-        content: content ? contentToString(content) : message.content,
+        content: content == null ? message.content : contentToString(content),
         streaming: false,
         renderVersion: (message.renderVersion || 0) + 1,
         data: {
@@ -1493,6 +1493,27 @@ export const useReactStore = defineStore('react', {
         const msgId = this._addMessageToState(targetState, msgType, contentStr, msgData, msgAttachments, msgExtraFields)
         console.log(`[handleEvent] Message added to ${targetMode}/${targetState.sessionId || 'draft'}, total messages: ${targetState.messages?.length}`)
         return msgId
+      }
+
+      const terminalContent = () => {
+        const content = data?.response ?? data?.answer
+        return content == null ? undefined : contentToString(content)
+      }
+      const updateTerminalAnswer = (content, metadata, reuseExisting = false) => {
+        const message = targetState.streamingAnswerMessageId
+          ? targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
+          : reuseExisting ? this._findLatestFinalMessageForCurrentTurn(targetState, content) : null
+        if (message) {
+          this._mergeFinalMessage(message, content, metadata)
+          this._stampResponseTiming(targetState, message)
+          targetState.finalAnswer = message.content
+        } else if (content) {
+          const id = addMessage('final', content, metadata, null, { streaming: false })
+          this._stampResponseTiming(targetState, targetState.messages.find(m => m.id === id))
+          targetState.finalAnswer = content
+        } else if (content !== undefined) {
+          targetState.finalAnswer = content
+        }
       }
 
       switch (type) {
@@ -1775,57 +1796,20 @@ export const useReactStore = defineStore('react', {
           targetState.isComplete = true
           this.applyMapProgramMetadata(data, targetState)
           targetState.iterations = data?.iterations || targetState.iterations
-          // ✅ 优先使用response字段，兼容answer字段
-          const finalContent = data?.response || data?.answer || ''
-          if (finalContent) {
-            targetState.finalAnswer = finalContent
-          }
+          const finalContent = terminalContent()
           targetState.hasResults = true
-
-          // 记录最终答案（原有工作流逻辑）
+          updateTerminalAnswer(finalContent, {
+            iterations: data?.iterations,
+            session_id: data?.session_id,
+            timestamp: data?.timestamp,
+            expert_results: data?.expert_results || null,
+            sources: data?.sources || null
+          }, true)
           targetState.finalAnswers.push({
             run: targetState.sessionRound,
-            content: finalContent || targetState.finalAnswer || '分析完成',
+            content: finalContent ?? (targetState.finalAnswer || '分析完成'),
             timestamp: new Date().toISOString()
           })
-
-          // 添加最终答案消息到UI
-          // 如果已经通过 answer_delta 流式创建了最终答案消息，则只更新其元数据，避免重复追加一条消息
-          console.log('[event:complete] streamingAnswerMessageId:', targetState.streamingAnswerMessageId)
-          const existingFinalMessage = targetState.streamingAnswerMessageId
-            ? targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
-            : this._findLatestFinalMessageForCurrentTurn(targetState, finalContent)
-          if (existingFinalMessage) {
-            this._mergeFinalMessage(existingFinalMessage, finalContent, {
-              iterations: data?.iterations,
-              session_id: data?.session_id,
-              timestamp: data?.timestamp,
-              expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-              sources: data?.sources || null  // ✅ 知识问答参考来源
-            })
-            // 【新增】记录回复用时统计
-            this._stampResponseTiming(targetState, existingFinalMessage)
-            if (finalContent) {
-              targetState.finalAnswer = finalContent
-            }
-            console.log('[event:complete] 复用当前轮次已有final消息，避免重复追加')
-          } else if (finalContent) {
-            // 【修复】优先使用response字段，兼容answer字段
-            console.log('[event:complete] 添加final消息，content:', finalContent.substring(0, 50) + '...')
-            const completedMessageId = addMessage('final', finalContent, {
-              iterations: data?.iterations,
-              session_id: data?.session_id,
-              timestamp: data?.timestamp,
-              expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-              sources: data?.sources || null  // ✅ 知识问答参考来源
-            }, null, { streaming: false })  // 【修复】明确设置 streaming: false
-            // 【新增】记录回复用时统计
-            const completedMessage = targetState.messages.find(m => m.id === completedMessageId)
-            this._stampResponseTiming(targetState, completedMessage)
-            console.log('[event:complete] messages数量:', targetState.messages.length)
-          } else {
-            console.log('[event:complete] 警告：没有answer或response字段，不添加final消息')
-          }
 
           // 【关键修复】处理多专家系统的最终结果
           if (data?.expert_results) {
@@ -1876,41 +1860,19 @@ export const useReactStore = defineStore('react', {
           if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
           targetState.isComplete = true
           targetState.iterations = data?.iterations || targetState.iterations
-          // ✅ 优先使用response字段，兼容answer字段
-          targetState.finalAnswer = data?.response || data?.answer || '分析未完成'
-
-          // 记录最终答案（原有工作流逻辑）
+          const finalContent = terminalContent()
+          updateTerminalAnswer(finalContent, {
+            iterations: data?.iterations,
+            reason: data?.reason,
+            timestamp: data?.timestamp,
+            expert_results: data?.expert_results || null
+          })
+          if (finalContent === undefined && !targetState.finalAnswer) targetState.finalAnswer = '分析未完成'
           targetState.finalAnswers.push({
             run: targetState.sessionRound,
-            content: data?.response || data?.answer || '分析未完成',
+            content: targetState.finalAnswer,
             timestamp: new Date().toISOString()
           })
-
-          // 添加最终答案消息到UI
-          if (targetState.streamingAnswerMessageId) {
-            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
-            if (msg) {
-              msg.data = {
-                ...(msg.data || {}),
-                iterations: data?.iterations,
-                reason: data?.reason,
-                timestamp: data?.timestamp,
-                expert_results: data?.expert_results || null  // ✅ 传递专家结果用于显示
-              }
-              // 【新增】记录回复用时统计
-              this._stampResponseTiming(targetState, msg)
-            }
-          } else if (data?.answer) {
-            const incompleteMessageId = addMessage('final', data.answer, {
-              iterations: data?.iterations,
-              reason: data?.reason,
-              timestamp: data?.timestamp,
-              expert_results: data?.expert_results || null  // ✅ 传递专家结果用于显示
-            })
-            // 【新增】记录回复用时统计
-            const incompleteMessage = targetState.messages.find(m => m.id === incompleteMessageId)
-            this._stampResponseTiming(targetState, incompleteMessage)
-          }
 
           // 处理多专家系统的最终结果（即使未完成也可能有部分结果）
           if (data?.expert_results) {
@@ -1950,6 +1912,7 @@ export const useReactStore = defineStore('react', {
           targetState.isComplete = false
           targetState.error = null
           targetState.isInterruption = true
+          updateTerminalAnswer(terminalContent(), { reason: data?.reason, timestamp: data?.timestamp })
           targetState.streamingAnswerMessageId = null
           targetState.streamingThinkingMessageId = null
           targetState.activeRunId = null
@@ -1968,6 +1931,7 @@ export const useReactStore = defineStore('react', {
           if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
           // 后端对可重试类故障（504/过载/超时）给出友好文案，技术细节只进日志
           targetState.error = fatalErrorDisplayText(data)
+          updateTerminalAnswer(terminalContent(), { timestamp: data?.timestamp })
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
           targetState.activeRunId = null

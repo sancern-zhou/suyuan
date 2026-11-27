@@ -1,6 +1,7 @@
 import { getUnifiedProcessMessages } from '../components/reactAnalysis/messageProcessGrouping.js'
 import { buildResourceGroups, preferredPreview } from './resourceGroups.js'
-import { chartReferenceRegex } from './chartReferencePattern.js'
+import { chartReferenceIds } from './chartReferencePattern.js'
+import { inlineChartKind } from './inlineChartResources.js'
 
 // execute_python 对同名文件再次写出时会追加 _<秒级时间戳> 后缀；按去掉该
 // 后缀的逻辑文件名合并重复卡片，只保留最新版本。
@@ -42,12 +43,15 @@ export function replyOutcomes(message, messages, resources) {
     }
   }
   const content = String(message?.content || '')
-  const referenced = new Set([...content.matchAll(chartReferenceRegex())].map(match => match[1]))
+  const referenced = new Set(chartReferenceIds(content))
   const groups = buildResourceGroups(resources.filter(resource => resource.status === 'active'))
   const matched = []
   for (const group of groups) {
     if (!ownedGroups.has(group.group_id) && !group.resources.some(r => ids.has(r.resource_id) || (r.run_id && runs.has(r.run_id)))) continue
-    if (group.resources.some(r => referenced.has(r.visual_id) || referenced.has(r.resource_id) || (r.content_url && content.includes(r.content_url)))) continue
+    if (group.resources.some(r => (
+      (r.content_url && inlineChartKind(r) && referenced.has(r.resource_id))
+      || (r.content_url && content.includes(r.content_url))
+    ))) continue
     const resource = preferredPreview(group)
     if (!resource || !['output', 'report', 'attachment'].includes(resource.role)) continue
     if (resource.kind === 'data' || ['json', 'qmd', 'yaml', 'yml', 'log', 'sql', 'parquet'].includes(resource.format) && resource.renderer !== 'chart') continue

@@ -1237,7 +1237,21 @@ private fun SharedConversationDetailView(
                     message.optString("content").takeIf { it.isNotBlank() },
                     message.optJSONObject("data")?.optJSONObject("result")?.optString("content")?.takeIf { it.isNotBlank() },
                 ).firstOrNull { it != null }.orEmpty()
-                if (content.isBlank() && message.optJSONArray("attachments") == null) return@items
+                val attachments = buildList {
+                    val values = message.optJSONArray("attachments") ?: return@buildList
+                    for (index in 0 until values.length()) {
+                        values.optJSONObject(index)?.let { add(UploadedAttachment.fromJson(it)) }
+                    }
+                }.filter { it.url.isNotBlank() }
+                if (content.isBlank() && attachments.isEmpty()) return@items
+                val blocks = if (isUser) listOf(ReplyBlock.Text(content)) else chartReplyBlocks(content, attachments)
+                val placedResourceIds = blocks.mapNotNull { block ->
+                    when (block) {
+                        is ReplyBlock.Chart -> block.attachment.resourceId
+                        is ReplyBlock.Image -> block.attachment.resourceId
+                        else -> null
+                    }
+                }.toSet()
                 Surface(
                     color = if (isUser) SuyuanColors.primary.copy(alpha = .07f) else Color.White,
                     shape = RoundedCornerShape(12.dp),
@@ -1245,27 +1259,25 @@ private fun SharedConversationDetailView(
                 ) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
                         Text(if (isUser) "提问" else "回答", color = SuyuanColors.secondaryText, fontSize = 11.sp)
-                        if (content.isNotBlank()) {
-                            if (isUser) {
-                                Text(content, color = SuyuanColors.text, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.padding(top = 4.dp))
-                            } else {
-                                MarkdownContent(content, SuyuanColors.text, state = state, viewModel = viewModel)
+                        if (isUser && content.isNotBlank()) {
+                            Text(content, color = SuyuanColors.text, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.padding(top = 4.dp))
+                        } else if (!isUser) {
+                            for (block in blocks) {
+                                when (block) {
+                                    is ReplyBlock.Text -> MarkdownContent(block.content, SuyuanColors.text, state, viewModel)
+                                    is ReplyBlock.Chart -> InlineChart(block.attachment, state, viewModel)
+                                    is ReplyBlock.Image -> MarkdownImage(block.attachment.url, block.attachment.filename, state, viewModel)
+                                }
                             }
                         }
-                        val attachments = message.optJSONArray("attachments")
-                        if (attachments != null) {
-                            for (index in 0 until attachments.length()) {
-                                val attachment = attachments.optJSONObject(index) ?: continue
-                                val url = attachment.optString("url")
-                                val mime = attachment.optString("mime_type")
-                                when {
-                                    url.isBlank() -> Unit
-                                    mime.startsWith("image/") -> MarkdownImage(url, attachment.optString("filename"), state, viewModel)
-                                    mime != "application/json" -> Text(
-                                        "📎 ${attachment.optString("filename", "附件")}",
-                                        color = SuyuanColors.primary, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp),
-                                    )
-                                }
+                        for (attachment in attachments) {
+                            if (attachment.resourceId in placedResourceIds) continue
+                            when {
+                                attachment.mimeType.startsWith("image/") -> MarkdownImage(attachment.url, attachment.filename, state, viewModel)
+                                attachment.mimeType != "application/json" -> Text(
+                                    "📎 ${attachment.filename}",
+                                    color = SuyuanColors.primary, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp),
+                                )
                             }
                         }
                     }
