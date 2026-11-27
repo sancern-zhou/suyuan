@@ -5,6 +5,8 @@ Open-Meteo API Client
 """
 from typing import Dict, Any, List
 import asyncio
+import random
+
 import httpx
 import structlog
 from app.utils.weather_time import OPEN_METEO_SOURCE
@@ -231,6 +233,87 @@ class OpenMeteoClient:
         # 理论上不会到达这里，但为了类型安全
         raise Exception("Unexpected error in fetch_era5_data")
 
+    @staticmethod
+    def _retryable_http_status(status_code: int) -> bool:
+        return status_code == 429 or 500 <= status_code < 600
+
+    @staticmethod
+    def _retry_delay_seconds(attempt: int, base_delay: float, response: Any = None) -> float:
+        retry_after = response.headers.get("Retry-After") if response is not None else None
+        if retry_after:
+            try:
+                delay = min(max(float(retry_after), 0.0), 60.0)
+            except ValueError:
+                delay = min(base_delay * (2 ** attempt), 30.0)
+        else:
+            delay = min(base_delay * (2 ** attempt), 30.0)
+        return delay + random.uniform(0.0, min(1.0, delay * 0.1))
+
+    async def _fetch_with_retry(
+        self,
+        *,
+        operation: str,
+        params: Dict[str, Any],
+        lat: float,
+        lon: float,
+    ) -> Dict[str, Any]:
+        """重试网络错误和临时 HTTP 错误；参数等 4xx 错误直接返回给调用方。"""
+        limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        async with httpx.AsyncClient(timeout=self.timeout, limits=limits) as client:
+            for attempt in range(self.max_retries + 1):
+                try:
+                    response = await client.get(self.forecast_api_url, params=params)
+                    if response.status_code == 200:
+                        logger.debug(
+                            f"{operation}_api_success",
+                            lat=lat,
+                            lon=lon,
+                            attempt=attempt + 1,
+                        )
+                        return response.json()
+
+                    retryable = self._retryable_http_status(response.status_code)
+                    if retryable and attempt < self.max_retries:
+                        wait_time = self._retry_delay_seconds(attempt, self.retry_delay, response)
+                        logger.warning(
+                            f"{operation}_api_retry",
+                            lat=lat,
+                            lon=lon,
+                            attempt=attempt + 1,
+                            status_code=response.status_code,
+                            retry_in=wait_time,
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+                    raise Exception(
+                        f"{operation} API error: {response.status_code} - {response.text}"
+                    )
+                except httpx.HTTPError as exc:
+                    if attempt < self.max_retries:
+                        wait_time = self._retry_delay_seconds(attempt, self.retry_delay)
+                        logger.warning(
+                            f"{operation}_api_retry",
+                            lat=lat,
+                            lon=lon,
+                            attempt=attempt + 1,
+                            error=str(exc),
+                            retry_in=wait_time,
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+                    logger.error(
+                        f"{operation}_api_failed",
+                        lat=lat,
+                        lon=lon,
+                        attempts=attempt + 1,
+                        error=str(exc),
+                    )
+                    raise Exception(
+                        f"{operation} API request failed after {attempt + 1} attempts: {exc}"
+                    ) from exc
+
+        raise Exception(f"Unexpected error in {operation}")
+
     async def fetch_current_weather(
         self,
         lat: float,
@@ -256,27 +339,12 @@ class OpenMeteoClient:
             "timezone": "UTC",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(self.forecast_api_url, params=params)
-
-                if response.status_code == 200:
-                    logger.debug(
-                        "current_weather_api_success",
-                        lat=lat,
-                        lon=lon
-                    )
-                    return response.json()
-                else:
-                    raise Exception(
-                        f"Current weather API error: {response.status_code} - {response.text}"
-                    )
-        except httpx.TimeoutException:
-            logger.error("current_weather_api_timeout", lat=lat, lon=lon)
-            raise Exception("Current weather API timeout")
-        except Exception as e:
-            logger.error("current_weather_api_failed", lat=lat, lon=lon, error=str(e))
-            raise
+        return await self._fetch_with_retry(
+            operation="current_weather",
+            params=params,
+            lat=lat,
+            lon=lon,
+        )
 
     async def fetch_forecast(
         self,
@@ -331,31 +399,12 @@ class OpenMeteoClient:
         if daily:
             params["daily"] = ",".join(self.forecast_daily_variables)
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(self.forecast_api_url, params=params)
-
-                if response.status_code == 200:
-                    logger.info(
-                        "forecast_api_success",
-                        lat=lat,
-                        lon=lon,
-                        forecast_days=forecast_days,
-                        past_days=past_days,
-                        hourly=hourly,
-                        daily=daily
-                    )
-                    return response.json()
-                else:
-                    raise Exception(
-                        f"Forecast API error: {response.status_code} - {response.text}"
-                    )
-        except httpx.TimeoutException:
-            logger.error("forecast_api_timeout", lat=lat, lon=lon)
-            raise Exception("Forecast API timeout")
-        except Exception as e:
-            logger.error("forecast_api_failed", lat=lat, lon=lon, error=str(e))
-            raise
+        return await self._fetch_with_retry(
+            operation="forecast",
+            params=params,
+            lat=lat,
+            lon=lon,
+        )
 
     async def fetch_era5_pressure_level_data(
         self,
